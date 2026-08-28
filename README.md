@@ -1,8 +1,9 @@
 # TechJam 2026 — ESP32 Transformer
 
 This repository now focuses on running and distributing Transformer workloads
-on ESP32 microcontrollers. The previous NVIDIA H200 experiments are preserved
-under [`h200/`](h200/) for reference, but they are not an active workstream.
+on ESP32 microcontrollers. The previous NVIDIA H200 experiments were retired;
+the GPU baseline is the official `torch_transformer_benchmark.py` at the repo root
+(see `COMPETITION_RULES.MD`).
 
 ## Start here
 

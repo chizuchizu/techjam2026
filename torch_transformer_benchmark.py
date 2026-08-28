@@ -1,4 +1,3 @@
-      
 #!/usr/bin/env python3
 """
 Compare numerical accuracy and inference latency between a baseline Transformer
@@ -746,5 +745,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-    
