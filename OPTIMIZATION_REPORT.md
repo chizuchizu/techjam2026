@@ -37,11 +37,11 @@ is the primary metric.
 | Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Previous robust FP16 best |
 | Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
-| Padded FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.586 ms | **0.3145 ms** | **8.223x** | New padded best |
+| Padded FP16, exact attention/add-norm + fused final mask | exact, 0/52,428,800 | 3.327 ms | **0.3086 ms** | **10.780x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
 | Causal FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.241 ms | **0.3024 ms** | **7.412x** | New causal best |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
-| Causal+padded FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.940 ms | **0.3556 ms** | **8.266x** | New causal+padded best |
+| Causal+padded FP16, exact attention/add-norm + fused final mask | exact, 0/52,428,800 | 3.866 ms | **0.3509 ms** | **11.017x** | Current causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
@@ -137,12 +137,14 @@ default FP16 trials and ten causal+padded trials each for FP16 and bit-exact
 BF16. In adjacent default-shape runs it reduced median latency from 0.3909 to
 0.3900 ms (about 0.2%); the benefit is small but arithmetic is unchanged.
 
-For padded cases, the candidate now negates the padding mask once, not once per
-consumer. A causal triangle is created once during optimized-weight setup rather
-than replayed in every reference-attention layer. Intermediate invalid query
-rows are not zeroed: LayerNorm/FFN never mix tokens, every attention excludes
-invalid keys, and one final mask restores the required zero output. Across the
-tested cases this dead-work elimination leaves every valid output unchanged.
+For padded cases, a causal triangle is created once during optimized-weight
+setup rather than replayed in every reference-attention layer. Intermediate
+invalid query rows are not zeroed: LayerNorm/FFN never mix tokens and every
+attention excludes invalid keys. When the last residual/LayerNorm site is
+fused, that kernel writes invalid rows as zero directly.
+The best all-custom path also consumes the positive validity mask everywhere,
+so it never computes the inverse mask. This removes both the final mask kernel
+and the otherwise-dead bitwise-not kernel while leaving valid outputs unchanged.
 
 ## Nsight Systems evidence
 
@@ -217,6 +219,13 @@ from the exact-attention trace. A shared-weight, same-input, interleaved graph
 A/B measured 0.3233 ms before fusion and 0.2933 ms after fusion, also a
 **1.102x incremental speedup**. The normal safe-output path measures 0.2942 ms;
 graph-owned static output measures 0.2923 ms.
+
+The corresponding padded graph also has **49 nodes** and 281.413 microseconds
+of summed kernel time. Its extra attention cost comes from padding predicates,
+but it contains neither mask negation nor final masked-fill. Folding final
+zeroing into add/LayerNorm and deleting the dead negation improves the measured
+padded candidate from 0.3145 to 0.3086 ms (1.9%) and causal+padded from 0.3556
+to 0.3509 ms (1.3%).
 
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
@@ -321,6 +330,17 @@ ms for both one approximate layer and all six, so the cheaper formula produced
 no measurable end-to-end gain on this shape. The opt-in
 `--gelu-approx-layer-indices` control remains only to reproduce sensitivity
 experiments on future shapes; automatic/default dispatch never enables it.
+
+A later finite-domain experiment observed that FP16 GELU has only 65,536 input
+bit patterns. It generated the exact PyTorch output for every pattern once and
+replaced runtime `erf` with a 128-KiB Triton lookup table. The lookup was
+bit-exact exhaustively (including NaN bit patterns), but random cached gathers
+still measured 24.4 microseconds per 2,097,152-element activation versus 19.3
+microseconds for PyTorch's vectorized exact GELU, so the code was removed. A
+direct Triton libdevice-`erf` kernel was slower again at 27.9 microseconds and
+differed on 151 finite FP16 inputs. Exact finite-domain lookup is therefore a
+useful novel technique only when the table access is cheaper than the native
+operation; it is not a win for this bandwidth-efficient CUDA GELU kernel.
 
 The first Triton residual-add/LayerNorm prototype used a generic Welford
 reduction and failed 36 elements in 52,428,800 outputs. Inspecting PyTorch's

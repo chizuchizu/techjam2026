@@ -24,8 +24,9 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    unmasked, padded, causal, and causal+padded modes.
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
    official static shape and mask regimes.
-5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
-   verify it across the official padding-mask cases.
+5. Keep the implemented static-mask hoisting and final add/LayerNorm invalid-row
+   zeroing; the best padded path no longer launches mask-negation or final-mask
+   kernels. Verify it across the official padding-mask cases.
 6. Keep the now-bit-exact Triton residual-add + LayerNorm fusion, which matches
    PyTorch's Welford tree at all sites; next test linear and exact-GELU fusion.
 7. Add whole-block valid-token packing for padded cases.

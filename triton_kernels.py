@@ -136,16 +136,20 @@ def _add_layer_norm_kernel(
     residual_ptr,
     weight_ptr,
     bias_ptr,
+    valid_mask_ptr,
     sum_ptr,
     output_ptr,
     width: tl.constexpr,
     eps: tl.constexpr,
     block_size: tl.constexpr,
+    apply_valid_mask: tl.constexpr,
 ):
     """Add two low-precision rows, then normalize the rounded sum in FP32."""
     row = tl.program_id(0)
     offsets = tl.arange(0, block_size)
-    mask = offsets < width
+    feature_mask = offsets < width
+    row_valid = tl.load(valid_mask_ptr + row) if apply_valid_mask else True
+    mask = feature_mask & row_valid
     row_offsets = row * width + offsets
 
     x = tl.load(x_ptr + row_offsets, mask=mask, other=0.0).to(tl.float32)
@@ -155,7 +159,7 @@ def _add_layer_norm_kernel(
 
     # Eager stores the residual add in the model dtype before LayerNorm reads it.
     summed = (x + residual).to(sum_ptr.dtype.element_ty)
-    tl.store(sum_ptr + row_offsets, summed, mask=mask)
+    tl.store(sum_ptr + row_offsets, summed, mask=feature_mask)
     summed_fp32 = summed.to(tl.float32)
 
     mean, variance = _pytorch_layer_norm_stats_512(summed_fp32)
@@ -166,8 +170,8 @@ def _add_layer_norm_kernel(
     bias = tl.load(bias_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     tl.store(
         output_ptr + row_offsets,
-        weight * (inverse_std * centered) + bias,
-        mask=mask,
+        tl.where(row_valid, weight * (inverse_std * centered) + bias, 0.0),
+        mask=feature_mask,
     )
 
 
@@ -177,6 +181,7 @@ def add_layer_norm(
     weight: torch.Tensor,
     bias: torch.Tensor,
     eps: float,
+    valid_token_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return ``x + residual`` and its LayerNorm using one Triton launch."""
     if not x.is_cuda:
@@ -193,6 +198,15 @@ def add_layer_norm(
         raise ValueError("feature dimension is too large for the fused kernel")
     if width != 512:
         raise ValueError("exact Triton add+LayerNorm is specialized for width 512")
+    if valid_token_mask is not None:
+        if valid_token_mask.shape != x.shape[:-1]:
+            raise ValueError("valid-token mask must match all non-feature dimensions")
+        if (
+            valid_token_mask.device != x.device
+            or valid_token_mask.dtype != torch.bool
+            or not valid_token_mask.is_contiguous()
+        ):
+            raise ValueError("valid-token mask must be contiguous CUDA bool")
 
     summed = torch.empty_like(x)
     output = torch.empty_like(x)
@@ -203,11 +217,13 @@ def add_layer_norm(
         residual,
         weight,
         bias,
+        valid_token_mask if valid_token_mask is not None else x,
         summed,
         output,
         width,
         eps,
         block_size=block_size,
+        apply_valid_mask=valid_token_mask is not None,
         num_warps=num_warps,
     )
     return summed, output

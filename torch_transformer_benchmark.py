@@ -500,13 +500,24 @@ class UserOptimizedTransformer(BaselineTransformer):
         """Pipeline blocks so each residual add feeds a fused next LayerNorm."""
         from triton_kernels import add_layer_norm
 
-        invalid_token_mask = (
-            None if valid_token_mask is None else ~valid_token_mask
-        )
         sdpa_layer_indices = (
             frozenset()
             if self.implementation == "packed-qkv"
             else self.sdpa_layer_indices
+        )
+        final_site_fused = (
+            2 * len(self.layers) - 1 in self.triton_fused_add_norm_sites
+        )
+        baseline_attention_present = any(
+            layer_index not in self.triton_rounded_attention_layer_indices
+            and layer_index not in sdpa_layer_indices
+            for layer_index in range(len(self.layers))
+        )
+        needs_invalid_mask = baseline_attention_present or not final_site_fused
+        invalid_token_mask = (
+            ~valid_token_mask
+            if valid_token_mask is not None and needs_invalid_mask
+            else None
         )
         normalized_for_attention = self.layers[0].norm1(x)
 
@@ -567,19 +578,21 @@ class UserOptimizedTransformer(BaselineTransformer):
             )
             ffn_add_norm_site = 2 * layer_index + 1
             if ffn_add_norm_site in self.triton_fused_add_norm_sites:
+                final_site = layer_index + 1 == len(self.layers)
                 x, normalized_for_attention = add_layer_norm(
                     x,
                     ffn_output,
                     next_norm.weight,
                     next_norm.bias,
                     next_norm.eps,
+                    valid_token_mask if final_site else None,
                 )
             else:
                 x = x + ffn_output
                 normalized_for_attention = next_norm(x)
 
         x = normalized_for_attention
-        if invalid_token_mask is not None:
+        if invalid_token_mask is not None and not final_site_fused:
             x = x.masked_fill(invalid_token_mask[..., None], 0)
         return x
 

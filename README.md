@@ -104,8 +104,10 @@ passed 100 trials in every mask regime. Use
 `--triton-fused-add-norm-sites 8,9,10,11` only for explicit site experiments.
 
 For padded cases, the optimized path precomputes static causal masks, negates
-the padding mask once, excludes invalid keys in every attention, and zeroes
-invalid query rows only once at final output.
+the padding mask only when a reference-attention fallback needs it, and excludes
+invalid keys in every attention. With exact add/LayerNorm enabled, its final
+fusion writes invalid query rows directly as zero, avoiding a separate mask
+kernel.
 
 ## TensorRT FP32 experiment
 
