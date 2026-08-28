@@ -4,8 +4,8 @@
 
 1. Add automatic node registration, unique node IDs, heartbeats, and a worker
    registry for a fleet of ESP32-C3 boards.
-2. Measure two and four comparable C3 boards at `N=128, H=4, d_head=32` to
-   separate homogeneous scaling from the current heterogeneous-board result.
+2. Measure four comparable C3 boards at `N=128, H=4, d_head=32`; the matched
+   two-C3 result is complete at 1.98–2.00x speedup.
 3. Cache worker performance profiles and retry a timed-out head on another
    healthy node.
 4. Integrate distributed heads with one complete layer of `esp32-baseline`,
@@ -22,6 +22,7 @@
 - Versioned UDP/TCP worker protocol with capability queries.
 - Exact key/value sharding prototype and whole-head comparison.
 - Persistent TCP head scheduling on two physical, heterogeneous ESP32 boards.
+- Matched two-C3 scaling at 99.17–99.99% efficiency with all outputs passing.
 - Round-robin, calibrated-all, and latency-minimizing assignment policies.
 
 The inactive NVIDIA H200 backlog is preserved in [`h200/TODO.md`](h200/TODO.md).

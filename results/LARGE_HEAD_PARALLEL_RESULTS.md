@@ -1,5 +1,9 @@
 # Official-size head-parallel transport results
 
+This report covers the heterogeneous-board experiment. The subsequent matched
+two-C3 scaling result is in
+[`TWO_C3_PARALLEL_RESULTS.md`](TWO_C3_PARALLEL_RESULTS.md).
+
 The cluster worker accepts the teammate benchmark's attention-head shape:
 `N=128`, four heads, and `d_head=32`. Q/K are int8, V is int16, and the returned
 context is float32. Each task uses a persistent TCP connection and carries a

@@ -13,7 +13,7 @@ under [`h200/`](h200/) for reference, but they are not an active workstream.
 | [`tools/`](tools/) | Host coordinators, validation, training, and discovery | [`run_large_head_parallel.py`](tools/run_large_head_parallel.py) |
 | [`esp32_attention_benchmark/`](esp32_attention_benchmark/) | Single-board attention kernels | [`README.md`](esp32_attention_benchmark/README.md) |
 | [`esp32_tiny_transformer/`](esp32_tiny_transformer/) | Complete small trained character Transformer | [`README.md`](esp32_tiny_transformer/README.md) |
-| [`results/`](results/) | Raw measurements and short reports | [`LARGE_HEAD_PARALLEL_RESULTS.md`](results/LARGE_HEAD_PARALLEL_RESULTS.md) |
+| [`results/`](results/) | Raw measurements and short reports | [`TWO_C3_PARALLEL_RESULTS.md`](results/TWO_C3_PARALLEL_RESULTS.md) |
 | [`docs/`](docs/) | Design decisions, plans, and prior art | [`PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) |
 
 The benchmark-sized baseline does not generate text; it validates Transformer
@@ -51,9 +51,11 @@ build directories.
 - The complete tiny model matches an independent NumPy implementation and
   generates at 9.38 tokens/s on a physical XIAO ESP32-C3.
 - The official-size baseline passes 25 host seeds and five device seeds.
-- Two physical ESP32s execute attention heads concurrently. Equal assignment
-  gives 1.94–1.95x over the XIAO-only baseline; a measured 1+3 split gives
-  3.93–3.96x. All returned elements pass the accuracy gate.
+- Two matched XIAO ESP32-C3 boards achieve 1.98–2.00x attention-head speedup,
+  or 99.17–99.99% two-node efficiency including Wi-Fi communication.
+- A separate heterogeneous C3 plus dual-core ESP32 experiment demonstrates why
+  unequal boards require measured assignment. All returned elements pass the
+  accuracy gate in both experiments.
 
 See [`TODO.md`](TODO.md) for the shared priorities and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.

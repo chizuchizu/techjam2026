@@ -46,7 +46,9 @@ TCP connections. `--scheduler round-robin` assigns equal head counts;
 `calibrated-all` measures the workers and uses every node; `calibrated` minimizes
 predicted latency and may idle a much slower node. Capability queries report
 chip model, core count, clock, free heap, supported transports, and maximum
-head shape. Physical one- and two-board results are in
+head shape. Matched-C3 scaling is in
+[`../results/TWO_C3_PARALLEL_RESULTS.md`](../results/TWO_C3_PARALLEL_RESULTS.md);
+the heterogeneous-board experiment is in
 [`../results/LARGE_HEAD_PARALLEL_RESULTS.md`](../results/LARGE_HEAD_PARALLEL_RESULTS.md).
 
 `run_kv_sharded.py` splits each head's 16 keys into four shards. A 250-byte task

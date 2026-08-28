@@ -62,7 +62,8 @@ Every optimization must satisfy all of these before it is called successful:
 ### M3 — Four-node cluster (in progress; two physical nodes complete)
 
 - TCP and UDP payload throughput and round-trip latency are measured against one
-  physical worker; concurrent TCP is measured on two boards and ESP-NOW remains.
+  physical worker; concurrent TCP is measured on both matched and heterogeneous
+  two-board pairs, and ESP-NOW remains.
 - Head-parallel execution is implemented: the coordinator sends four 534-byte
   tasks, reconstructs the returned heads, applies the output projection, and
   passes independent validation. It dispatches concurrently when given multiple
@@ -75,14 +76,16 @@ Every optimization must satisfy all of these before it is called successful:
   One- and two-node results now pass; four comparable nodes remain.
 - The head worker and coordinator now support the official `N=128,
   d_head=32` shape over persistent TCP. All 16,384 output elements per mode
-  pass on both physical workers. Concurrent round-robin and profiled scheduling
-  also pass on the heterogeneous pair.
+  pass on every physical worker. Concurrent round-robin and profiled scheduling
+  pass on both the heterogeneous pair and two matched C3 boards.
 - Workers report chip model, cores, clock, heap, shape limits, and transport
   capabilities so heterogeneous ESP32 models can be scheduled by measurement.
 - Measured per-head compute differs by roughly 14x between the C3 and the
   dual-core ESP32. The coordinator now supports round-robin, calibrated-all,
   and unconstrained calibrated scheduling; the last policy may idle a node when
   using it would increase latency.
+- The matched pair achieves 1.9998x non-causal and 1.9833x causal round-robin
+  speedup, demonstrating 99.99% and 99.17% two-node efficiency respectively.
 
 ### M4 — Ten-node study
 
@@ -95,8 +98,7 @@ Every optimization must satisfy all of these before it is called successful:
 
 1. Port the integer Q/K dot-product and compact weight storage to the official
    `S=128, D=128, L=4` teammate baseline, then remeasure on the C3.
-2. Repeat the head-parallel test on two comparable ESP32 boards to measure
-   homogeneous scaling efficiency without the current 14x straggler gap.
+2. Extend the matched-C3 head-parallel test from two nodes to four nodes.
 3. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
 4. Sweep online tile sizes 4, 8, 16, and 32.
