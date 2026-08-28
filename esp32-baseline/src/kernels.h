@@ -61,6 +61,10 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K);
 
+void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                   float w_scale, const float* bias, float* C,
+                   int M, int K, int N, int rowStride);
+
 void tm_gemm_core3(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                float w_scale, const float* bias, float* C,
                int M, int K, int N, int rowStride);

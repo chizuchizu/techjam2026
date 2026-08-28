@@ -53,7 +53,7 @@ void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
     float sa = TM_QACT_MAX / amax;
     float sa_inv = 1.0f / sa;
     tm_gemm_quantA_into(A, M * K, a16, sa);
-    tm_gemm_core(a16, sa_inv, Wq, w_scale, bias, C, M, K, N, rowStride);
+    tm_gemm_core4(a16, sa_inv, Wq, w_scale, bias, C, M, K, N, rowStride);
 }
 
 /* Quantize A into a caller buffer (Q15 fast-round, no libm). sa precomputed. */
@@ -221,6 +221,54 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
         }
     }
     return amax / TM_QACT_MAX;
+}
+
+
+/* core4: j-outer, 8-row i-tile, 8 int32 register accs.  Each flash weight
+ * column is read once per 8 rows -> M*N*K*2/8 bytes of flash XIP (half of
+ * core3), at the cost of re-reading A (SRAM) per output column.  Best for
+ * the N=K=128 gemms (oproj/FFN1/FFN2) where the weight operand is
+ * flash-bound. */
+void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                   float w_scale, const float* bias, float* C,
+                   int M, int K, int N, int rowStride) {
+    const float g = sa_inv * w_scale;
+    enum { IBLK = 8 };
+    for (int j = 0; j < N; j++) {
+        const int16_t* wr = Wq + (size_t)j * K;
+        for (int it = 0; it < M; it += IBLK) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            const int16_t* a4 = Aq + (size_t)(it+4) * K;
+            const int16_t* a5 = Aq + (size_t)(it+5) * K;
+            const int16_t* a6 = Aq + (size_t)(it+6) * K;
+            const int16_t* a7 = Aq + (size_t)(it+7) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
+            for (int k = 0; k < K; k++) {
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k] * b;
+                c1 += (int32_t)a1[k] * b;
+                c2 += (int32_t)a2[k] * b;
+                c3 += (int32_t)a3[k] * b;
+                c4 += (int32_t)a4[k] * b;
+                c5 += (int32_t)a5[k] * b;
+                c6 += (int32_t)a6[k] * b;
+                c7 += (int32_t)a7[k] * b;
+            }
+            float bj = bias ? bias[j] : 0.0f;
+            float* c0r = C + (size_t)it * rowStride + j;
+            c0r[0]           = (float)c0 * g + bj;
+            c0r[1*rowStride] = (float)c1 * g + bj;
+            c0r[2*rowStride] = (float)c2 * g + bj;
+            c0r[3*rowStride] = (float)c3 * g + bj;
+            c0r[4*rowStride] = (float)c4 * g + bj;
+            c0r[5*rowStride] = (float)c5 * g + bj;
+            c0r[6*rowStride] = (float)c6 * g + bj;
+            c0r[7*rowStride] = (float)c7 * g + bj;
+        }
+    }
 }
 
 void tm_gemm_core3(const int16_t* Aq, float sa_inv, const int16_t* Wq,

@@ -98,6 +98,55 @@ quantize). Replaced with `tm_gemm_head_q15`:
 | forward | 6.91 s | **6.56 s** |
 | vs baseline | 6.10× | **6.43×** |
 
+
+## Opt 7 — all-integer exp LUT index (attention exp 0.40 → 0.05 s)
+
+Before: the FAST exp pass converted the integer dot to the LUT index via
+`logit = (float)diff * gsc` then `logit * 6553.5f` — two soft-float
+multiplies **and** an int64→float conversion **and** a float→int conversion
+per element (~450+ cycles). Now a single fixed-point multiply per element:
+
+- `g_exp_c = round(gsc * 6553.5 * 2^32)` computed once per head.
+- `mag = |score - maxs|` (int64) → `y = (mag * g_exp_c) >> 32` = |y16|,
+  exactly the trunc-to-zero the fp32 path produced, then the same LUT
+  interpolation.
+- Precision: the LUT domain caps |diff·gsc·6553.5| ≤ 65535, so
+  `mag·g_exp_c < 2^47` — uint64-safe. Q32 coefficient error is ≤ 0.5/2^32
+  relative → sub-unit y16 error where it matters (near the max logit).
+- First attempt used **Q24**: gsc = g_qs·g_ks·0.1768 varies over ~1e-9..1e-3
+  (NOT the ~0.18 of the raw attention scale), so the small-shift coefficient
+  lost precision and FAST jumped to 0.22–0.42 max_abs (10k+ fails). Q32 fixed
+  it (host 50/50, worst ≈ 1.1e-3).
+- Measured: attn_exp 194.8 → **23.2 µs/call** (7×), attention total
+  1.22 → **0.85 s**.
+
+## Opt 8 — core4 GEMM: j-outer, 8-row i-tile (oproj/f1/f2)
+
+Audit found oproj and f1 were still calling the **original per-element
+`tm_gemm_core`** (4-way k-unroll, one output at a time) — only f2 had been
+moved to the tiled core in opt 4. That is why oproj/f1 stayed ~20 cyc/MAC
+while f2 dropped to ~9.
+
+`tm_gemm_core4` inverts the traversal: j-outer, then an 8-row i-tile inside,
+with 8 int32 register accumulators. Each flash weight column is read once per
+8 rows → weight-bytes per gemm = M·N·K·2/8 (half of core3's i4j2), at the
+cost of re-reading A (SRAM) per output column. Routed the K=N=128 gemms
+(oproj via tm_gemm_q12, f1 via tm_gemm_q12, f2) to core4.
+
+- Only 8 accs fit RV32 registers; i8j1 avoids the 16-acc spill a 4×4 tile
+  would force. The int32 accumulation order is unchanged → identical
+  results to core3 (verified: all results bit-equal on the host).
+
+### Result
+| metric | opt 6 ('6.56 s build') | + opts 7–8 |
+|---|---|---|
+| attention (QK+exp+PV) | 1.22 s | 0.85 s |
+| oproj | 1.05 s | 0.61 s |
+| f1 | 1.05 s | 0.61 s |
+| f2 | 0.75 s | 0.68 s |
+| forward | 6.56 s | **5.27 s** |
+| vs baseline | 6.43× | **8.0×** |
+
 ## Trajectory (device, seed-0 FAST, wall)
 | build | s/forward | vs baseline |
 |---|---|---|
@@ -105,11 +154,11 @@ quantize). Replaced with `tm_gemm_head_q15`:
 | + integer attention (opt 1) | 15.21 | 2.77× |
 | + exp LUT (opt 2) | 13.70 | 3.08× |
 | + GEMM/gelu/quant/attn (opts 3–5) | 6.91 | 6.10× |
-| + fused QKV quantization (opt 6) | **6.56** | **6.43×** |
+| + fused QKV quantization (opt 6) | 6.56 | 6.43× |
+| + integer exp index + core4 GEMM (opts 7–8) | **5.27** | **8.0×** |
 
-Gate throughout: host 25/25 FAST + 25/25 EXACT, max_abs < 8e-4;
-final build (with opt 6 and TM_PROFILE off) host 50/50 + device seeds 0–5
-5/5, max_abs ≤ 9.5e-4, RAM 270,860 B (82.7%), Flash 2,629,884 B (83.6%).
+
+Gate throughout: host 25/25 FAST + 25/25 EXACT (all-zero-filtered), and after op 7's Q24 misstep the Q32 version passed host 50/50; the shipping 5.27 s build (TM_PROFILE off) passed device seeds 0–4 5/5, worst max_abs 9.414e-4 (gate 2e-3), RAM 270,860 B (82.7%), Flash 2,629,884 B (83.6%).
 (An intermediate build with broken LN-pair precompute measured 18.6 s f2
 slot during an 8.5 s wall — the slot-vs-wall sanity check caught the OOB
 write; reverting LN to the single-pass form restored clean numbers.)

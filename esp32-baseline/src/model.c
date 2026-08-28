@@ -219,6 +219,7 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                       const int16_t* kh, float sk,
                       const int16_t* vh, float sv, int head) {
     const float gsc = sq * sk * TM_ATTN_SCALE;   /* > 0 */
+    const uint64_t g_exp_c = (uint64_t)(gsc * 6553.5f * 4294967296.0f + 0.5f); /* *2^32 */
     const int fast = (g_mode == TM_MODE_FAST);
     static int32_t g_p15[TM_S];
     for (int i = 0; i < TM_S; i++) {
@@ -246,13 +247,16 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
             int64_t diff = g_attn_score[j] - maxs;   /* <= 0 */
             int32_t p15;
             if (fast) {
-                float logit = (float)diff * gsc;
-                int32_t y16 = (int32_t)(logit * 6553.5f);
-                if (y16 > 0) y16 = 0;
-                else if (y16 < -65535) y16 = -65535;
-                int32_t vv = -y16;
-                int32_t idx = vv >> 7;
-                int32_t off = vv & 127;
+                /* all-integer LUT index.  y16 = trunc(diff*gsc*6553.5) with a
+                 * fixed-point multiplier g_exp_c = round(gsc*6553.5*2^16):
+                 *   mag = |diff| <= 65535/(gsc*6553.5) ~ 56  ->  mag*g_exp_c
+                 *   < 2^33, uint64-safe.  y16 = -(mag*g_exp_c >> 16) with the
+                 *   same trunc-to-zero the fp32 path produced. */
+                uint64_t mag = (uint64_t)(0LL - diff);
+                uint64_t y = (mag * g_exp_c) >> 32;      /* |y16| */
+                if (y > 65535u) y = 65535u;
+                int32_t idx = (int32_t)(y >> 7);
+                int32_t off = (int32_t)(y & 127u);
                 p15 = (int32_t)g_exp_lut[idx] +
                       ((((int32_t)g_exp_lut[idx+1] - (int32_t)g_exp_lut[idx]) * off + 64) >> 7);
             } else {
@@ -422,7 +426,7 @@ void tm_forward(const float* xin, float* yout,
             tm_gemm_quantA_into(g_buf2, TM_S * TM_F, a2, sa2);
             tm_gelu_q15_lut(a2, TM_S * TM_F, TM_QACT_MAX / sa2);
             PE(P_GELU);
-            tm_gemm_core3(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+            tm_gemm_core4(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
                          W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gelu_inplace(g_buf2, TM_S * TM_F);
