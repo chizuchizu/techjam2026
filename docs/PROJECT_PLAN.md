@@ -48,6 +48,17 @@ Every optimization must satisfy all of these before it is called successful:
   weights raise end-to-end speedup to 3.05x non-causal and 3.87x causal, with
   every output still passing.
 
+### M2.5 — Complete trained Transformer (complete)
+
+- Trained a deterministic two-block causal character model with token and
+  position embeddings, RMSNorm, residual paths, ReLU FFNs, and a tied LM head.
+- Exported per-output int8 linear weights; linear activations use dynamic int16
+  and attention uses the accuracy-qualified int8 Q/K plus int16 V format.
+- The independent NumPy deployment model passes all 126 corpus windows.
+- Physical-board validation passes all 24 logits and 48 generated tokens. The
+  median complete forward is 106.614 ms with 24,800 B of model data and a
+  22,688 B runtime working set.
+
 ### M3 — Four-node cluster (next; additional hardware required for scaling)
 
 - TCP and UDP payload throughput and round-trip latency are measured against one
@@ -71,13 +82,15 @@ Every optimization must satisfy all of these before it is called successful:
 
 ## Immediate experiment backlog
 
-1. Validate the int16-activation/int8-weight projections on a trained model,
-   then test fusing their output quantization into attention.
-2. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
+1. Port the integer Q/K dot-product and compact weight storage to the official
+   `S=128, D=128, L=4` teammate baseline, then remeasure on the C3.
+2. Validate the larger baseline on more physical-device seeds and commit raw
+   timing/accuracy captures alongside corrected documentation.
+3. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
-3. Sweep online tile sizes 4, 8, 16, and 32.
-4. Replace remaining float softmax arithmetic with a validated fixed-point/LUT
+4. Sweep online tile sizes 4, 8, 16, and 32.
+5. Replace remaining float softmax arithmetic with a validated fixed-point/LUT
    version.
-5. Compile the stable kernel under ESP-IDF with `-O3` and compare assembly and
+6. Compile the stable kernel under ESP-IDF with `-O3` and compare assembly and
    timing against Arduino's build.
-6. Add energy measurement with an external current monitor.
+7. Add energy measurement with an external current monitor.

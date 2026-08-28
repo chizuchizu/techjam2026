@@ -1,0 +1,5 @@
+[device] boot: ''
+[device] TM 1 128 128
+seed 0: fails=    0 max_abs=8.1241e-04 42.152s fwd PASS
+[device] TM 1 42124528
+ALL PASS

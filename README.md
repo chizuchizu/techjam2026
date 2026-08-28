@@ -1,10 +1,9 @@
 # Pocket Attention Cluster
 
-Pocket Attention Cluster is a TechJam experiment in running and eventually
-distributing Transformer attention across inexpensive ESP32 microcontrollers.
-The current milestone is a measured single-node implementation on a Seeed
-Studio XIAO ESP32-C3; the multi-node stage begins when the additional boards are
-available.
+Pocket Attention Cluster is a TechJam experiment in running and distributing
+Transformers across inexpensive ESP32 microcontrollers. The current milestone
+includes both measured attention kernels and a trained character Transformer
+running end to end on a Seeed Studio XIAO ESP32-C3.
 
 The project deliberately targets ESP32 hardware only: memory-efficient attention,
 mixed-precision arithmetic, and communication-aware execution across a cluster
@@ -13,6 +12,12 @@ material, not an implementation target.
 
 ## What works now
 
+- A complete trained causal language model: token and position embeddings, two
+  pre-norm Transformer blocks, four-head attention, residuals, feed-forward
+  networks, final RMSNorm, and a tied 24-token language-model head.
+- Greedy generation on the physical board at a median 106.614 ms per token;
+  all 24 validation logits and all 48 generated tokens match the independent
+  NumPy deployment reference.
 - Float32 materialized scaled dot-product attention.
 - Exact block-online softmax that never stores the `N x N` attention matrix.
 - Mixed precision with int8 Q/K and int16 V.
@@ -56,6 +61,14 @@ working set from 31,328 B to 21,600 B. See
 
 ## Repository map
 
+- [`esp32_tiny_transformer/`](esp32_tiny_transformer/) — trained complete
+  Transformer inference and serial benchmark firmware.
+- [`tools/train_tiny_transformer.py`](tools/train_tiny_transformer.py) —
+  deterministic PyTorch training and int8/int16 deployment export.
+- [`tools/tiny_transformer_reference.py`](tools/tiny_transformer_reference.py)
+  — independent NumPy reference and physical-board validator.
+- [`results/TINY_TRANSFORMER_RESULTS.md`](results/TINY_TRANSFORMER_RESULTS.md) —
+  complete-model accuracy, latency, and memory results.
 - [`esp32_attention_benchmark/`](esp32_attention_benchmark/) — firmware and C++
   attention kernels, including the complete attention-layer benchmark.
 - [`tools/validate_e2e.py`](tools/validate_e2e.py) — independent host reference
@@ -98,20 +111,31 @@ python3 tools/validate_e2e.py --port /dev/ttyACM0 \
   --capture results/esp32c3_end_to_end_v2.log
 ```
 
+Build, flash, and independently validate the trained Transformer with:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 esp32_tiny_transformer
+arduino-cli upload --fqbn esp32:esp32:XIAO_ESP32C3 \
+  --port /dev/ttyACM0 esp32_tiny_transformer
+.venv/bin/python tools/tiny_transformer_reference.py --port /dev/ttyACM0 \
+  --capture results/esp32c3_tiny_transformer_v1.log
+```
+
 The first build used Arduino CLI 1.5.1, Arduino-ESP32 3.3.11, and esptool 5.3.1.
 
 ## Current limitations
 
-- This now benchmarks a complete attention layer, not layer normalization, the
-  feed-forward network, residual connections, or a complete Transformer block.
-- Batch is 1 and the end-to-end fixture is `N=16, d_model=32, 4 heads`.
-- The tested fixture is synthetic and small; the projection format must be
-  recalibrated and validated on weights and activations from a trained model.
+- The complete model is deliberately tiny (`context=16`, `d_model=32`, two
+  blocks, 17,824 trained parameters). Its 100% corpus-window accuracy measures
+  memorization of a 126-character training corpus, not generalization.
+- The larger attention-layer fixture remains synthetic. The quantized formats
+  now pass a trained small model, but still need validation on the official
+  benchmark-sized Transformer.
 - Activation quantization is included in end-to-end timing. Offline model-weight
   quantization is excluded, as weights are stored in their inference format.
 - Latency is measured; energy has not yet been instrumented.
-- Only one ESP32 is currently available, so cluster speedup remains a design,
-  not a measured claim.
+- Only one ESP32 is currently visible to WSL, so multi-board cluster speedup is
+  not yet a measured claim.
 - LAN transport is measured with one worker at strong signal; contention and
   straggler behavior require the four-board setup.
 - No world-first claim is justified; related MCU and distributed Transformer
