@@ -23,6 +23,8 @@ material, not an implementation target.
   weights, and native int32 dot products.
 - Independent host validation that reconstructs the fixture without calling the
   ESP32 implementation.
+- A binary UDP/TCP cluster transport and physical LAN benchmark from WSL to the
+  ESP32.
 - Per-element validation using the hackathon rule: absolute error <= 0.002 or
   relative error <= 0.02.
 - Reproducible latency, workspace, working-set, and accuracy output over USB.
@@ -54,6 +56,10 @@ working set from 31,328 B to 21,600 B. See
   attention kernels, including the complete attention-layer benchmark.
 - [`tools/validate_e2e.py`](tools/validate_e2e.py) — independent host reference
   and serial validator.
+- [`esp32_cluster_transport/`](esp32_cluster_transport/) — LAN worker discovery
+  and validated binary echo firmware.
+- [`results/TRANSPORT_RESULTS.md`](results/TRANSPORT_RESULTS.md) — measured UDP
+  and TCP latency, throughput, and loss.
 - [`results/`](results/) — raw board measurements and interpretation.
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — narrow milestones and gates.
 - [`docs/PROBLEMS_AND_SOLUTIONS.md`](docs/PROBLEMS_AND_SOLUTIONS.md) — pitch-ready
@@ -98,5 +104,7 @@ The first build used Arduino CLI 1.5.1, Arduino-ESP32 3.3.11, and esptool 5.3.1.
 - Latency is measured; energy has not yet been instrumented.
 - Only one ESP32 is currently available, so cluster speedup remains a design,
   not a measured claim.
+- LAN transport is measured with one worker at strong signal; contention and
+  straggler behavior require the four-board setup.
 - No world-first claim is justified; related MCU and distributed Transformer
   work already exists.

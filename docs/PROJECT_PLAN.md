@@ -50,7 +50,8 @@ Every optimization must satisfy all of these before it is called successful:
 
 ### M3 — Four-node cluster (next; additional hardware required for scaling)
 
-- Measure TCP, UDP, and ESP-NOW payload throughput and round-trip latency.
+- TCP and UDP payload throughput and round-trip latency are measured against one
+  physical worker; ESP-NOW and concurrent-worker tests remain.
 - Implement head-parallel execution first.
 - Implement exact key/value sharding with distributed online-softmax reduction.
 - Compare one versus two versus four nodes at identical shapes and accuracy.

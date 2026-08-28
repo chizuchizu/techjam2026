@@ -68,7 +68,8 @@ from transport time.
 ## Network experiment order
 
 1. Measure payload throughput and RTT for 256 B through 32 KB over TCP, UDP, and
-   ESP-NOW.
+   ESP-NOW. One-worker TCP/UDP measurement is complete; concurrent and ESP-NOW
+   measurements remain.
 2. Run one worker remotely with no partitioning to quantify pure overhead.
 3. Run two head shards; compare compute-only, communication-only, and end-to-end
    latency.
@@ -85,4 +86,3 @@ available.
 
 No multi-node performance claim is currently made because only one physical
 board has been measured.
-
