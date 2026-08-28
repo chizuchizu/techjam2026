@@ -34,13 +34,13 @@ is the primary metric.
 | Compile with eager precision casts + rounded division + CUDA libdevice | fail, 45/13,107,200 | — | — | — | Reject: same FP16 error pattern |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Previous FP16 best |
 | Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
-| Score-rounded Triton attention, trailing 4 + static graph output | pass, 0/52,428,800 | 2.454 ms | **0.3727 ms** | **6.585x** | Current robust FP16 best |
+| Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
-| Padded FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 3.376 ms | **0.4052 ms** | **8.330x** | New padded best |
+| Padded FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.627 ms | **0.3464 ms** | **7.583x** | New padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
-| Causal FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 2.258 ms | **0.3931 ms** | **5.744x** | New causal best |
+| Causal FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.220 ms | **0.3767 ms** | **5.894x** | New causal best |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
-| Causal+padded FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 3.818 ms | **0.4218 ms** | **9.052x** | New causal+padded best |
+| Causal+padded FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.863 ms | **0.3878 ms** | **7.383x** | New causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
@@ -74,16 +74,20 @@ reference attention algorithm; tested BF16 outputs are bit-exact. CPU uses the
 baseline. Explicit `--sdpa-layers` values override FP32/FP16 selection.
 
 The new opt-in `--triton-rounded-attention` supersedes SDPA for the known
-default FP16 target. Its specialized `S=128`, head-dimension-64 kernel tiles 64
-queries against all keys, rounds the QK matmul result to FP16, rounds the scale
-multiply to FP16 again, then performs FP32 softmax and an FP16 probability/value
-dot. Those are the same materialization boundaries as the explicit reference.
-Trailing four layers passed 100 trials in every mask regime (52,428,800 outputs
-per regime); five layers failed. In contrast, a stronger audit found that the
-previous four-layer cuDNN path fails seven elements beyond its original 25-seed
-window. The Triton shorthand is therefore gated to the fully tested model,
-FP16, and input scale 1.0. At input scale 0.1, four Triton layers fail while two
-pass; explicit indices retain that sensitivity control.
+default FP16 target. Its specialized `S=128`, head-dimension-64 kernel tiles 16
+queries against all keys for dense/causal inputs and 64 for padded inputs,
+rounds the QK matmul result to FP16, and rounds the
+scale multiply to FP16 again. Its FP32 softmax reproduces PyTorch
+`PersistentSoftmax.cuh`: four lane-local values are summed sequentially, the 32
+lane totals follow the XOR reduction tree, CUDA libdevice supplies `exp`, and
+`tl.div_rn` supplies correctly rounded division. Probabilities are then rounded
+to FP16 before the value dot product. These are the reference materialization
+boundaries and arithmetic order, so all six layers are bit-exact. The final
+kernel passed 100 trials in every mask regime (52,428,800 outputs per regime,
+209,715,200 total), plus 25 trials at input scales 0.1 and 10. In contrast, a
+stronger audit found that the previous four-layer cuDNN path fails seven
+elements beyond its original 25-seed window. The shorthand is gated to the
+fully tested model and FP16 dtype; explicit indices retain research control.
 
 Compiled FP32 `reduce-overhead` also passed tested small, default,
 causal+padded, and long-sequence shapes. Observed speedups were respectively
@@ -192,14 +196,17 @@ Three noncausal padded layers and two causal layers passed 25 trials, including
 padding ratios 0.10, 0.25, 0.50, and 0.75. `--sdpa-layer-indices` preserves this
 experimental control while automatic dispatch uses the proven trailing sets.
 
-The score-rounded Triton default trace also has 79 graph nodes. After H200
-launch-geometry tuning, four custom attention launches total 18.21 microseconds
-versus 19.52 microseconds for four cuDNN SDPA launches in a neighboring trace.
-A shared-weight, same-process interleaved graph A/B measured 0.37386 ms for
-rounded Triton versus 0.39146 ms for cuDNN, a **1.047x incremental speedup**.
-Matching cuDNN's BSHD-backed output strides was essential: the first prototype
-forced four transpose copies and erased the kernel benefit. A sweep over query
-tiles, warps, and pipeline stages selected 64 rows, four warps, and one stage.
+The final exact rounded-Triton default trace has 61 graph nodes and 298.467
+microseconds of summed GPU kernel time. Its six custom attention launches total
+38.976 microseconds. Relative to the previous 79-node, 342.5-microsecond graph,
+moving all six layers to the custom kernel removes 18 nodes and 44.0
+microseconds (12.9%) of GPU work while becoming bit-exact. The measured
+end-to-end latency is 0.3237 ms with graph-owned output and 0.3303 ms with a safe
+output clone. Matching cuDNN's BSHD-backed output strides was essential: the
+first prototype forced transpose copies and erased the kernel benefit. A sweep
+over query tiles, warps, and pipeline stages selected 16 rows, four warps, and
+three stages for dense/causal inputs. Padded inputs retain the audited 64-row,
+four-warp, one-stage geometry because the faster tile changes eager equivalence.
 
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
@@ -243,12 +250,13 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.3727 ms, the current rounded-Triton FP16 path sustains an effective 108.0
-TFLOP/s on the 40.265-GFLOP logical model, about 12.9% of the estimated 835.5
-TFLOP/s dense Tensor Core roof. It is 7.7x above the compute-only floor and 3.1x
-above the logical-traffic floor. The remaining gap is consistent with the trace:
-medium GEMMs, reductions, copies, GELU, and serial dependencies dominate rather
-than the now-18.2-microsecond custom attention total. TensorRT FP32 at 0.5127 ms
+At 0.3237 ms, the current rounded-Triton FP16 path sustains an effective 124.4
+TFLOP/s on the 40.265-GFLOP logical model, about 14.9% of the estimated 835.5
+TFLOP/s dense Tensor Core roof. It is 6.72x above the compute-only floor and
+2.72x above the logical-traffic floor. The remaining gap is consistent with the
+trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
+rather than the 39.0-microsecond total for six exact custom attention kernels.
+TensorRT FP32 at 0.5127 ms
 is 78.5 effective TFLOP/s; this is not directly comparable to the FP16 roof
 because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 
@@ -257,7 +265,7 @@ because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 | Priority | Work | Present? | Expected end-to-end gain | Difficulty | Dependencies / conflicts |
 |---|---|---:|---:|---:|---|
 | P0 | Recover official shapes and dtype/mask matrix | No | Enables reliable dispatch | Low/admin | Prerequisite for every specialization |
-| P0 | Accuracy/backend gate attention per case | Rounded Triton implemented for known FP16 target | 1.05–2x, sequence-dependent | Low–medium | BF16 remains on reference math |
+| P0 | Accuracy/backend gate attention per case | Exact rounded Triton implemented for all layers of known FP16 target | 1.05–2x, sequence-dependent | Low–medium | BF16 remains on reference math |
 | P1 | Packed QKV projection | **Implemented** | Observed incremental gain; usually 5–15% | Medium | Compounds with SDPA and BSHD layout |
 | P1 | Compile/CUDA graph/TensorRT sweep | **TensorRT FP32 + graph implemented; FP16 rejected** | Observed 1.10–6.99x | Low–medium | Static shapes; accuracy gate every engine |
 | P1 | Raw CUDA graph replay | **Implemented** | Observed 4.25–6.12x | Low | Static shape/mask regime; preserves eager kernels and numerics |

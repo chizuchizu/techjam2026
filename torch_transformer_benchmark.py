@@ -1203,7 +1203,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--triton-rounded-attention",
         action="store_true",
-        help="use the proven trailing-four rounded Triton attention layers",
+        help="use exact score-rounded Triton attention in every layer",
     )
     parser.add_argument(
         "--triton-rounded-attention-layer-indices",
@@ -1314,10 +1314,6 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         and args.triton_fused_add_norm_sites
     ):
         raise ValueError("enable only one Triton experiment at a time")
-    if args.triton_rounded_attention and args.input_scale != 1.0:
-        raise ValueError(
-            "automatic rounded attention is accuracy-gated only for input scale 1"
-        )
     if args.triton_rounded_attention and (
         args.batch_size != 8
         or args.d_model != 512
@@ -1362,7 +1358,7 @@ def main() -> int:
         args.padding_ratio,
     )
     triton_rounded_attention_layer_indices = (
-        tuple(range(max(0, config.num_layers - 4), config.num_layers))
+        tuple(range(config.num_layers))
         if args.triton_rounded_attention
         else args.triton_rounded_attention_layer_indices
     )

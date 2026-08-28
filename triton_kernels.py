@@ -6,6 +6,43 @@ import torch
 import triton
 import triton.language as tl
 from torch._inductor.runtime import triton_helpers
+from triton.language.extra import libdevice
+
+
+@triton.jit
+def _xor_sum_32(values, block_m: tl.constexpr):
+    """Return lane-zero's CUDA XOR-shuffle reduction tree."""
+    values = values.reshape(block_m, 2, 16).permute(0, 2, 1)
+    left, right = values.split()
+    values = left + right
+    values = values.reshape(block_m, 2, 8).permute(0, 2, 1)
+    left, right = values.split()
+    values = left + right
+    values = values.reshape(block_m, 2, 4).permute(0, 2, 1)
+    left, right = values.split()
+    values = left + right
+    values = values.reshape(block_m, 2, 2).permute(0, 2, 1)
+    left, right = values.split()
+    values = left + right
+    values = values.reshape(block_m, 2)
+    left, right = values.split()
+    return left + right
+
+
+@triton.jit
+def _pytorch_softmax_128(scores, block_m: tl.constexpr):
+    """Match PersistentSoftmax.cuh's lane-local sum order for 128 columns."""
+    scores -= tl.max(scores, axis=1)[:, None]
+    probabilities = libdevice.exp(scores)
+    lane_values = probabilities.reshape(block_m, 4, 32).permute(0, 2, 1)
+    even_values, odd_values = lane_values.reshape(block_m, 32, 2, 2).split()
+    value_0, value_2 = even_values.split()
+    value_1, value_3 = odd_values.split()
+    lane_sum = value_0 + value_1
+    lane_sum += value_2
+    lane_sum += value_3
+    denominator = _xor_sum_32(lane_sum, block_m)
+    return tl.div_rn(probabilities, denominator[:, None])
 
 
 @triton.jit
@@ -183,9 +220,7 @@ def _rounded_attention_kernel(
         score_mask &= valid_keys[None, :]
     scores = tl.where(score_mask, scores, float("-inf"))
 
-    scores -= tl.max(scores, axis=1)[:, None]
-    probabilities = tl.exp(scores)
-    probabilities /= tl.sum(probabilities, axis=1)[:, None]
+    probabilities = _pytorch_softmax_128(scores, block_m)
     probabilities = probabilities.to(tl.float16)
 
     values = tl.load(
@@ -242,9 +277,11 @@ def rounded_attention(
         if valid_token_mask is not None
         else (0, 0)
     )
-    # H200 tuning for B=8, H=8, S=128, D=64. A 64-row tile with four warps
-    # outperformed the 16/32-row variants while preserving rowwise arithmetic.
-    block_m = 64
+    # H200 tuning for the exact-division kernel selected 16 rows and three
+    # stages for dense/causal inputs. Padded softmax follows a different eager
+    # arithmetic path and needs the audited 64-row, one-stage geometry.
+    block_m = 64 if valid_token_mask is not None else 16
+    num_stages = 1 if valid_token_mask is not None else 3
     block_n = 128
     _rounded_attention_kernel[(triton.cdiv(seq_len, block_m), batch * heads)](
         q,
@@ -266,6 +303,6 @@ def rounded_attention(
         block_m=block_m,
         block_n=block_n,
         num_warps=4,
-        num_stages=1,
+        num_stages=num_stages,
     )
     return output

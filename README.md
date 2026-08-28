@@ -78,13 +78,15 @@ FP16 25-trial accuracy screen, so the verified best commands leave it empty.
 Compilation is recommended only for accuracy-tested FP32 cases. It failed the
 strict FP16 numerical gate.
 
-`--triton-rounded-attention` selects a fixed-shape Triton kernel in the trailing
-four FP16 layers for the known default model and input scale. It preserves the
-reference path's two FP16 score-rounding boundaries before FP32 softmax. The
-four-layer setting passed 100 trials for unmasked, padded, causal, and
-causal+padded cases. Use
+`--triton-rounded-attention` selects a fixed-shape Triton kernel in all six FP16
+layers of the known default model. It preserves the reference path's two FP16
+score-rounding boundaries, matches PyTorch's lane-local/XOR warp softmax sum,
+uses CUDA libdevice exponentiation and correctly rounded division, then rounds
+the probabilities to FP16 before the value dot product. The six-layer setting
+is bit-exact over 100 trials each for unmasked, padded, causal, and
+causal+padded cases, and over 25-trial input-scale checks at 0.1 and 10. Use
 `--triton-rounded-attention-layer-indices 2,3,4,5` only for explicit research;
-the shorthand deliberately rejects other shapes, dtypes, and input scales.
+the shorthand deliberately rejects other shapes and dtypes.
 
 `--cuda-graph-user` captures the unchanged eager kernels, copies each new input
 into graph-owned storage, submits the model with one graph launch, and clones

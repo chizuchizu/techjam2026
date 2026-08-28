@@ -20,7 +20,8 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
 3. Keep and expand the opt-in packed-QKV + SDPA implementation with per-shape
    accuracy dispatch (known FP16 shape: four unmasked, three padded, two causal).
    Prefer the implemented score-rounded Triton attention for the known default
-   FP16 shape: four trailing layers pass the stronger 100-trial mask-mode audit.
+   FP16 shape: all six layers are bit-exact in the stronger 100-trial audit for
+   unmasked, padded, causal, and causal+padded modes.
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
    official static shape and mask regimes.
 5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
