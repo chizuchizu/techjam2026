@@ -207,6 +207,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         triton_fused_add_norm_sites: Tuple[int, ...],
         triton_rounded_attention_layer_indices: Tuple[int, ...],
         pretranspose_ffn_output_weights: bool = False,
+        triton_exact_initial_norm: bool = False,
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -273,6 +274,7 @@ class UserOptimizedTransformer(BaselineTransformer):
             triton_rounded_attention_layer_indices
         )
         self.pretranspose_ffn_output_weights = pretranspose_ffn_output_weights
+        self.triton_exact_initial_norm = triton_exact_initial_norm
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self._packed_ffn_out: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
@@ -581,7 +583,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         valid_token_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
         """Pipeline blocks so each residual add feeds a fused next LayerNorm."""
-        from triton_kernels import add_layer_norm
+        from triton_kernels import add_layer_norm, layer_norm_512
 
         sdpa_layer_indices = (
             frozenset()
@@ -602,7 +604,12 @@ class UserOptimizedTransformer(BaselineTransformer):
             if valid_token_mask is not None and needs_invalid_mask
             else None
         )
-        normalized_for_attention = self.layers[0].norm1(x)
+        first_norm = self.layers[0].norm1
+        normalized_for_attention = (
+            layer_norm_512(x, first_norm.weight, first_norm.bias, first_norm.eps)
+            if self.triton_exact_initial_norm
+            else first_norm(x)
+        )
 
         for layer_index, layer in enumerate(self.layers):
             if layer_index in self.triton_rounded_attention_layer_indices:
@@ -1317,6 +1324,11 @@ def parse_args() -> argparse.Namespace:
         help="use exact fused residual+following-LayerNorm at every site",
     )
     parser.add_argument(
+        "--triton-exact-initial-norm",
+        action="store_true",
+        help="replace the initial FP16 width-512 LayerNorm with exact Triton",
+    )
+    parser.add_argument(
         "--triton-rounded-attention",
         action="store_true",
         help="use exact score-rounded Triton attention in every layer",
@@ -1439,6 +1451,12 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
     triton_add_norm_requested = bool(
         args.triton_exact_add_norm or args.triton_fused_add_norm_sites
     )
+    if args.triton_exact_initial_norm and not triton_add_norm_requested:
+        raise ValueError("exact initial LayerNorm requires a fused add/norm pipeline")
+    if args.triton_exact_initial_norm and device.type != "cuda":
+        raise ValueError("exact initial LayerNorm requires a CUDA device")
+    if args.triton_exact_initial_norm and dtype != torch.float16:
+        raise ValueError("exact initial LayerNorm currently requires FP16")
     if triton_add_norm_requested and device.type != "cuda":
         raise ValueError("Triton add+LayerNorm requires a CUDA device")
     if triton_add_norm_requested and dtype != torch.float16:
@@ -1546,6 +1564,7 @@ def main() -> int:
         triton_fused_add_norm_sites,
         triton_rounded_attention_layer_indices,
         args.pretranspose_ffn_output_weights,
+        args.triton_exact_initial_norm,
     )
     copy_model_weights(
         baseline,
@@ -1610,6 +1629,8 @@ def main() -> int:
             )
         if args.pretranspose_ffn_output_weights:
             print("pretranspose_ffn_output_weights=True")
+        if args.triton_exact_initial_norm:
+            print("triton_exact_initial_norm=True")
         if triton_linear_gelu_layer_indices:
             print(
                 "triton_linear_gelu_layer_indices="

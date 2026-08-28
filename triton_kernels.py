@@ -230,6 +230,66 @@ def add_layer_norm(
 
 
 @triton.jit
+def _layer_norm_512_kernel(
+    input_ptr,
+    weight_ptr,
+    bias_ptr,
+    output_ptr,
+    eps: tl.constexpr,
+):
+    """Normalize one FP16 width-512 row using PyTorch's exact Welford tree."""
+    row = tl.program_id(0)
+    offsets = tl.arange(0, 512)
+    row_offsets = row * 512 + offsets
+    values = tl.load(input_ptr + row_offsets).to(tl.float32)
+    mean, variance = _pytorch_layer_norm_stats_512(values)
+    inverse_std = tl.rsqrt(variance + eps)
+    weight = tl.load(weight_ptr + offsets).to(tl.float32)
+    bias = tl.load(bias_ptr + offsets).to(tl.float32)
+    tl.store(
+        output_ptr + row_offsets,
+        weight * (inverse_std * (values - mean)) + bias,
+    )
+
+
+def layer_norm_512(
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+    eps: float,
+) -> torch.Tensor:
+    """Run the fixed-width FP16 LayerNorm with PyTorch-equivalent reduction."""
+    if (
+        not inputs.is_cuda
+        or inputs.dtype != torch.float16
+        or not inputs.is_contiguous()
+        or inputs.shape[-1] != 512
+    ):
+        raise ValueError("exact Triton LayerNorm requires contiguous CUDA FP16 width 512")
+    if weight.shape != (512,) or bias.shape != (512,):
+        raise ValueError("LayerNorm parameters must have width 512")
+    if any(
+        parameter.device != inputs.device
+        or parameter.dtype != torch.float16
+        or not parameter.is_contiguous()
+        for parameter in (weight, bias)
+    ):
+        raise ValueError("LayerNorm parameters must be contiguous CUDA FP16")
+
+    output = torch.empty_like(inputs)
+    rows = inputs.numel() // 512
+    _layer_norm_512_kernel[(rows,)](
+        inputs,
+        weight,
+        bias,
+        output,
+        eps=eps,
+        num_warps=4,
+    )
+    return output
+
+
+@triton.jit
 def _linear_exact_gelu_kernel(
     input_ptr,
     weight_ptr,
