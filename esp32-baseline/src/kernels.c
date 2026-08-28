@@ -12,14 +12,14 @@
  * torch CPU reference closely enough for the EXACT path's own gate).
  */
 void tm_gemm_f32(const float* A, const float* W, const float* bias,
-                 float* C, int M, int K, int N) {
+                 float* C, int M, int K, int N, int rowStride) {
     for (int i = 0; i < M; i++) {
         const float* arow = A + (size_t)i * K;
         for (int j = 0; j < N; j++) {
             const float* wrow = W + (size_t)j * K;
             float acc = 0.0f;
             for (int k = 0; k < K; k++) acc += arow[k] * wrow[k];
-            C[(size_t)i * N + j] = acc + (bias ? bias[j] : 0.0f);
+            C[(size_t)i * rowStride + j] = acc + (bias ? bias[j] : 0.0f);
         }
     }
 }
@@ -33,7 +33,7 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
  */
 void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
                  const float* bias, float* C,
-                 int M, int K, int N) {
+                 int M, int K, int N, int rowStride) {
     /* find activation scale + quantize A into a static scratch */
     static int16_t a16[TM_S * TM_D];
     float amax = 0.0f;
@@ -62,7 +62,7 @@ void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
             for (int k = 0; k < K; k++)
                 acc = (int32_t)((uint32_t)acc +
                                 (uint32_t)((int32_t)arow[k] * (int32_t)wrow[k]));
-            C[(size_t)i * N + j] = (float)acc * g + (bias ? bias[j] : 0.0f);
+            C[(size_t)i * rowStride + j] = (float)acc * g + (bias ? bias[j] : 0.0f);
         }
     }
 }

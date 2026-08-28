@@ -19,13 +19,13 @@ extern "C" {
  */
 void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
                  const float* bias, float* C,
-                 int M, int K, int N);
+                 int M, int K, int N, int rowStride);
 
 /* ---------------- fp32 GEMM (EXACT) ----------------
  * C[M,N] = A[M,K] . W[N,K]^T + bias[N]   (torchnn.Linear layout)
  */
 void tm_gemm_f32(const float* A, const float* W, const float* bias,
-                 float* C, int M, int K, int N);
+                 float* C, int M, int K, int N, int rowStride);
 
 /* ---------------- LayerNorm ----------------
  * two-pass fp32: mean, unbiased-norm var, eps=TM_LN_EPS.

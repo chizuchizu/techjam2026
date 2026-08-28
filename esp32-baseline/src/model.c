@@ -74,22 +74,29 @@ static uint32_t woff(int layer, int blk) {
     }
 }
 
-/* Quantize an [S,HD] fp32 slice into int16 Q15 (per-slice amax scale).
+/* Quantize an [S,HD] fp32 slice (strided over the 128-col ctx view) into
+ * int16 Q15 (per-slice amax scale). src row i lives at src[i*rowStride .. +HD).
  * Returns the dequant scale = amax/32767 so value = (float)q16 * scale. */
-static float quant_head(const float* src, int16_t* dst) {
-    int n = TM_S * TM_HD;
+static float quant_head(const float* src, int rowStride, int16_t* dst) {
     float amax = 0.0f;
-    for (int i = 0; i < n; i++) {
-        float v = src[i] < 0.0f ? -src[i] : src[i];
-        if (v > amax) amax = v;
+    for (int i = 0; i < TM_S; i++) {
+        const float* row = src + (size_t)i * rowStride;
+        for (int d = 0; d < TM_HD; d++) {
+            float v = row[d] < 0.0f ? -row[d] : row[d];
+            if (v > amax) amax = v;
+        }
     }
     if (amax == 0.0f) amax = 1.0f;
     float sa = TM_QACT_MAX / amax;
-    for (int i = 0; i < n; i++) {
-        int q = (int)llrintf(src[i] * sa);
-        if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX;
-        if (q < -TM_QACT_MAX) q = -(int)TM_QACT_MAX;
-        dst[i] = (int16_t)q;
+    for (int i = 0; i < TM_S; i++) {
+        const float* row = src + (size_t)i * rowStride;
+        int16_t* drow = dst + (size_t)i * TM_HD;
+        for (int d = 0; d < TM_HD; d++) {
+            int q = (int)llrintf(row[d] * sa);
+            if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX;
+            if (q < -TM_QACT_MAX) q = -(int)TM_QACT_MAX;
+            drow[d] = (int16_t)q;
+        }
     }
     return amax / (float)TM_QACT_MAX;
 }
@@ -160,13 +167,11 @@ void tm_forward(const float* xin, float* yout,
                      g_buf1, TM_S, TM_D);
 
         /* ---- attention ----
-         * Head projections reuse g_buf2 (fp32 staging, free before the
-         * context is built) and are stored compactly as int16 Q15 head
-         * slices (g_qh/g_kh/g_vh + per-head scales) -> saves 24 KB.
-         * With HD=32 the staging occupies only cols 0..31 of the rows, i.e.
-         * head 0's eventual ctx slice, so heads are processed in the order
-         * 1,2,3,0: 0's slice is written last, after all staging has stopped
-         * (staging never touches cols 32..127 of an already-written slice). */
+         * Each head's Q/K/V projection is GEMMed directly into its own
+         * final ctx slice g_buf2[i*TM_D + h*TM_HD + d] (rowStride=TM_D),
+         * quantized to int16 Q15 head slices (g_qh/g_kh/g_vh + per-head
+         * scales, saves 24 KB), then attn_head overwrites that same slice
+         * with the head output. No staging aliases another head's slice. */
         {
             const int h_order[TM_H] = {1, 2, 3, 0};
             for (int t = 0; t < TM_H; t++) {
@@ -177,39 +182,39 @@ void tm_forward(const float* xin, float* yout,
                     const int16_t* wk = q12->q[l][1] + (size_t)h * TM_HD * TM_D;
                     const int16_t* wv = q12->q[l][2] + (size_t)h * TM_HD * TM_D;
                     tm_gemm_q12(g_buf1, wq, q12->ws[l][0],
-                                W + woff(l, TM_W_BLK_QB) + h * TM_HD, g_buf2,
-                                TM_S, TM_D, TM_HD);
-                    g_qs = quant_head(g_buf2, g_qh);
+                                W + woff(l, TM_W_BLK_QB) + h * TM_HD,
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
                     tm_gemm_q12(g_buf1, wk, q12->ws[l][1],
-                                W + woff(l, TM_W_BLK_KB) + h * TM_HD, g_buf2,
-                                TM_S, TM_D, TM_HD);
-                    g_ks = quant_head(g_buf2, g_kh);
+                                W + woff(l, TM_W_BLK_KB) + h * TM_HD,
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
                     tm_gemm_q12(g_buf1, wv, q12->ws[l][2],
-                                W + woff(l, TM_W_BLK_VB) + h * TM_HD, g_buf2,
-                                TM_S, TM_D, TM_HD);
-                    g_vs = quant_head(g_buf2, g_vh);
+                                W + woff(l, TM_W_BLK_VB) + h * TM_HD,
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
                 } else {
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_QW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_QB) + h * TM_HD,
-                                g_buf2, TM_S, TM_D, TM_HD);
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
 #ifdef TM_DUMP
                     if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_q2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
 #endif
-                    g_qs = quant_head(g_buf2, g_qh);
+                    g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_KW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_KB) + h * TM_HD,
-                                g_buf2, TM_S, TM_D, TM_HD);
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
 #ifdef TM_DUMP
                     if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_k2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
 #endif
-                    g_ks = quant_head(g_buf2, g_kh);
+                    g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_VW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_VB) + h * TM_HD,
-                                g_buf2, TM_S, TM_D, TM_HD);
+                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
 #ifdef TM_DUMP
                     if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_v2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
 #endif
-                    g_vs = quant_head(g_buf2, g_vh);
+                    g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
                 }
                 attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks, g_vh, g_vs, h);
 #ifdef TM_DUMP
@@ -228,10 +233,10 @@ void tm_forward(const float* xin, float* yout,
         if (fast) {
             /* reuse g_vh as temporaries: keep ctx, write result to g_buf1 */
             tm_gemm_q12(g_buf2, q12->q[l][3], q12->ws[l][3],
-                        W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D);
+                        W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
         } else {
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_OW),
-                        W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D);
+                        W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
         }
 #ifdef TM_DUMP
     { static int dl = 0; char pn[64];
@@ -250,18 +255,18 @@ void tm_forward(const float* xin, float* yout,
         /* ---- FFN ---- */
         if (fast) {
             tm_gemm_q12(g_buf1, q12->q[l][4], q12->ws[l][4],
-                        W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F);
+                        W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
         } else {
             tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_F1W),
-                        W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F);
+                        W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
         }
         tm_gelu_inplace(g_buf2, TM_S * TM_F);
         if (fast) {
             tm_gemm_q12(g_buf2, q12->q[l][5], q12->ws[l][5],
-                        W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D);
+                        W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_F2W),
-                        W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D);
+                        W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         }
         /* ---- residual ---- */
         tm_add_inplace(g_buf1, g_x, TM_S * TM_D);

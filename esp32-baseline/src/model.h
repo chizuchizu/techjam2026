@@ -30,13 +30,13 @@ int  tm_get_mode(void);
 void tm_forward(const float* x, float* y,
                 const float* weights_f32, const TMQ12Weights* q12);
 
-#ifdef __cplusplus
-}
-#endif
-
 /* workspace accessors (device firmware reads input / writes output
  * directly into the static arena to avoid a 128 KB duplicate) */
 float* tm_input(void);
 float* tm_output(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* TM_MODEL_H */
