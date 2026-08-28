@@ -31,6 +31,7 @@ VERSION = 1
 TYPE_HEAD_TASK = 5
 TYPE_HEAD_RESULT = 6
 UDP_PORT = 4210
+TCP_PORT = 4211
 HEADER = struct.Struct("!IBBHI")
 TASK_FIXED = struct.Struct("!HHBBHfff")
 RESULT_FIXED = struct.Struct("!HHBBHII")
@@ -47,6 +48,7 @@ class HeadResult:
     compute_us: int
     request_payload_bytes: int
     response_payload_bytes: int
+    transport: str
 
 
 def round_away_from_zero(value: float) -> int:
@@ -110,6 +112,77 @@ def build_task(
     )
 
 
+def parse_result(
+    reply: bytes,
+    request_id: int,
+    worker: int,
+    head: int,
+    causal: bool,
+    elapsed_us: int,
+    request_payload_bytes: int,
+    transport: str,
+) -> HeadResult | None:
+    if len(reply) < HEADER.size + RESULT_FIXED.size:
+        return None
+    magic, version, kind, payload_bytes, reply_id = HEADER.unpack_from(reply)
+    if (
+        magic != MAGIC
+        or version != VERSION
+        or kind != TYPE_HEAD_RESULT
+        or reply_id != request_id
+        or len(reply) != HEADER.size + payload_bytes
+    ):
+        return None
+    fixed = RESULT_FIXED.unpack_from(reply, HEADER.size)
+    sequence, dimension, flags, status, elements, decode_us, compute_us = fixed
+    if (
+        sequence != SEQUENCE
+        or dimension != HEAD_DIMENSION
+        or flags != (1 if causal else 0)
+        or status != 0
+        or elements != SEQUENCE * HEAD_DIMENSION
+        or payload_bytes != RESULT_FIXED.size + elements * 4
+    ):
+        return None
+    output = list(
+        struct.unpack_from(
+            f"!{elements}f", reply, HEADER.size + RESULT_FIXED.size
+        )
+    )
+    return HeadResult(
+        head,
+        worker,
+        output,
+        elapsed_us,
+        decode_us,
+        compute_us,
+        request_payload_bytes,
+        payload_bytes,
+        transport,
+    )
+
+
+def receive_exact(connection: socket.socket, length: int) -> bytes:
+    received = bytearray()
+    while len(received) < length:
+        chunk = connection.recv(length - len(received))
+        if not chunk:
+            raise ConnectionError("worker closed TCP response early")
+        received.extend(chunk)
+    return bytes(received)
+
+
+def choose_transport(payload: bytes, requested: str) -> str:
+    if requested != "auto":
+        return requested
+    response_payload_bytes = RESULT_FIXED.size + SEQUENCE * HEAD_DIMENSION * 4
+    return (
+        "udp"
+        if len(payload) <= 1400 and response_payload_bytes <= 1400
+        else "tcp"
+    )
+
+
 def send_task(
     host: str,
     worker: int,
@@ -119,6 +192,8 @@ def send_task(
     timeout: float,
     retries: int,
     iteration: int,
+    transport: str,
+    tcp_connection: socket.socket | None = None,
 ) -> HeadResult:
     request_id = (
         0xC3000000
@@ -129,55 +204,49 @@ def send_task(
     message = HEADER.pack(
         MAGIC, VERSION, TYPE_HEAD_TASK, len(payload), request_id
     ) + payload
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
-        connection.settimeout(timeout)
-        for attempt in range(retries + 1):
+    response_payload_bytes = RESULT_FIXED.size + SEQUENCE * HEAD_DIMENSION * 4
+    selected_transport = choose_transport(payload, transport)
+    for attempt in range(retries + 1):
+        try:
             start = time.perf_counter_ns()
-            connection.sendto(message, (host, UDP_PORT))
-            try:
-                reply, _ = connection.recvfrom(2048)
-            except TimeoutError:
-                if attempt == retries:
-                    raise
-                continue
+            if selected_transport == "udp":
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+                    connection.settimeout(timeout)
+                    connection.sendto(message, (host, UDP_PORT))
+                    reply, _ = connection.recvfrom(HEADER.size + response_payload_bytes)
+            else:
+                if tcp_connection is None:
+                    connection = socket.create_connection((host, TCP_PORT), timeout)
+                    connection.settimeout(timeout)
+                else:
+                    connection = tcp_connection
+                try:
+                    connection.sendall(message)
+                    reply_header = receive_exact(connection, HEADER.size)
+                    reply_payload_bytes = HEADER.unpack(reply_header)[3]
+                    if reply_payload_bytes > 32768:
+                        raise RuntimeError("worker TCP response is too large")
+                    reply = reply_header + receive_exact(connection,
+                                                         reply_payload_bytes)
+                finally:
+                    if tcp_connection is None:
+                        connection.close()
             elapsed_us = (time.perf_counter_ns() - start) // 1000
-            if len(reply) < HEADER.size + RESULT_FIXED.size:
-                continue
-            magic, version, kind, payload_bytes, reply_id = HEADER.unpack_from(reply)
-            if (
-                magic != MAGIC
-                or version != VERSION
-                or kind != TYPE_HEAD_RESULT
-                or reply_id != request_id
-                or len(reply) != HEADER.size + payload_bytes
-            ):
-                continue
-            fixed = RESULT_FIXED.unpack_from(reply, HEADER.size)
-            sequence, dimension, flags, status, elements, decode_us, compute_us = fixed
-            if (
-                sequence != SEQUENCE
-                or dimension != HEAD_DIMENSION
-                or flags != (1 if causal else 0)
-                or status != 0
-                or elements != SEQUENCE * HEAD_DIMENSION
-                or payload_bytes != RESULT_FIXED.size + elements * 4
-            ):
-                continue
-            output = list(
-                struct.unpack_from(
-                    f"!{elements}f", reply, HEADER.size + RESULT_FIXED.size
-                )
-            )
-            return HeadResult(
-                head,
+            result = parse_result(
+                reply,
+                request_id,
                 worker,
-                output,
+                head,
+                causal,
                 elapsed_us,
-                decode_us,
-                compute_us,
                 len(payload),
-                payload_bytes,
+                selected_transport,
             )
+            if result is not None:
+                return result
+        except (TimeoutError, ConnectionError, OSError):
+            if attempt == retries:
+                raise
     raise RuntimeError(f"invalid replies for head {head} from worker {worker}")
 
 
@@ -227,6 +296,7 @@ def run_case(
     retries: int,
     warmups: int,
     repetitions: int,
+    transport: str,
 ) -> tuple[list[dict], dict]:
     inputs = [
         [fixture_input(token, feature) for feature in range(MODEL_DIMENSION)]
@@ -248,55 +318,80 @@ def run_case(
         )
         for head in range(HEADS)
     ]
+    tcp_connections: list[socket.socket | None] = [None] * len(workers)
 
     def dispatch(iteration: int) -> tuple[list[HeadResult], int]:
         batch_start = time.perf_counter_ns()
+        tasks_by_worker = [[] for _ in workers]
+        for task in tasks:
+            tasks_by_worker[task[1]].append(task)
+
+        def dispatch_worker(worker_tasks: list[tuple]) -> list[HeadResult]:
+            worker_transport = choose_transport(worker_tasks[0][3], transport)
+            if worker_transport != "tcp":
+                return [
+                    send_task(
+                        host, worker, head, causal, payload, timeout, retries,
+                        iteration, worker_transport
+                    )
+                    for host, worker, head, payload in worker_tasks
+                ]
+            host = worker_tasks[0][0]
+            worker_index = worker_tasks[0][1]
+            for attempt in range(retries + 1):
+                try:
+                    connection = tcp_connections[worker_index]
+                    if connection is None:
+                        connection = socket.create_connection(
+                            (host, TCP_PORT), timeout
+                        )
+                        connection.settimeout(timeout)
+                        tcp_connections[worker_index] = connection
+                    return [
+                        send_task(
+                            task_host, worker, head, causal, payload,
+                            timeout, 0, iteration, worker_transport,
+                            connection
+                        )
+                        for task_host, worker, head, payload in worker_tasks
+                    ]
+                except (TimeoutError, ConnectionError, OSError):
+                    connection = tcp_connections[worker_index]
+                    if connection is not None:
+                        connection.close()
+                    tcp_connections[worker_index] = None
+                    if attempt == retries:
+                        raise
+            raise RuntimeError(f"TCP dispatch failed for {host}")
+
         if len(workers) == 1:
-            dispatched = [
-                send_task(
-                    host,
-                    worker,
-                    head,
-                    causal,
-                    payload,
-                    timeout,
-                    retries,
-                    iteration,
-                )
-                for host, worker, head, payload in tasks
-            ]
+            dispatched = dispatch_worker(tasks_by_worker[0])
         else:
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=len(workers)
             ) as pool:
-                futures = [
-                    pool.submit(
-                        send_task,
-                        host,
-                        worker,
-                        head,
-                        causal,
-                        payload,
-                        timeout,
-                        retries,
-                        iteration,
-                    )
-                    for host, worker, head, payload in tasks
-                ]
-                dispatched = [future.result() for future in futures]
+                futures = [pool.submit(dispatch_worker, group)
+                           for group in tasks_by_worker if group]
+                dispatched = [item for future in futures
+                              for item in future.result()]
         batch_elapsed = (time.perf_counter_ns() - batch_start) // 1000
         dispatched.sort(key=lambda result: result.head)
         return dispatched, batch_elapsed
 
-    for warmup in range(warmups):
-        dispatch(warmup)
     samples: list[list[HeadResult]] = [[] for _ in range(HEADS)]
     batch_samples = []
-    for repetition in range(repetitions):
-        dispatched, batch_elapsed = dispatch(warmups + repetition)
-        batch_samples.append(batch_elapsed)
-        for result in dispatched:
-            samples[result.head].append(result)
+    try:
+        for warmup in range(warmups):
+            dispatch(warmup)
+        for repetition in range(repetitions):
+            dispatched, batch_elapsed = dispatch(warmups + repetition)
+            batch_samples.append(batch_elapsed)
+            for result in dispatched:
+                samples[result.head].append(result)
+    finally:
+        for connection in tcp_connections:
+            if connection is not None:
+                connection.close()
 
     results = []
     for head_samples in samples:
@@ -311,6 +406,7 @@ def run_case(
                 int(statistics.median(item.compute_us for item in head_samples)),
                 representative.request_payload_bytes,
                 representative.response_payload_bytes,
+                representative.transport,
             )
         )
     batch_elapsed_us = int(statistics.median(batch_samples))
@@ -334,6 +430,7 @@ def run_case(
                 "worker": result.worker,
                 "request_payload_bytes": result.request_payload_bytes,
                 "response_payload_bytes": result.response_payload_bytes,
+                "transport": result.transport,
                 "elapsed_us": result.rtt_us,
                 "decode_us": result.decode_us,
                 "compute_us": result.compute_us,
@@ -360,6 +457,7 @@ def run_case(
         "worker": -1,
         "request_payload_bytes": sum(r.request_payload_bytes for r in results),
         "response_payload_bytes": sum(r.response_payload_bytes for r in results),
+        "transport": results[0].transport,
         "elapsed_us": batch_elapsed_us,
         "decode_us": sum(r.decode_us for r in results),
         "compute_us": max(compute_by_worker),
@@ -381,6 +479,9 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--transport", choices=("auto", "udp", "tcp"), default="auto"
+    )
     args = parser.parse_args()
     workers = [worker.strip() for worker in args.workers.split(",") if worker.strip()]
     if not workers:
@@ -397,18 +498,23 @@ def main() -> int:
             args.retries,
             args.warmups,
             args.repetitions,
+            args.transport,
         )
         rows.extend(head_rows)
         rows.append(full_row)
 
     fieldnames = list(rows[0])
-    writer = csv.DictWriter(__import__("sys").stdout, fieldnames=fieldnames)
+    writer = csv.DictWriter(
+        __import__("sys").stdout, fieldnames=fieldnames, lineterminator="\n"
+    )
     writer.writeheader()
     writer.writerows(rows)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", newline="") as output_file:
-            output_writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+            output_writer = csv.DictWriter(
+                output_file, fieldnames=fieldnames, lineterminator="\n"
+            )
             output_writer.writeheader()
             output_writer.writerows(rows)
     return 0 if all(row["status"] == "PASS" for row in rows) else 1

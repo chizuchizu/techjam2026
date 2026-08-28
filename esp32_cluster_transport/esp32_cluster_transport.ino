@@ -18,20 +18,26 @@ constexpr uint8_t TYPE_HEAD_TASK = 5;
 constexpr uint8_t TYPE_HEAD_RESULT = 6;
 constexpr uint8_t TYPE_KV_SHARD_TASK = 7;
 constexpr uint8_t TYPE_KV_SHARD_RESULT = 8;
+constexpr uint8_t TYPE_CAPABILITIES_REQUEST = 9;
+constexpr uint8_t TYPE_CAPABILITIES_REPLY = 10;
+constexpr uint32_t CAPABILITY_HEAD_UDP = 1u << 0;
+constexpr uint32_t CAPABILITY_HEAD_TCP = 1u << 1;
+constexpr uint32_t CAPABILITY_KV_SHARD_UDP = 1u << 2;
 constexpr uint16_t UDP_PORT = 4210;
 constexpr uint16_t TCP_PORT = 4211;
 constexpr size_t HEADER_BYTES = 12;
 constexpr size_t MAX_UDP_PAYLOAD = 1400;
 constexpr size_t MAX_TCP_PAYLOAD = 32768;
-constexpr uint16_t MAX_HEAD_SEQUENCE = 16;
-constexpr uint16_t MAX_HEAD_DIMENSION = 8;
+constexpr uint16_t MAX_HEAD_SEQUENCE = 128;
+constexpr uint16_t MAX_HEAD_DIMENSION = 32;
 constexpr uint16_t MAX_HEAD_ELEMENTS =
     MAX_HEAD_SEQUENCE * MAX_HEAD_DIMENSION;
-constexpr uint16_t MAX_HEAD_TILE = 16;
+constexpr uint16_t MAX_HEAD_TILE = 32;
 constexpr size_t HEAD_TASK_FIXED_BYTES = 20;
 constexpr size_t HEAD_RESULT_FIXED_BYTES = 16;
 constexpr size_t KV_SHARD_TASK_FIXED_BYTES = 24;
 constexpr size_t KV_SHARD_RESULT_FIXED_BYTES = 20;
+constexpr size_t CAPABILITIES_FIXED_BYTES = 20;
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr unsigned long TCP_READ_TIMEOUT_MS = 3000;
 
@@ -246,8 +252,10 @@ void computeHeadAttention(uint16_t sequence,
   }
 }
 
-int handleHeadTask(int packet_bytes, uint32_t request_id) {
-  const uint8_t *payload = udp_buffer + HEADER_BYTES;
+int handleHeadTaskPayload(const uint8_t *payload,
+                          size_t payload_bytes,
+                          uint8_t *response,
+                          size_t response_capacity) {
   const uint16_t sequence = readU16(payload);
   const uint16_t dimension = readU16(payload + 2);
   const bool causal = (payload[4] & 1u) != 0;
@@ -268,8 +276,7 @@ int handleHeadTask(int packet_bytes, uint32_t request_id) {
   const size_t elements = static_cast<size_t>(sequence) * dimension;
   const size_t expected_payload = HEAD_TASK_FIXED_BYTES + mask_bytes +
                                   elements * 2 + elements * sizeof(int16_t);
-  if (packet_bytes !=
-      static_cast<int>(HEADER_BYTES + expected_payload)) {
+  if (payload_bytes != expected_payload) {
     return 0;
   }
 
@@ -296,8 +303,9 @@ int handleHeadTask(int packet_bytes, uint32_t request_id) {
   const uint16_t response_payload_bytes =
       static_cast<uint16_t>(HEAD_RESULT_FIXED_BYTES +
                             elements * sizeof(float));
-  writeHeader(udp_buffer, TYPE_HEAD_RESULT, response_payload_bytes, request_id);
-  uint8_t *response = udp_buffer + HEADER_BYTES;
+  if (response_payload_bytes > response_capacity) {
+    return 0;
+  }
   writeU16(response, sequence);
   writeU16(response + 2, dimension);
   response[4] = causal ? 1 : 0;
@@ -309,7 +317,7 @@ int handleHeadTask(int packet_bytes, uint32_t request_id) {
     writeFloat(response + HEAD_RESULT_FIXED_BYTES + index * sizeof(float),
                head_output[index]);
   }
-  return HEADER_BYTES + response_payload_bytes;
+  return response_payload_bytes;
 }
 
 void computeKvShardStatistics(uint16_t sequence,
@@ -500,13 +508,19 @@ void handleUdp() {
     writeHeader(udp_buffer, TYPE_ECHO_REPLY, payload_bytes, request_id);
   } else if (request_type == TYPE_HEAD_TASK) {
     if (!validHeader(udp_buffer, TYPE_HEAD_TASK, MAX_UDP_PAYLOAD,
-                     payload_bytes, request_id)) {
+                     payload_bytes, request_id) ||
+        packet_bytes != static_cast<int>(HEADER_BYTES + payload_bytes)) {
       return;
     }
-    reply_bytes = handleHeadTask(packet_bytes, request_id);
-    if (reply_bytes == 0) {
+    const int response_payload_bytes = handleHeadTaskPayload(
+        udp_buffer + HEADER_BYTES, payload_bytes, udp_buffer + HEADER_BYTES,
+        MAX_UDP_PAYLOAD);
+    if (response_payload_bytes == 0) {
       return;
     }
+    writeHeader(udp_buffer, TYPE_HEAD_RESULT, response_payload_bytes,
+                request_id);
+    reply_bytes = HEADER_BYTES + response_payload_bytes;
   } else if (request_type == TYPE_KV_SHARD_TASK) {
     if (!validHeader(udp_buffer, TYPE_KV_SHARD_TASK, MAX_UDP_PAYLOAD,
                      payload_bytes, request_id)) {
@@ -516,6 +530,31 @@ void handleUdp() {
     if (reply_bytes == 0) {
       return;
     }
+  } else if (request_type == TYPE_CAPABILITIES_REQUEST) {
+    if (!validHeader(udp_buffer, TYPE_CAPABILITIES_REQUEST, 0, payload_bytes,
+                     request_id) ||
+        packet_bytes != static_cast<int>(HEADER_BYTES)) {
+      return;
+    }
+    const char *model = ESP.getChipModel();
+    const size_t model_length = strnlen(model, 31);
+    const uint16_t response_payload_bytes =
+        static_cast<uint16_t>(CAPABILITIES_FIXED_BYTES + model_length);
+    writeHeader(udp_buffer, TYPE_CAPABILITIES_REPLY, response_payload_bytes,
+                request_id);
+    uint8_t *response = udp_buffer + HEADER_BYTES;
+    writeU32(response, CAPABILITY_HEAD_UDP | CAPABILITY_HEAD_TCP |
+                           CAPABILITY_KV_SHARD_UDP);
+    writeU16(response + 4, MAX_HEAD_SEQUENCE);
+    writeU16(response + 6, MAX_HEAD_DIMENSION);
+    writeU16(response + 8, MAX_UDP_PAYLOAD);
+    writeU16(response + 10, MAX_TCP_PAYLOAD);
+    writeU32(response + 12, ESP.getFreeHeap());
+    writeU16(response + 16, ESP.getCpuFreqMHz());
+    response[18] = ESP.getChipCores();
+    response[19] = static_cast<uint8_t>(model_length);
+    memcpy(response + CAPABILITIES_FIXED_BYTES, model, model_length);
+    reply_bytes = HEADER_BYTES + response_payload_bytes;
   } else {
     return;
   }
@@ -553,15 +592,34 @@ void handleTcp() {
   }
   uint16_t payload_bytes = 0;
   uint32_t request_id = 0;
-  if (!validHeader(header, TYPE_ECHO_REQUEST, MAX_TCP_PAYLOAD, payload_bytes,
-                   request_id) ||
+  const uint8_t request_type = header[5];
+  const bool valid_echo =
+      request_type == TYPE_ECHO_REQUEST &&
+      validHeader(header, TYPE_ECHO_REQUEST, MAX_TCP_PAYLOAD, payload_bytes,
+                  request_id);
+  const bool valid_head =
+      request_type == TYPE_HEAD_TASK &&
+      validHeader(header, TYPE_HEAD_TASK, MAX_TCP_PAYLOAD, payload_bytes,
+                  request_id);
+  if ((!valid_echo && !valid_head) ||
       !readExact(tcp_client, tcp_payload, payload_bytes,
                  TCP_READ_TIMEOUT_MS)) {
     tcp_client.stop();
     return;
   }
 
-  writeHeader(header, TYPE_ECHO_REPLY, payload_bytes, request_id);
+  if (valid_echo) {
+    writeHeader(header, TYPE_ECHO_REPLY, payload_bytes, request_id);
+  } else {
+    const int response_payload_bytes = handleHeadTaskPayload(
+        tcp_payload, payload_bytes, tcp_payload, MAX_TCP_PAYLOAD);
+    if (response_payload_bytes == 0) {
+      tcp_client.stop();
+      return;
+    }
+    payload_bytes = static_cast<uint16_t>(response_payload_bytes);
+    writeHeader(header, TYPE_HEAD_RESULT, payload_bytes, request_id);
+  }
   if (!writeExact(tcp_client, header, sizeof(header)) ||
       !writeExact(tcp_client, tcp_payload, payload_bytes)) {
     tcp_client.stop();
@@ -570,9 +628,10 @@ void handleTcp() {
 
 void announceReady() {
   Serial.printf(
-      "TRANSPORT_READY,%s,udp=%u,tcp=%u,rssi=%d,free_heap=%u\n",
-      WiFi.localIP().toString().c_str(), UDP_PORT, TCP_PORT, WiFi.RSSI(),
-      static_cast<unsigned int>(ESP.getFreeHeap()));
+      "TRANSPORT_READY,%s,model=%s,cores=%u,mhz=%u,udp=%u,tcp=%u,rssi=%d,free_heap=%u\n",
+      WiFi.localIP().toString().c_str(), ESP.getChipModel(),
+      ESP.getChipCores(), ESP.getCpuFreqMHz(), UDP_PORT,
+      TCP_PORT, WiFi.RSSI(), static_cast<unsigned int>(ESP.getFreeHeap()));
 }
 
 void startServers() {

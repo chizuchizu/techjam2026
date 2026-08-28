@@ -72,6 +72,11 @@ Every optimization must satisfy all of these before it is called successful:
   shards per head. The one-worker result moves 3.43x more payload than head
   parallelism, supporting head-first execution for the current shape.
 - Compare one versus two versus four nodes at identical shapes and accuracy.
+- The head worker and coordinator now support the official `N=128,
+  d_head=32` shape over persistent TCP. All 16,384 output elements per mode
+  pass on one physical worker; two-board timing waits for WSL attachment.
+- Workers report chip model, cores, clock, heap, shape limits, and transport
+  capabilities so heterogeneous ESP32 models can be scheduled by measurement.
 
 ### M4 — Ten-node study
 
