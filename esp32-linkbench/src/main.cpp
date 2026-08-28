@@ -87,6 +87,14 @@ void loop() {
 
 #ifdef BUILD_ROLE_CLIENT
 static volatile uint32_t g_sent_ok = 0, g_send_fail = 0, g_send_err = 0, g_acked = 0;
+static uint32_t g_sent_us[N_PACKETS];            // client us per seq (for RTT)
+static uint32_t g_rtt_buf[N_PACKETS];
+static volatile uint32_t g_rtt_n = 0;
+
+static int cmp_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
 
 void OnDataSent(const uint8_t *mac, esp_now_send_status_t status) {
     if (status == ESP_NOW_SEND_SUCCESS) g_sent_ok++;
@@ -94,7 +102,13 @@ void OnDataSent(const uint8_t *mac, esp_now_send_status_t status) {
 }
 
 void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
-    if (len >= 8) g_acked++;   // server ACK is 8 bytes
+    if (len < 8) return;
+    g_acked++;                                   // server ACK is 8 bytes
+    uint32_t seq;
+    memcpy(&seq, data, 4);                       // echo seq (u32 LE)
+    if (seq < N_PACKETS && g_sent_us[seq] != 0 && g_rtt_n < N_PACKETS) {
+        g_rtt_buf[g_rtt_n++] = (uint32_t)esp_timer_get_time() - g_sent_us[seq];
+    }
 }
 
 void setup() {
@@ -118,6 +132,7 @@ void setup() {
             uint32_t seq = (uint32_t)i;
             memcpy(payload, &seq, 4);
             uint32_t us = (uint32_t)esp_timer_get_time();
+            g_sent_us[seq] = us;
             memcpy(payload + 4, &us, 4);
             esp_err_t e = esp_now_send(BROADCAST, payload, P);
             if (e != ESP_OK) g_send_err++;
@@ -127,10 +142,17 @@ void setup() {
         uint32_t issued = (uint32_t)N_PACKETS - g_send_err;
         uint32_t bytes_sent = issued * (uint32_t)P;
         uint64_t thr = (elapsed > 0) ? (uint64_t)bytes_sent * 1000000ull / (uint64_t)elapsed : 0;
-        Serial.printf("CLIENT|P=%d|N=%d|sent=%lu|fail=%lu|err=%lu|acked=%lu|bytes=%lu|us=%lld|thr=%llu\n",
+        uint32_t rtt_med = 0;
+        if (g_rtt_n) {
+            uint32_t tmp[N_PACKETS];
+            memcpy(tmp, g_rtt_buf, g_rtt_n * sizeof(uint32_t));
+            qsort(tmp, g_rtt_n, sizeof(uint32_t), cmp_u32);
+            rtt_med = tmp[g_rtt_n / 2];
+        }
+        Serial.printf("CLIENT|P=%d|N=%d|sent=%lu|fail=%lu|err=%lu|acked=%lu|bytes=%lu|us=%lld|thr=%llu|rtt_us_med=%lu\n",
                       P, N_PACKETS, (unsigned long)g_sent_ok, (unsigned long)g_send_fail,
                       (unsigned long)g_send_err, (unsigned long)g_acked, (unsigned long)bytes_sent,
-                      (long long)elapsed, (unsigned long long)thr);
+                      (long long)elapsed, (unsigned long long)thr, (unsigned long)rtt_med);
         Serial.flush();
     }
     Serial.println("CLIENT|DONE");
