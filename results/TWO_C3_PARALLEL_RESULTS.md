@@ -20,8 +20,8 @@ board medians.
 |---|---|---:|---:|---:|---:|---:|---:|
 | C3 node A only | `0,0,0,0` | 5.767 s | — | — | 3.022 s | — | — |
 | C3 node B only | `0,0,0,0` | 5.756 s | — | — | 3.021 s | — | — |
-| Two C3, round-robin | `0,1,0,1` | 2.881 s | **1.9998x** | **99.99%** | 1.523 s | **1.9833x** | **99.17%** |
-| Two C3, calibrated | balanced 2+2 | 2.889 s | **1.9941x** | **99.71%** | 1.512 s | **1.9978x** | **99.89%** |
+| Two C3, round-robin | `0,1,0,1` | 2.881 s | **2.00x** | **100.0%** | 1.523 s | **1.98x** | **99.2%** |
+| Two C3, calibrated | balanced 2+2 | 2.889 s | **1.99x** | **99.7%** | 1.512 s | **2.00x** | **99.9%** |
 
 The two isolated boards differ by about 0.2% non-causally and less than 0.02%
 causally. Calibration therefore selects two heads per board: `0,1,0,1` for the

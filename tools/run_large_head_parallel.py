@@ -243,10 +243,13 @@ def run_case(
     rows = []
     for head, head_samples in enumerate(samples):
         representative = head_samples[-1]
-        _, worker, output, _, _, _, response_bytes = representative
-        maximum_absolute, maximum_relative, failed = compare(
-            references[head], output
-        )
+        _, worker, _, _, _, _, response_bytes = representative
+        comparisons = [
+            compare(references[head], sample[2]) for sample in head_samples
+        ]
+        maximum_absolute = max(result[0] for result in comparisons)
+        maximum_relative = max(result[1] for result in comparisons)
+        failed = max(result[2] for result in comparisons)
         rows.append(
             {
                 "kind": "head",

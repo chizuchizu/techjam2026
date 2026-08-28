@@ -59,7 +59,7 @@ Every optimization must satisfy all of these before it is called successful:
   median complete forward is 106.614 ms with 24,800 B of model data and a
   22,688 B runtime working set.
 
-### M3 — Four-node cluster (in progress; two physical nodes complete)
+### M3 — Four-node cluster (head-parallel physical run complete)
 
 - TCP and UDP payload throughput and round-trip latency are measured against one
   physical worker; concurrent TCP is measured on both matched and heterogeneous
@@ -72,8 +72,9 @@ Every optimization must satisfy all of these before it is called successful:
   `(max, denominator, numerator)` statistics and the coordinator merges four
   shards per head. The one-worker result moves 3.43x more payload than head
   parallelism, supporting head-first execution for the current shape.
-- Compare one versus two versus four nodes at identical shapes and accuracy.
-  One- and two-node results now pass; four comparable nodes remain.
+- One, two, and four matched C3 nodes have now been compared at identical
+  shapes and accuracy. The four-node round-robin run reaches 3.98x non-causal
+  and 3.92x causal speedup, including Wi-Fi communication.
 - The head worker and coordinator now support the official `N=128,
   d_head=32` shape over persistent TCP. All 16,384 output elements per mode
   pass on every physical worker. Concurrent round-robin and profiled scheduling
@@ -84,8 +85,8 @@ Every optimization must satisfy all of these before it is called successful:
   dual-core ESP32. The coordinator now supports round-robin, calibrated-all,
   and unconstrained calibrated scheduling; the last policy may idle a node when
   using it would increase latency.
-- The matched pair achieves 1.9998x non-causal and 1.9833x causal round-robin
-  speedup, demonstrating 99.99% and 99.17% two-node efficiency respectively.
+- The matched pair achieves about 2x speedup. Four matched boards achieve
+  3.92–3.98x, with every measured response passing the accuracy gate.
 
 ### M4 — Ten-node study
 
@@ -98,7 +99,8 @@ Every optimization must satisfy all of these before it is called successful:
 
 1. Port the integer Q/K dot-product and compact weight storage to the official
    `S=128, D=128, L=4` teammate baseline, then remeasure on the C3.
-2. Extend the matched-C3 head-parallel test from two nodes to four nodes.
+2. Integrate the four-node transport with one complete official-size layer,
+   including Q/K/V and output projections in the timed path.
 3. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
 4. Sweep online tile sizes 4, 8, 16, and 32.
