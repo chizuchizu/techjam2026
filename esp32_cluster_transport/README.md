@@ -23,6 +23,9 @@ python3 tools/run_head_parallel.py --workers 192.168.0.X \
 python3 tools/run_large_head_parallel.py --workers 192.168.0.X \
   --scheduler round-robin \
   --output results/esp32c3_large_head_tcp_v1.csv
+python3 tools/run_case2_norm_head_parallel.py \
+  --workers 192.168.0.X,192.168.0.Y --seeds 0,1,2,3,4 \
+  --output results/case2_norm_head_v1.csv
 python3 tools/discover_esp32_workers.py --workers 192.168.0.X
 python3 tools/run_kv_sharded.py --workers 192.168.0.X \
   --output results/esp32c3_kv_sharded_v1.csv
@@ -52,6 +55,15 @@ the earlier two-C3 result is in
 [`../results/TWO_C3_PARALLEL_RESULTS.md`](../results/TWO_C3_PARALLEL_RESULTS.md),
 and the heterogeneous-board experiment is in
 [`../results/LARGE_HEAD_PARALLEL_RESULTS.md`](../results/LARGE_HEAD_PARALLEL_RESULTS.md).
+
+`run_case2_norm_head_parallel.py` uses the official case-2 layer-0 weights and
+starts from `X`. Each worker redundantly performs the complete 128-feature
+LayerNorm, computes its assigned Q/K/V projection rows, and runs one causal
+attention head. It returns both its normalized feature slice and context for
+direct validation. The official-weight two-C3 result is in
+[`../results/CASE2_NORM_HEAD_RESULTS.md`](../results/CASE2_NORM_HEAD_RESULTS.md).
+Regenerate the embedded layer-0 weights after changing baseline artifacts with
+`python3 tools/export_case2_cluster_layer0.py`.
 
 `run_kv_sharded.py` splits each head's 16 keys into four shards. A 250-byte task
 returns 660 bytes of stable online-softmax statistics. The coordinator merges

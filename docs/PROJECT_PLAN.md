@@ -87,6 +87,10 @@ Every optimization must satisfy all of these before it is called successful:
   using it would increase latency.
 - The matched pair achieves about 2x speedup. Four matched boards achieve
   3.92–3.98x, with every measured response passing the accuracy gate.
+- The official-weight path now starts from case-2 `X`: every worker performs
+  layer-0 LayerNorm, its assigned Q/K/V projection rows, and one causal head.
+  Five physical seeds pass; one C3 takes 9.693 s and two take 4.850 s. Output
+  projection, residuals, second LayerNorm, and FFN remain to complete a layer.
 
 ### M4 — Ten-node study
 
@@ -99,8 +103,8 @@ Every optimization must satisfy all of these before it is called successful:
 
 1. Port the integer Q/K dot-product and compact weight storage to the official
    `S=128, D=128, L=4` teammate baseline, then remeasure on the C3.
-2. Integrate the four-node transport with one complete official-size layer,
-   including Q/K/V and output projections in the timed path.
+2. Finish the official-size distributed layer by adding output projection,
+   residuals, second LayerNorm, and FFN to the verified Norm/Q/K/V/head path.
 3. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
 4. Sweep online tile sizes 4, 8, 16, and 32.

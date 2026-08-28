@@ -54,6 +54,9 @@ build directories.
 - The official-size baseline passes 25 host seeds and five device seeds.
 - Four matched XIAO ESP32-C3 boards achieve 3.92–3.98x attention-head speedup,
   or 98.0–99.4% four-node efficiency including Wi-Fi communication.
+- The integrated official-weight path now runs layer-0 LayerNorm, Q/K/V
+  projections, and attention on physical C3s. Two boards reduce this partial
+  layer path from 9.693 s to 4.850 s, with all five device seeds passing.
 - The earlier matched two-C3 experiment achieves about 2x speedup.
 - A separate heterogeneous C3 plus dual-core ESP32 experiment demonstrates why
   unequal boards require measured assignment. All returned elements pass the
@@ -99,7 +102,7 @@ combines the four returned contexts.
 | Four-C3 attention time | **0.766 s** |
 | Speedup | **3.92x** |
 | Accuracy | PASS, zero failed elements |
-| Not yet included | LayerNorm, Q/K/V projections, output projection, residuals, FFN, and the other three layers |
+| Not included in this original result | LayerNorm, Q/K/V projections, output projection, residuals, FFN, and the other three layers |
 
 Therefore, **case 2 is implemented end to end only on one C3**, where it takes
 42.09 s. The 0.766 s result is a case-2-shaped attention microbenchmark, not a
@@ -107,6 +110,12 @@ four-C3 end-to-end case-2 time. The complete single-board measurement is
 documented in [`esp32-baseline/README.md`](esp32-baseline/README.md), and the
 parallel measurement is in
 [`results/FOUR_C3_PARALLEL_RESULTS.md`](results/FOUR_C3_PARALLEL_RESULTS.md).
+
+A newer integrated path now includes the first LayerNorm and official layer-0
+Q/K/V projections before attention. Its measured two-C3 time is 4.850 s versus
+9.693 s on one C3, and all five physical accuracy seeds pass. It still excludes
+the output projection, residual, second LayerNorm, FFN, and later layers. See
+[`results/CASE2_NORM_HEAD_RESULTS.md`](results/CASE2_NORM_HEAD_RESULTS.md).
 
 See [`TODO.md`](TODO.md) for the shared priorities and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.

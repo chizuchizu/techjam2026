@@ -23,6 +23,7 @@ CAPABILITY_NAMES = {
     1 << 0: "head_udp",
     1 << 1: "head_tcp",
     1 << 2: "kv_shard_udp",
+    1 << 3: "case2_norm_head_tcp",
 }
 
 

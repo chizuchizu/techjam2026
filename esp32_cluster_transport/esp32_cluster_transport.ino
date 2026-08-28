@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <esp_timer.h>
 
+#include "case2_layer0_weights.h"
 #include "secrets.h"
 
 namespace {
@@ -20,14 +21,17 @@ constexpr uint8_t TYPE_KV_SHARD_TASK = 7;
 constexpr uint8_t TYPE_KV_SHARD_RESULT = 8;
 constexpr uint8_t TYPE_CAPABILITIES_REQUEST = 9;
 constexpr uint8_t TYPE_CAPABILITIES_REPLY = 10;
+constexpr uint8_t TYPE_NORM_HEAD_TASK = 11;
+constexpr uint8_t TYPE_NORM_HEAD_RESULT = 12;
 constexpr uint32_t CAPABILITY_HEAD_UDP = 1u << 0;
 constexpr uint32_t CAPABILITY_HEAD_TCP = 1u << 1;
 constexpr uint32_t CAPABILITY_KV_SHARD_UDP = 1u << 2;
+constexpr uint32_t CAPABILITY_CASE2_NORM_HEAD_TCP = 1u << 3;
 constexpr uint16_t UDP_PORT = 4210;
 constexpr uint16_t TCP_PORT = 4211;
 constexpr size_t HEADER_BYTES = 12;
 constexpr size_t MAX_UDP_PAYLOAD = 1400;
-constexpr size_t MAX_TCP_PAYLOAD = 32768;
+constexpr size_t MAX_TCP_PAYLOAD = 33024;
 constexpr uint16_t MAX_HEAD_SEQUENCE = 128;
 constexpr uint16_t MAX_HEAD_DIMENSION = 32;
 constexpr uint16_t MAX_HEAD_ELEMENTS =
@@ -38,6 +42,8 @@ constexpr size_t HEAD_RESULT_FIXED_BYTES = 16;
 constexpr size_t KV_SHARD_TASK_FIXED_BYTES = 24;
 constexpr size_t KV_SHARD_RESULT_FIXED_BYTES = 20;
 constexpr size_t CAPABILITIES_FIXED_BYTES = 20;
+constexpr size_t NORM_HEAD_TASK_FIXED_BYTES = 16;
+constexpr size_t NORM_HEAD_RESULT_FIXED_BYTES = 28;
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr unsigned long TCP_READ_TIMEOUT_MS = 3000;
 
@@ -49,7 +55,10 @@ uint8_t *tcp_payload = nullptr;
 int8_t head_query[MAX_HEAD_ELEMENTS];
 int8_t head_key[MAX_HEAD_ELEMENTS];
 int16_t head_value[MAX_HEAD_ELEMENTS];
+int16_t case2_head_query[MAX_HEAD_ELEMENTS];
+int16_t case2_head_key[MAX_HEAD_ELEMENTS];
 float head_output[MAX_HEAD_ELEMENTS];
+float norm_head_slice[MAX_HEAD_ELEMENTS];
 float head_scratch_scores[MAX_HEAD_TILE];
 float head_scratch_value[MAX_HEAD_DIMENSION];
 uint16_t head_scratch_indices[MAX_HEAD_TILE];
@@ -250,6 +259,261 @@ void computeHeadAttention(uint16_t sequence,
       }
     }
   }
+}
+
+void computeCase2LayerNormRow(const uint8_t *input,
+                              uint16_t token,
+                              float input_scale,
+                              float *normalized) {
+  const size_t row_begin =
+      static_cast<size_t>(token) * CASE2_MODEL_DIMENSION;
+  float mean = 0.0f;
+  for (uint16_t feature = 0; feature < CASE2_MODEL_DIMENSION; ++feature) {
+    const int16_t quantized = static_cast<int16_t>(
+        readU16(input + (row_begin + feature) * sizeof(int16_t)));
+    mean += static_cast<float>(quantized) * input_scale;
+  }
+  mean /= static_cast<float>(CASE2_MODEL_DIMENSION);
+
+  float variance = 0.0f;
+  for (uint16_t feature = 0; feature < CASE2_MODEL_DIMENSION; ++feature) {
+    const int16_t quantized = static_cast<int16_t>(
+        readU16(input + (row_begin + feature) * sizeof(int16_t)));
+    const float delta = static_cast<float>(quantized) * input_scale - mean;
+    variance += delta * delta;
+  }
+  variance /= static_cast<float>(CASE2_MODEL_DIMENSION);
+  const float reciprocal_standard_deviation =
+      1.0f / sqrtf(variance + CASE2_LAYER_NORM_EPSILON);
+  for (uint16_t feature = 0; feature < CASE2_MODEL_DIMENSION; ++feature) {
+    const int16_t quantized = static_cast<int16_t>(
+        readU16(input + (row_begin + feature) * sizeof(int16_t)));
+    const float value =
+        (static_cast<float>(quantized) * input_scale - mean) *
+        reciprocal_standard_deviation;
+    normalized[feature] = value * CASE2_L0_NORM_WEIGHT[feature] +
+                          CASE2_L0_NORM_BIAS[feature];
+  }
+}
+
+float normalizeAndQuantizeCase2Input(uint8_t *input,
+                                     uint8_t head,
+                                     float input_scale) {
+  float normalized[CASE2_MODEL_DIMENSION];
+  float maximum_absolute = 0.0f;
+  const uint16_t feature_begin = head * CASE2_HEAD_DIMENSION;
+  for (uint16_t token = 0; token < CASE2_SEQUENCE; ++token) {
+    computeCase2LayerNormRow(input, token, input_scale, normalized);
+    for (uint16_t feature = 0; feature < CASE2_MODEL_DIMENSION; ++feature) {
+      maximum_absolute =
+          fmaxf(maximum_absolute, fabsf(normalized[feature]));
+    }
+    memcpy(norm_head_slice + static_cast<size_t>(token) * CASE2_HEAD_DIMENSION,
+           normalized + feature_begin,
+           CASE2_HEAD_DIMENSION * sizeof(float));
+  }
+  if (maximum_absolute == 0.0f) {
+    maximum_absolute = 1.0f;
+  }
+  const float quantization_scale = 32767.0f / maximum_absolute;
+  for (uint16_t token = 0; token < CASE2_SEQUENCE; ++token) {
+    computeCase2LayerNormRow(input, token, input_scale, normalized);
+    const size_t row_begin =
+        static_cast<size_t>(token) * CASE2_MODEL_DIMENSION;
+    for (uint16_t feature = 0; feature < CASE2_MODEL_DIMENSION; ++feature) {
+      int32_t quantized =
+          static_cast<int32_t>(lrintf(normalized[feature] * quantization_scale));
+      quantized = constrain(quantized, -32767, 32767);
+      writeU16(input + (row_begin + feature) * sizeof(int16_t),
+               static_cast<uint16_t>(static_cast<int16_t>(quantized)));
+    }
+  }
+  return maximum_absolute / 32767.0f;
+}
+
+float projectCase2Head(const uint8_t *normalized_input,
+                       uint8_t head,
+                       const int16_t *weights,
+                       float weight_scale,
+                       const float *bias,
+                       uint8_t output_kind) {
+  float maximum_absolute = 0.0f;
+  const uint16_t output_begin = head * CASE2_HEAD_DIMENSION;
+  for (uint16_t token = 0; token < CASE2_SEQUENCE; ++token) {
+    const size_t input_begin =
+        static_cast<size_t>(token) * CASE2_MODEL_DIMENSION;
+    for (uint16_t feature = 0; feature < CASE2_HEAD_DIMENSION; ++feature) {
+      const uint16_t output_feature = output_begin + feature;
+      const int16_t *weight_row =
+          weights + static_cast<size_t>(output_feature) * CASE2_MODEL_DIMENSION;
+      int32_t accumulator = 0;
+      for (uint16_t input_feature = 0;
+           input_feature < CASE2_MODEL_DIMENSION; ++input_feature) {
+        const int16_t activation = static_cast<int16_t>(readU16(
+            normalized_input +
+            (input_begin + input_feature) * sizeof(int16_t)));
+        accumulator = static_cast<int32_t>(
+            static_cast<uint32_t>(accumulator) +
+            static_cast<uint32_t>(static_cast<int32_t>(activation) *
+                                  weight_row[input_feature]));
+      }
+      const float projected =
+          static_cast<float>(accumulator) * weight_scale + bias[output_feature];
+      head_output[static_cast<size_t>(token) * CASE2_HEAD_DIMENSION + feature] =
+          projected;
+      maximum_absolute = fmaxf(maximum_absolute, fabsf(projected));
+    }
+  }
+  if (maximum_absolute == 0.0f) {
+    maximum_absolute = 1.0f;
+  }
+  const float maximum_quantized = 32767.0f;
+  const float quantization_scale = maximum_quantized / maximum_absolute;
+  const size_t elements = CASE2_SEQUENCE * CASE2_HEAD_DIMENSION;
+  for (size_t index = 0; index < elements; ++index) {
+    int32_t quantized =
+        static_cast<int32_t>(lrintf(head_output[index] * quantization_scale));
+    quantized = constrain(quantized, -32767, 32767);
+    if (output_kind == 0) {
+      case2_head_query[index] = static_cast<int16_t>(quantized);
+    } else if (output_kind == 1) {
+      case2_head_key[index] = static_cast<int16_t>(quantized);
+    } else {
+      head_value[index] = static_cast<int16_t>(quantized);
+    }
+  }
+  return maximum_absolute / maximum_quantized;
+}
+
+void computeCase2HeadAttention(float query_scale,
+                               float key_scale,
+                               float value_scale) {
+  memset(head_output, 0, sizeof(head_output));
+  const float inverse_dimension =
+      1.0f / sqrtf(static_cast<float>(CASE2_HEAD_DIMENSION));
+  for (uint16_t query_index = 0; query_index < CASE2_SEQUENCE;
+       ++query_index) {
+    const int16_t *query_row =
+        case2_head_query +
+        static_cast<size_t>(query_index) * CASE2_HEAD_DIMENSION;
+    float accumulator[CASE2_HEAD_DIMENSION] = {};
+    float running_maximum = -INFINITY;
+    float running_sum = 0.0f;
+    for (uint16_t key_index = 0; key_index <= query_index; ++key_index) {
+      const int16_t *key_row =
+          case2_head_key +
+          static_cast<size_t>(key_index) * CASE2_HEAD_DIMENSION;
+      float score = 0.0f;
+      for (uint16_t feature = 0; feature < CASE2_HEAD_DIMENSION; ++feature) {
+        score += static_cast<float>(query_row[feature]) * query_scale *
+                 static_cast<float>(key_row[feature]) * key_scale;
+      }
+      score *= inverse_dimension;
+      if (score > running_maximum) {
+        const float rescale = expf(running_maximum - score);
+        running_sum *= rescale;
+        for (uint16_t feature = 0; feature < CASE2_HEAD_DIMENSION; ++feature) {
+          accumulator[feature] *= rescale;
+        }
+        running_maximum = score;
+      }
+      const float probability = expf(score - running_maximum);
+      running_sum += probability;
+      const int16_t *value_row =
+          head_value +
+          static_cast<size_t>(key_index) * CASE2_HEAD_DIMENSION;
+      for (uint16_t feature = 0; feature < CASE2_HEAD_DIMENSION; ++feature) {
+        accumulator[feature] += probability * value_row[feature];
+      }
+    }
+    float *output_row =
+        head_output +
+        static_cast<size_t>(query_index) * CASE2_HEAD_DIMENSION;
+    const float output_scale = value_scale / running_sum;
+    for (uint16_t feature = 0; feature < CASE2_HEAD_DIMENSION; ++feature) {
+      output_row[feature] = accumulator[feature] * output_scale;
+    }
+  }
+}
+
+int handleNormHeadTaskPayload(uint8_t *payload,
+                              size_t payload_bytes,
+                              uint8_t *response,
+                              size_t response_capacity) {
+  const uint16_t sequence = readU16(payload);
+  const uint16_t model_dimension = readU16(payload + 2);
+  const uint8_t head = payload[4];
+  const bool causal = (payload[5] & 1u) != 0;
+  const float input_scale = readFloat(payload + 8);
+  const float epsilon = readFloat(payload + 12);
+  const size_t input_elements =
+      static_cast<size_t>(CASE2_SEQUENCE) * CASE2_MODEL_DIMENSION;
+  const size_t expected_payload =
+      NORM_HEAD_TASK_FIXED_BYTES + input_elements * sizeof(int16_t);
+  if (sequence != CASE2_SEQUENCE || model_dimension != CASE2_MODEL_DIMENSION ||
+      head >= CASE2_HEADS || !causal || !isfinite(input_scale) ||
+      input_scale <= 0.0f || !isfinite(epsilon) ||
+      fabsf(epsilon - CASE2_LAYER_NORM_EPSILON) > 1.0e-8f ||
+      payload_bytes != expected_payload) {
+    return 0;
+  }
+
+  const int64_t decode_start = esp_timer_get_time();
+  memset(head_valid_mask, 0xFF, sizeof(head_valid_mask));
+  uint8_t *input = payload + NORM_HEAD_TASK_FIXED_BYTES;
+  const uint32_t decode_us =
+      static_cast<uint32_t>(esp_timer_get_time() - decode_start);
+
+  const int64_t layer_norm_start = esp_timer_get_time();
+  const float normalized_scale =
+      normalizeAndQuantizeCase2Input(input, head, input_scale);
+  const uint32_t layer_norm_us =
+      static_cast<uint32_t>(esp_timer_get_time() - layer_norm_start);
+
+  const int64_t projection_start = esp_timer_get_time();
+  const float query_scale = projectCase2Head(
+      input, head, CASE2_L0_Q_WEIGHT,
+      normalized_scale * CASE2_L0_Q_WEIGHT_SCALE, CASE2_L0_Q_BIAS, 0);
+  const float key_scale = projectCase2Head(
+      input, head, CASE2_L0_K_WEIGHT,
+      normalized_scale * CASE2_L0_K_WEIGHT_SCALE, CASE2_L0_K_BIAS, 1);
+  const float value_scale = projectCase2Head(
+      input, head, CASE2_L0_V_WEIGHT,
+      normalized_scale * CASE2_L0_V_WEIGHT_SCALE, CASE2_L0_V_BIAS, 2);
+  const uint32_t projection_us =
+      static_cast<uint32_t>(esp_timer_get_time() - projection_start);
+
+  const int64_t attention_start = esp_timer_get_time();
+  computeCase2HeadAttention(query_scale, key_scale, value_scale);
+  const uint32_t attention_us =
+      static_cast<uint32_t>(esp_timer_get_time() - attention_start);
+
+  const size_t head_elements = CASE2_SEQUENCE * CASE2_HEAD_DIMENSION;
+  const size_t response_payload_bytes =
+      NORM_HEAD_RESULT_FIXED_BYTES +
+      head_elements * sizeof(float) * 2;
+  if (response_payload_bytes > response_capacity) {
+    return 0;
+  }
+  writeU16(response, CASE2_SEQUENCE);
+  writeU16(response + 2, CASE2_HEAD_DIMENSION);
+  response[4] = head;
+  response[5] = causal ? 1 : 0;
+  response[6] = 0;
+  response[7] = 0;
+  writeU16(response + 8, static_cast<uint16_t>(head_elements));
+  writeU16(response + 10, 0);
+  writeU32(response + 12, decode_us);
+  writeU32(response + 16, layer_norm_us);
+  writeU32(response + 20, projection_us);
+  writeU32(response + 24, attention_us);
+  uint8_t *context = response + NORM_HEAD_RESULT_FIXED_BYTES;
+  uint8_t *normalized = context + head_elements * sizeof(float);
+  for (size_t index = 0; index < head_elements; ++index) {
+    writeFloat(context + index * sizeof(float), head_output[index]);
+    writeFloat(normalized + index * sizeof(float), norm_head_slice[index]);
+  }
+  return static_cast<int>(response_payload_bytes);
 }
 
 int handleHeadTaskPayload(const uint8_t *payload,
@@ -544,7 +808,8 @@ void handleUdp() {
                 request_id);
     uint8_t *response = udp_buffer + HEADER_BYTES;
     writeU32(response, CAPABILITY_HEAD_UDP | CAPABILITY_HEAD_TCP |
-                           CAPABILITY_KV_SHARD_UDP);
+                           CAPABILITY_KV_SHARD_UDP |
+                           CAPABILITY_CASE2_NORM_HEAD_TCP);
     writeU16(response + 4, MAX_HEAD_SEQUENCE);
     writeU16(response + 6, MAX_HEAD_DIMENSION);
     writeU16(response + 8, MAX_UDP_PAYLOAD);
@@ -601,7 +866,11 @@ void handleTcp() {
       request_type == TYPE_HEAD_TASK &&
       validHeader(header, TYPE_HEAD_TASK, MAX_TCP_PAYLOAD, payload_bytes,
                   request_id);
-  if ((!valid_echo && !valid_head) ||
+  const bool valid_norm_head =
+      request_type == TYPE_NORM_HEAD_TASK &&
+      validHeader(header, TYPE_NORM_HEAD_TASK, MAX_TCP_PAYLOAD, payload_bytes,
+                  request_id);
+  if ((!valid_echo && !valid_head && !valid_norm_head) ||
       !readExact(tcp_client, tcp_payload, payload_bytes,
                  TCP_READ_TIMEOUT_MS)) {
     tcp_client.stop();
@@ -610,7 +879,7 @@ void handleTcp() {
 
   if (valid_echo) {
     writeHeader(header, TYPE_ECHO_REPLY, payload_bytes, request_id);
-  } else {
+  } else if (valid_head) {
     const int response_payload_bytes = handleHeadTaskPayload(
         tcp_payload, payload_bytes, tcp_payload, MAX_TCP_PAYLOAD);
     if (response_payload_bytes == 0) {
@@ -619,6 +888,15 @@ void handleTcp() {
     }
     payload_bytes = static_cast<uint16_t>(response_payload_bytes);
     writeHeader(header, TYPE_HEAD_RESULT, payload_bytes, request_id);
+  } else {
+    const int response_payload_bytes = handleNormHeadTaskPayload(
+        tcp_payload, payload_bytes, tcp_payload, MAX_TCP_PAYLOAD);
+    if (response_payload_bytes == 0) {
+      tcp_client.stop();
+      return;
+    }
+    payload_bytes = static_cast<uint16_t>(response_payload_bytes);
+    writeHeader(header, TYPE_NORM_HEAD_RESULT, payload_bytes, request_id);
   }
   if (!writeExact(tcp_client, header, sizeof(header)) ||
       !writeExact(tcp_client, tcp_payload, payload_bytes)) {
