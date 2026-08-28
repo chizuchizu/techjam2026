@@ -271,6 +271,48 @@ class UserOptimizedTransformer(BaselineTransformer):
         context = context.transpose(1, 2).reshape(batch, seq_len, attention.d_model)
         return attention.out_proj(context)
 
+    @staticmethod
+    def _baseline_attention_packed_qkv(
+        attention: BaselineSelfAttention,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor],
+        causal: bool,
+        packed_qkv: Tuple[torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        """Keep reference attention math but replace three projections with one."""
+        batch, seq_len, _ = x.shape
+        qkv = F.linear(x, packed_qkv[0], packed_qkv[1])
+        q, k, v = (
+            projected.transpose(1, 2).contiguous()
+            for projected in qkv.view(
+                batch,
+                seq_len,
+                3,
+                attention.num_heads,
+                attention.head_dim,
+            ).unbind(dim=2)
+        )
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attention.scale
+        if causal:
+            causal_mask = torch.ones(
+                (seq_len, seq_len), device=x.device, dtype=torch.bool
+            ).triu(diagonal=1)
+            scores = scores.masked_fill(causal_mask, float("-inf"))
+        if valid_token_mask is not None:
+            invalid_keys = ~valid_token_mask[:, None, None, :]
+            scores = scores.masked_fill(invalid_keys, float("-inf"))
+        probs = torch.softmax(scores.float(), dim=-1).to(dtype=x.dtype)
+        context = torch.matmul(probs, v)
+        context = (
+            context.transpose(1, 2)
+            .contiguous()
+            .view(batch, seq_len, attention.d_model)
+        )
+        output = attention.out_proj(context)
+        if valid_token_mask is not None:
+            output = output.masked_fill(~valid_token_mask[..., None], 0)
+        return output
+
     def forward(
         self,
         x: torch.Tensor,
@@ -288,7 +330,22 @@ class UserOptimizedTransformer(BaselineTransformer):
         first_sdpa_layer = len(self.layers) - self.sdpa_layers
         for layer_index, layer in enumerate(self.layers):
             if layer_index < first_sdpa_layer:
-                x = layer(x, valid_token_mask, self.config.causal)
+                if self.implementation == "sdpa":
+                    x = layer(x, valid_token_mask, self.config.causal)
+                    continue
+                attention_output = self._baseline_attention_packed_qkv(
+                    layer.attention,
+                    layer.norm1(x),
+                    valid_token_mask,
+                    self.config.causal,
+                    self._packed_qkv[layer_index],
+                )
+                x = x + attention_output
+                x = x + layer.ffn_out(
+                    F.gelu(layer.ffn_in(layer.norm2(x)), approximate="none")
+                )
+                if valid_token_mask is not None:
+                    x = x.masked_fill(~valid_token_mask[..., None], 0)
                 continue
 
             attention_output = self._sdpa_attention(
@@ -314,6 +371,73 @@ class UserOptimizedTransformer(BaselineTransformer):
         if valid_token_mask is not None:
             x = x.masked_fill(~valid_token_mask[..., None], 0)
         return x
+
+
+class _NoMaskGraphAdapter(nn.Module):
+    """Give CUDA graph capture a tensor-only signature for unmasked cases."""
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x, None)
+
+
+class _MaskGraphAdapter(nn.Module):
+    """Tensor-only adapter for cases with a dynamic padding mask."""
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+        return self.model(x, valid_mask)
+
+
+class CudaGraphedTransformer(nn.Module):
+    """Replay an unchanged eager implementation through one CUDA graph launch."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        sample_x: torch.Tensor,
+        sample_mask: Optional[torch.Tensor],
+        warmup_iterations: int,
+    ) -> None:
+        super().__init__()
+        model.requires_grad_(False)
+        self.expects_mask = sample_mask is not None
+        adapter: nn.Module
+        sample_args: Tuple[torch.Tensor, ...]
+        if sample_mask is None:
+            adapter = _NoMaskGraphAdapter(model)
+            sample_args = (sample_x,)
+        else:
+            adapter = _MaskGraphAdapter(model)
+            sample_args = (sample_x, sample_mask)
+        self.graphed = torch.cuda.make_graphed_callables(
+            adapter,
+            sample_args,
+            num_warmup_iters=max(1, warmup_iterations),
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.expects_mask:
+            if valid_token_mask is None:
+                raise ValueError("CUDA graph was captured with a padding mask")
+            output = self.graphed(x, valid_token_mask)
+            return output.clone()
+        if valid_token_mask is not None:
+            raise ValueError("CUDA graph was captured without a padding mask")
+        output = self.graphed(x)
+        # make_graphed_callables reuses its static output allocation. Return an
+        # owning tensor so a later replay cannot mutate an earlier result.
+        return output.clone()
 
 
 def copy_model_weights(
@@ -838,6 +962,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
     parser.add_argument(
+        "--cuda-graph-user",
+        action="store_true",
+        help="capture the unchanged user implementation in a raw CUDA graph",
+    )
+    parser.add_argument(
         "--compile-mode",
         choices=("default", "reduce-overhead", "max-autotune"),
         default="default",
@@ -872,6 +1001,10 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("repeats and benchmark_rounds must be positive")
     if device.type == "cpu" and dtype == torch.float16:
         print("[warning] float16 CPU kernels may be unsupported or slow")
+    if args.cuda_graph_user and device.type != "cuda":
+        raise ValueError("--cuda-graph-user requires a CUDA device")
+    if args.cuda_graph_user and args.compile_user:
+        raise ValueError("--cuda-graph-user and --compile-user are mutually exclusive")
 
 
 def main() -> int:
@@ -924,6 +1057,21 @@ def main() -> int:
     baseline = maybe_compile(baseline, args.compile_baseline, args.compile_mode)
     selected_sdpa_layers = optimized.sdpa_layers
     optimized = maybe_compile(optimized, args.compile_user, args.compile_mode)
+    if args.cuda_graph_user:
+        graph_x, graph_mask = generate_random_case(
+            config=config,
+            device=device,
+            dtype=dtype,
+            seed=args.seed + 300000,
+            padding_ratio=args.padding_ratio,
+            input_scale=args.input_scale,
+        )
+        optimized = CudaGraphedTransformer(
+            optimized,
+            graph_x,
+            graph_mask,
+            warmup_iterations=min(max(args.warmup, 1), 10),
+        )
 
     print("=== Configuration ===")
     print(config)
@@ -936,6 +1084,8 @@ def main() -> int:
             f"compile_baseline={args.compile_baseline}, "
             f"compile_user={args.compile_user}, compile_mode={args.compile_mode}"
         )
+    if args.cuda_graph_user:
+        print("cuda_graph_user=True")
     if device.type == "cuda":
         print(f"gpu={torch.cuda.get_device_name(device)}")
 

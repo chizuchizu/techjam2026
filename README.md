@@ -47,6 +47,7 @@ Current best verified FP16 experiment:
 .venv/bin/python torch_transformer_benchmark.py \
   --device cuda:0 --dtype float16 \
   --user-implementation sdpa-packed-qkv \
+  --cuda-graph-user \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
 ```
@@ -59,6 +60,13 @@ back to the bit-identical baseline. Explicit values and `all` override auto.
 Compilation is recommended only for accuracy-tested FP32 cases. It failed the
 strict FP16 numerical gate.
 
+`--cuda-graph-user` captures the unchanged eager kernels, copies each new input
+into graph-owned storage, submits the model with one graph launch, and clones
+the output so later calls cannot mutate earlier results. It preserves FP16 and
+BF16 numerics and is the recommended general launch-overhead optimization.
+Shapes and the presence/absence of a padding mask are static for each capture.
+It is mutually exclusive with `--compile-user`.
+
 ## Clean profiling
 
 The profiling mode warms up normally and exposes exactly one forward between
@@ -67,6 +75,7 @@ CUDA profiler start/stop calls:
 ```bash
 source /export/home/alien/software/nvhpc/setup.sh
 nsys profile --trace=cuda,nvtx,cublas \
+  --cuda-graph-trace=node \
   --sample=none --cpuctxsw=none \
   --capture-range=cudaProfilerApi --capture-range-end=stop \
   --output=profile_baseline \
