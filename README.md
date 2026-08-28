@@ -83,12 +83,30 @@ experiments are not counted as implemented cases.
 | 13 | 64 | 1,024 | 128 | 4 | 128 | Not implemented | — |
 | 14 | 32 | 100,000 | 1,024 | 16 | 1,024 | Not implemented | — |
 
-Case 2's full single-board measurement is documented in
-[`esp32-baseline/README.md`](esp32-baseline/README.md). The four-C3 result of
-0.766 s is only one causal four-head attention operation with the same
-`S=128, H=4, d_head=32` shape. It excludes projections, residuals,
-normalization, FFN, and the remaining layers, so it is not a case-2 end-to-end
-running time.
+### What was parallelized across four C3s?
+
+The four-board experiment parallelizes the four attention heads from the shape
+used by official case 2. Each C3 calculates one independent head, and the host
+combines the four returned contexts.
+
+| Property | Four-C3 experiment |
+|---|---|
+| Related official case | Case 2 |
+| Shape | `B=1, S=128, D=128, H=4, d_head=32`, causal |
+| Parallel assignment | Head 0→C3 1, head 1→C3 2, head 2→C3 3, head 3→C3 4 |
+| Computation | One `softmax(QK^T / sqrt(32))V` attention operation |
+| Single-C3 attention time | 3.000 s average |
+| Four-C3 attention time | **0.766 s** |
+| Speedup | **3.92x** |
+| Accuracy | PASS, zero failed elements |
+| Not yet included | LayerNorm, Q/K/V projections, output projection, residuals, FFN, and the other three layers |
+
+Therefore, **case 2 is implemented end to end only on one C3**, where it takes
+42.09 s. The 0.766 s result is a case-2-shaped attention microbenchmark, not a
+four-C3 end-to-end case-2 time. The complete single-board measurement is
+documented in [`esp32-baseline/README.md`](esp32-baseline/README.md), and the
+parallel measurement is in
+[`results/FOUR_C3_PARALLEL_RESULTS.md`](results/FOUR_C3_PARALLEL_RESULTS.md).
 
 See [`TODO.md`](TODO.md) for the shared priorities and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.
