@@ -20,6 +20,7 @@ void tm_scan_q12(const void* blob, TMQ12Weights* out);
 
 /* Set numeric mode (TM_MODE_EXACT / TM_MODE_FAST). */
 void tm_set_mode(int mode);
+
 int  tm_get_mode(void);
 
 /* Forward: y = model(x), x,y: [TM_S*TM_D] fp32 row-major.
@@ -32,5 +33,10 @@ void tm_forward(const float* x, float* y,
 #ifdef __cplusplus
 }
 #endif
+
+/* workspace accessors (device firmware reads input / writes output
+ * directly into the static arena to avoid a 128 KB duplicate) */
+float* tm_input(void);
+float* tm_output(void);
 
 #endif /* TM_MODEL_H */

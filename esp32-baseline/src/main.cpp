@@ -31,9 +31,6 @@ static const float* g_wf32 = (const float*)_binary_weights_bin_start;
 static TMQ12Weights g_q12;
 static bool g_q12_scanned = false;
 
-static float g_x[TM_S * TM_D];   /* 64 KB */
-static float g_y[TM_S * TM_D];   /* 64 KB */
-
 static void ensure_q12(void) {
     if (!g_q12_scanned) {
         tm_scan_q12(_binary_weights_q12_bin_start, &g_q12);
@@ -45,13 +42,14 @@ static long g_forward_counter = 0;
 
 static void run_forward(void) {
     ensure_q12();
-    tm_forward(g_x, g_y, g_wf32, &g_q12);
+    /* workspace lives in model.c: input = g_x, output = g_buf1 */
+    tm_forward(tm_input(), tm_output(), g_wf32, &g_q12);
     g_forward_counter++;
 }
 
 static void read_input(void) {
-    /* read 65536 bytes of float32 LE from USB serial into g_x */
-    uint8_t* p = (uint8_t*)g_x;
+    /* read 65536 bytes of float32 LE from USB serial into the model input */
+    uint8_t* p = (uint8_t*)tm_input();
     size_t need = TM_S * TM_D * 4;
     size_t got = 0;
     while (got < need) {
@@ -90,7 +88,7 @@ void loop() {
             unsigned long t0 = esp_timer_get_time();
             run_forward();
             unsigned long t1 = esp_timer_get_time();
-            Serial.write((const uint8_t*)g_y, TM_S * TM_D * 4);
+            Serial.write((const uint8_t*)tm_output(), TM_S * TM_D * 4);
             Serial.printf("END forward=%ld us=%lu\n", g_forward_counter, (unsigned long)(t1 - t0));
             break;
         }
