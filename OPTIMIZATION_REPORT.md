@@ -33,6 +33,7 @@ is the primary metric.
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
 | Compile with eager precision casts + rounded division + CUDA libdevice | fail, 45/13,107,200 | — | — | — | Reject: same FP16 error pattern |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Current FP16 best |
+| Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Current causal+padded best |
@@ -45,6 +46,8 @@ is the primary metric.
 | FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
 | FP16 tanh-approximate GELU | fail, 74/13,107,200 | — | — | — | Reject: exceeds elementwise tolerance |
 | FP16 tanh GELU, one layer at a time | every layer fails | — | ~0.386 ms graphed | no measurable gain | Reject; retain opt-in sensitivity control |
+| Triton residual-add + LayerNorm, all sites | fail, 36/52,428,800 | — | — | — | Reject automatic use; retain site selector |
+| Force PyTorch FlashAttention instead of cuDNN SDPA | fail, 1/13,107,200 | — | — | — | Reject for default FP16 |
 
 The packed weights are built once after weight copying and device/dtype transfer,
 outside accuracy and timing regions. Original parameter names remain intact.
@@ -86,6 +89,13 @@ ms and 6.12x versus baseline. Padded and causal+padded FP16 reached 0.469 ms and
 0.528 ms; BF16 reached 4.87x unmasked and 6.29x causal+padded, and FP32 4.25x.
 Packing QKV in the two reference-attention prefix layers was
 numerically identical to the prior candidate and removed four more graph nodes.
+
+The safe graph wrapper clones its static output because a later replay reuses
+and overwrites graph-owned storage. `--cuda-graph-static-output` makes that
+lifetime contract explicit and returns the storage directly. It passed 25
+default FP16 trials and ten causal+padded trials each for FP16 and bit-exact
+BF16. In adjacent default-shape runs it reduced median latency from 0.3909 to
+0.3900 ms (about 0.2%); the benefit is small but arithmetic is unchanged.
 
 For padded cases, the candidate now negates the padding mask once, not once per
 consumer. A causal triangle is created once during optimized-weight setup rather
@@ -200,7 +210,7 @@ projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 | P1 | Raw CUDA graph replay | **Implemented** | Observed 4.25–6.12x | Low | Static shape/mask regime; preserves eager kernels and numerics |
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P1 | Hoist static masks / remove invalid-query dead work | **Implemented** | Causal+padded candidate 0.675→0.568 ms | Low | Safe because masks exclude invalid keys and other ops are token-local |
-| P2 | Fused residual + LayerNorm + linear | No | 5–15% | Medium | Preserve FP32 normalization; compounds with QKV/FFN |
+| P2 | Fused residual + LayerNorm + linear | Triton add+norm tested/rejected | 5–15% | Medium | Current kernel fails stronger accuracy audit; linear fusion remains open |
 | P2 | Fused LayerNorm + FFN and exact-GELU epilogue | No | 5–20% | Medium–high | FFN is 64% of FLOPs; tanh GELU may fail tolerance |
 | P2 | Pack valid tokens / variable-length execution | No | 1.2–2x with substantial padding | Medium–high | Pack whole block, not only attention; prefix-valid mask is favorable |
 | P2 | Per-shape autotuned dispatcher | Partial | 5–30% | Medium–high | Known shape has mask-aware layer counts; official matrix still required |
@@ -240,6 +250,16 @@ ms for both one approximate layer and all six, so the cheaper formula produced
 no measurable end-to-end gain on this shape. The opt-in
 `--gelu-approx-layer-indices` control remains only to reproduce sensitivity
 experiments on future shapes; automatic/default dispatch never enables it.
+
+An opt-in Triton kernel also tested fusing each FP16 residual addition with the
+following LayerNorm. Residual sums were bit-exact, and the isolated normalized
+result differed by at most one FP16 step. Fusing the trailing two layers passed
+the original 25 trials and reduced adjacent-run latency from 0.3910 to 0.3748
+ms (4.1%), but it failed six elements in a stronger 52,428,800-output audit.
+Switching the moment reduction to Welford and testing individual sites did not
+eliminate accumulated model error; all twelve sites failed 36 elements in that
+audit. The two-sites-per-layer `--triton-fused-add-norm-sites` control remains
+for reproducibility, but no automatic configuration enables it.
 
 ## Next profiling and implementation steps
 

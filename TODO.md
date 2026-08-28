@@ -23,7 +23,8 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    official static shape and mask regimes.
 5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
    verify it across the official padding-mask cases.
-6. Prototype fused residual + LayerNorm + linear, then fused exact-GELU FFN.
+6. Extend the rejected Triton residual-add + LayerNorm prototype toward a
+   numerically exact linear fusion; then test fused exact-GELU FFN.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; treat Transformer Engine and FP8 as separate accuracy-gated

@@ -189,6 +189,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         sdpa_layers: int,
         sdpa_layer_indices: Optional[Tuple[int, ...]],
         gelu_approx_layer_indices: Tuple[int, ...],
+        triton_fused_add_norm_sites: Tuple[int, ...],
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -216,6 +217,18 @@ class UserOptimizedTransformer(BaselineTransformer):
         ):
             raise ValueError("GELU approximation layer index is outside the model")
         self.gelu_approx_layer_indices = frozenset(gelu_approx_layer_indices)
+        if len(set(triton_fused_add_norm_sites)) != len(
+            triton_fused_add_norm_sites
+        ):
+            raise ValueError("triton_fused_add_norm_sites must not contain duplicates")
+        if any(
+            index < 0 or index >= 2 * config.num_layers
+            for index in triton_fused_add_norm_sites
+        ):
+            raise ValueError("Triton fused site index is outside the model")
+        self.triton_fused_add_norm_sites = frozenset(
+            triton_fused_add_norm_sites
+        )
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
         if not 0 <= self.sdpa_layers <= config.num_layers:
@@ -352,6 +365,8 @@ class UserOptimizedTransformer(BaselineTransformer):
             return super().forward(x, valid_token_mask)
         if x.dtype == torch.bfloat16 and self.implementation == "sdpa":
             return super().forward(x, valid_token_mask)
+        if self.triton_fused_add_norm_sites:
+            return self._forward_triton_fused_add_norm(x, valid_token_mask)
 
         invalid_token_mask = (
             None if valid_token_mask is None else ~valid_token_mask
@@ -411,6 +426,89 @@ class UserOptimizedTransformer(BaselineTransformer):
             x = x.masked_fill(invalid_token_mask[..., None], 0)
         return x
 
+    def _forward_triton_fused_add_norm(
+        self,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Pipeline blocks so each residual add feeds a fused next LayerNorm."""
+        from triton_kernels import add_layer_norm
+
+        invalid_token_mask = (
+            None if valid_token_mask is None else ~valid_token_mask
+        )
+        sdpa_layer_indices = (
+            frozenset()
+            if self.implementation == "packed-qkv"
+            else self.sdpa_layer_indices
+        )
+        normalized_for_attention = self.layers[0].norm1(x)
+
+        for layer_index, layer in enumerate(self.layers):
+            if layer_index in sdpa_layer_indices:
+                attention_output = self._sdpa_attention(
+                    layer.attention,
+                    normalized_for_attention,
+                    valid_token_mask,
+                    self.config.causal,
+                    self._packed_qkv[layer_index],
+                )
+            else:
+                attention_output = self._baseline_attention_packed_qkv(
+                    layer.attention,
+                    normalized_for_attention,
+                    invalid_token_mask,
+                    self._causal_mask,
+                    self._packed_qkv[layer_index],
+                )
+
+            attention_add_norm_site = 2 * layer_index
+            if attention_add_norm_site in self.triton_fused_add_norm_sites:
+                x, normalized_for_ffn = add_layer_norm(
+                    x,
+                    attention_output,
+                    layer.norm2.weight,
+                    layer.norm2.bias,
+                    layer.norm2.eps,
+                )
+            else:
+                x = x + attention_output
+                normalized_for_ffn = layer.norm2(x)
+            gelu_approximate = (
+                "tanh"
+                if layer_index in self.gelu_approx_layer_indices
+                else "none"
+            )
+            ffn_output = layer.ffn_out(
+                F.gelu(
+                    layer.ffn_in(normalized_for_ffn),
+                    approximate=gelu_approximate,
+                )
+            )
+
+            next_norm = (
+                self.final_norm
+                if layer_index + 1 == len(self.layers)
+                else self.layers[layer_index + 1].norm1
+            )
+            ffn_add_norm_site = 2 * layer_index + 1
+            if ffn_add_norm_site in self.triton_fused_add_norm_sites:
+                x, normalized_for_attention = add_layer_norm(
+                    x,
+                    ffn_output,
+                    next_norm.weight,
+                    next_norm.bias,
+                    next_norm.eps,
+                )
+            else:
+                x = x + ffn_output
+                normalized_for_attention = next_norm(x)
+
+        x = normalized_for_attention
+        if invalid_token_mask is not None:
+            x = x.masked_fill(invalid_token_mask[..., None], 0)
+        return x
+
 
 class _NoMaskGraphAdapter(nn.Module):
     """Give CUDA graph capture a tensor-only signature for unmasked cases."""
@@ -443,10 +541,12 @@ class CudaGraphedTransformer(nn.Module):
         sample_x: torch.Tensor,
         sample_mask: Optional[torch.Tensor],
         warmup_iterations: int,
+        clone_output: bool,
     ) -> None:
         super().__init__()
         model.requires_grad_(False)
         self.expects_mask = sample_mask is not None
+        self.clone_output = clone_output
         adapter: nn.Module
         sample_args: Tuple[torch.Tensor, ...]
         if sample_mask is None:
@@ -470,13 +570,13 @@ class CudaGraphedTransformer(nn.Module):
             if valid_token_mask is None:
                 raise ValueError("CUDA graph was captured with a padding mask")
             output = self.graphed(x, valid_token_mask)
-            return output.clone()
+            return output.clone() if self.clone_output else output
         if valid_token_mask is not None:
             raise ValueError("CUDA graph was captured without a padding mask")
         output = self.graphed(x)
-        # make_graphed_callables reuses its static output allocation. Return an
-        # owning tensor so a later replay cannot mutate an earlier result.
-        return output.clone()
+        # make_graphed_callables reuses its static output allocation. The safe
+        # default clones it; static-output mode exposes that storage explicitly.
+        return output.clone() if self.clone_output else output
 
 
 def copy_model_weights(
@@ -1020,6 +1120,12 @@ def parse_args() -> argparse.Namespace:
         default=(),
         help="opt-in tanh GELU for comma-separated zero-based layers",
     )
+    parser.add_argument(
+        "--triton-fused-add-norm-sites",
+        type=parse_layer_indices,
+        default=(),
+        help="residual+following-LayerNorm sites to fuse (two sites per layer)",
+    )
 
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
@@ -1027,6 +1133,11 @@ def parse_args() -> argparse.Namespace:
         "--cuda-graph-user",
         action="store_true",
         help="capture the unchanged user implementation in a raw CUDA graph",
+    )
+    parser.add_argument(
+        "--cuda-graph-static-output",
+        action="store_true",
+        help="return graph-owned output directly; the next call overwrites it",
     )
     parser.add_argument(
         "--compile-mode",
@@ -1067,6 +1178,8 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("--cuda-graph-user requires a CUDA device")
     if args.cuda_graph_user and args.compile_user:
         raise ValueError("--cuda-graph-user and --compile-user are mutually exclusive")
+    if args.cuda_graph_static_output and not args.cuda_graph_user:
+        raise ValueError("--cuda-graph-static-output requires --cuda-graph-user")
     if args.gelu_approx_layer_indices and args.user_implementation not in (
         "packed-qkv",
         "sdpa-packed-qkv",
@@ -1074,6 +1187,17 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("GELU approximation requires a packed-QKV implementation")
     if args.gelu_approx_layer_indices and device.type != "cuda":
         raise ValueError("GELU approximation is currently a CUDA-only experiment")
+    if args.triton_fused_add_norm_sites and device.type != "cuda":
+        raise ValueError("Triton add+LayerNorm requires a CUDA device")
+    if args.triton_fused_add_norm_sites and dtype != torch.float16:
+        raise ValueError("Triton add+LayerNorm is currently accuracy-gated for FP16")
+    if args.triton_fused_add_norm_sites and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("Triton add+LayerNorm requires a packed-QKV implementation")
+    if args.triton_fused_add_norm_sites and args.compile_user:
+        raise ValueError("Triton add+LayerNorm is not supported with torch.compile")
 
 
 def main() -> int:
@@ -1113,6 +1237,7 @@ def main() -> int:
         sdpa_layers,
         args.sdpa_layer_indices,
         args.gelu_approx_layer_indices,
+        args.triton_fused_add_norm_sites,
     )
     copy_model_weights(
         baseline,
@@ -1152,6 +1277,7 @@ def main() -> int:
             graph_x,
             graph_mask,
             warmup_iterations=min(max(args.warmup, 1), 10),
+            clone_output=not args.cuda_graph_static_output,
         )
 
     print("=== Configuration ===")
@@ -1167,6 +1293,11 @@ def main() -> int:
                 "gelu_approx_layer_indices="
                 f"{sorted(args.gelu_approx_layer_indices)}"
             )
+        if args.triton_fused_add_norm_sites:
+            print(
+                "triton_fused_add_norm_sites="
+                f"{sorted(args.triton_fused_add_norm_sites)}"
+            )
     if args.compile_baseline or args.compile_user:
         print(
             f"compile_baseline={args.compile_baseline}, "
@@ -1174,6 +1305,8 @@ def main() -> int:
         )
     if args.cuda_graph_user:
         print("cuda_graph_user=True")
+        if args.cuda_graph_static_output:
+            print("cuda_graph_static_output=True")
     if device.type == "cuda":
         print(f"gpu={torch.cuda.get_device_name(device)}")
 

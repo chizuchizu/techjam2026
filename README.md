@@ -52,6 +52,10 @@ Current best verified FP16 experiment:
   --repeats 100 --benchmark-rounds 5
 ```
 
+If the caller consumes an output before the next invocation and does not retain
+it, add `--cuda-graph-static-output` to return graph-owned storage directly.
+This removes the final clone, but the next call overwrites the previous output.
+
 `--user-implementation` defaults to `baseline`; all optimizations are opt-in.
 `--sdpa-layers auto` selects all layers for FP32, four for the known default
 noncausal FP16 shape, three for padded noncausal FP16, two for causal FP16, and
@@ -71,6 +75,10 @@ the output so later calls cannot mutate earlier results. It preserves FP16 and
 BF16 numerics and is the recommended general launch-overhead optimization.
 Shapes and the presence/absence of a padding mask are static for each capture.
 It is mutually exclusive with `--compile-user`.
+
+`--triton-fused-add-norm-sites` exposes a numbered, two-sites-per-layer Triton
+residual-add/LayerNorm fusion experiment. It is not enabled by default: every
+tested site eventually failed the stronger 100-trial FP16 accuracy audit.
 
 For padded cases, the optimized path precomputes static causal masks, negates
 the padding mask once, excludes invalid keys in every attention, and zeroes
