@@ -20,9 +20,6 @@
  * everything in fp32 (slow on the no-FPU C3).
  */
 #include "model.h"
-#ifdef TM_DUMP
-#include <stdio.h>
-#endif
 #include "kernels.h"
 
 #include <math.h>
@@ -197,39 +194,21 @@ void tm_forward(const float* xin, float* yout,
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_QW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_QB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-#ifdef TM_DUMP
-                    if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_q2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
-#endif
                     g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_KW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_KB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-#ifdef TM_DUMP
-                    if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_k2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
-#endif
                     g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_VW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_VB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-#ifdef TM_DUMP
-                    if (l == 0 && h == 2) { FILE* f = fopen("/tmp/stg_v2.bin","wb"); if(f){fwrite(g_buf2,4,TM_S*TM_D,f);fclose(f);} }
-#endif
                     g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
                 }
                 attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks, g_vh, g_vs, h);
-#ifdef TM_DUMP
-                if (l == 0) {
-                    char pn[64]; snprintf(pn, sizeof pn, "/tmp/aft_attn_h%d.bin", h);
-                    FILE* f = fopen(pn, "wb"); if (f) { fwrite(g_buf2, 4, TM_S*TM_D, f); fclose(f); }
-                }
-#endif
             }
         }
 
-        /* ---- out projection (ctx in g_buf2 -> out into g_buf2 in place) ---- */#ifdef TM_DUMP
-        if (l == 0) { FILE* f = fopen("/tmp/ctx_new.bin", "wb"); if (f) { fwrite(g_buf2, 4, TM_S * TM_D, f); fclose(f); } }
-#endif
-
+        /* ---- out projection (ctx in g_buf2 -> out into g_buf2 in place) ---- */
         if (fast) {
             /* reuse g_vh as temporaries: keep ctx, write result to g_buf1 */
             tm_gemm_q12(g_buf2, q12->q[l][3], q12->ws[l][3],
@@ -238,12 +217,6 @@ void tm_forward(const float* xin, float* yout,
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_OW),
                         W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
         }
-#ifdef TM_DUMP
-    { static int dl = 0; char pn[64];
-      snprintf(pn, sizeof pn, "/tmp/lyr_%02d.bin", dl);
-      FILE* f = fopen(pn, "wb"); if (f) { fwrite(g_x, 4, TM_S * TM_D, f); fclose(f); }
-      dl++; }
-#endif
         /* ---- residual ---- */
         tm_add_inplace(g_buf1, g_x, TM_S * TM_D);
 
