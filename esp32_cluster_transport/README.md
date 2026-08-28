@@ -21,6 +21,7 @@ python3 tools/benchmark_transport.py --output results/esp32c3_transport_v1.csv
 python3 tools/run_head_parallel.py --workers 192.168.0.X \
   --output results/esp32c3_head_parallel_v1.csv
 python3 tools/run_large_head_parallel.py --workers 192.168.0.X \
+  --scheduler round-robin \
   --output results/esp32c3_large_head_tcp_v1.csv
 python3 tools/discover_esp32_workers.py --workers 192.168.0.X
 python3 tools/run_kv_sharded.py --workers 192.168.0.X \
@@ -41,10 +42,12 @@ request and 528-byte response fits in one UDP datagram. `--transport tcp`
 exercises the persistent TCP path explicitly.
 
 `run_large_head_parallel.py` exercises four `128 x 32` heads using persistent
-TCP connections. With two workers each receives two heads; with four workers
-each receives one. Capability queries report chip model, core count, clock,
-free heap, supported transports, and maximum head shape, allowing different
-ESP32 models to participate without assuming equal performance.
+TCP connections. `--scheduler round-robin` assigns equal head counts;
+`calibrated-all` measures the workers and uses every node; `calibrated` minimizes
+predicted latency and may idle a much slower node. Capability queries report
+chip model, core count, clock, free heap, supported transports, and maximum
+head shape. Physical one- and two-board results are in
+[`../results/LARGE_HEAD_PARALLEL_RESULTS.md`](../results/LARGE_HEAD_PARALLEL_RESULTS.md).
 
 `run_kv_sharded.py` splits each head's 16 keys into four shards. A 250-byte task
 returns 660 bytes of stable online-softmax statistics. The coordinator merges

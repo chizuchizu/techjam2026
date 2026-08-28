@@ -94,6 +94,8 @@ def main():
                     help="JSON: {cases:[{case,t_s}]} measured device forwards")
     ap.add_argument("--weights", default=None,
                     help="JSON list of per-case weights (default: equal)")
+    ap.add_argument("--output", default="scores.json",
+                    help="output JSON path (use /dev/null for a smoke test)")
     a = ap.parse_args()
 
     fl = flops_forward()
@@ -148,8 +150,9 @@ def main():
            "weighted_mfu_mix": wsum_mix, "weighted_mfu_raw_int": wsum_int,
            "weighted_exscore": wsum_ex, "peaks": {"P_INT": P_INT,
            "P_SOFTFP": P_SOFTFP, "BW": BW_HI}, "cases": rows}
-    json.dump(out, open("scores.json", "w"), indent=1)
-    print("\nwrote scores.json")
+    with open(a.output, "w") as output:
+        json.dump(out, output, indent=1)
+    print("\nwrote %s" % a.output)
 
 if __name__ == "__main__":
     main()

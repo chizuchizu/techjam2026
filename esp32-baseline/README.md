@@ -5,7 +5,7 @@ Single-board C implementation of the case-2 transformer
 **Seeed XIAO ESP32C3** (400 KB SRAM, 4 MB flash, 160 MHz RV32IMC, **no FPU**).
 
 The model is the reference `BaselineTransformer` from
-`../torch_transformer_benchmark.py` (fp32 weights init with seed 1234, fp32
+`../h200/torch_transformer_benchmark.py` (fp32 weights init with seed 1234, fp32
 reference forward).
 
 ## Two numeric modes

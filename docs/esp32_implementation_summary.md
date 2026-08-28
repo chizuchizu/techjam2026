@@ -1,21 +1,22 @@
 # ESP32 Baseline — Implementation Summary & Status
 
 **Updated:** 2026-08-28
-**Track:** TikTok Tech Jam — unconventional-hardware bonus track (20× Seeed XIAO ESP32C3 → scoped to 1 board)
-**Branch:** `esp32-baseline` (all ESP32 work commits live here)
+**Track:** Active TechJam ESP32 track
+**Hardware scope:** One-board numerical baseline, then multi-board scaling
 
 ---
 
 ## 1. Goal
 
-The Tech Jam main track targets an H200 GPU; this is the **unconventional-hardware bonus track**:
-run the same transformer benchmark on tiny ESP32-C3 boards to show the fastest possible kernels
-given severe hardware limits. All code is C.
+Run the Transformer benchmark on ESP32-C3 boards using portable C/C++ kernels,
+independent numerical validation, and measured multi-board execution.
 
-Final scoped target (agreed with user): **case 2 on ONE board**, end to end with a host-side
-verifier — a minimal, clean baseline we can later scale to 20 boards.
+The baseline target is **case 2 on one board**, end to end with a host-side
+verifier. Cluster experiments then distribute independent attention work across
+additional boards.
 
-Case 2 config: `B=1, S=128, D=128, H=4, L=4, F=128`, causal attention, ~18.9M-param-class small model.
+Case 2 config: `B=1, S=128, D=128, H=4, L=4, F=128`, causal attention,
+398,592 parameters.
 
 ## 2. Verified hardware facts (primary sources)
 
@@ -100,7 +101,7 @@ for full citations. Decisions:
 | `docs/esp32_implementation_summary.md` | This file |
 | `docs/esp32_fastest_kernels_research.md` | Kernel techniques research brief (C) |
 | `docs/esp32_fp32_emulation_research.md` | Paper-grounded FP32-emulation recommendation |
-| `model_architecture_research.md` | Model architecture (18.9M params, dims, layout) |
+| `h200/model_architecture_research.md` | Original H200 model architecture used by the exporter |
 | `.firecrawl/` | Raw research sources (scrapes, search JSON) |
 | `esp32-baseline/` | **Not scaffolded yet** (code) — next step |
 
@@ -112,7 +113,8 @@ on-device benchmark harness (TODO) → multi-board scaling / write-up (v2).
 
 **Done:** hardware verification, feasibility math, scope, all kernel/emulation research, acceptance criteria.
 **Next:** scaffold `esp32-baseline/`, port kernels, validate vs torch reference, wire timing.
-See `TODO.md` (H200 track) — this ESP32 track is tracked in this file and the two research briefs.
+See `TODO.md` for the current ESP32 priorities. The inactive GPU backlog is in
+`h200/TODO.md`.
 
 ## 8. Open risks
 - Accuracy gate vs torch reference (softmax/LN/GELU ordering, `__expf` vs torch math) — mitigate
