@@ -189,6 +189,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         sdpa_layers: int,
         sdpa_layer_indices: Optional[Tuple[int, ...]],
         gelu_approx_layer_indices: Tuple[int, ...],
+        triton_linear_gelu_layer_indices: Tuple[int, ...],
         triton_fused_add_norm_sites: Tuple[int, ...],
         triton_rounded_attention_layer_indices: Tuple[int, ...],
     ) -> None:
@@ -218,6 +219,18 @@ class UserOptimizedTransformer(BaselineTransformer):
         ):
             raise ValueError("GELU approximation layer index is outside the model")
         self.gelu_approx_layer_indices = frozenset(gelu_approx_layer_indices)
+        if len(set(triton_linear_gelu_layer_indices)) != len(
+            triton_linear_gelu_layer_indices
+        ):
+            raise ValueError("triton_linear_gelu_layer_indices must not duplicate")
+        if any(
+            index < 0 or index >= config.num_layers
+            for index in triton_linear_gelu_layer_indices
+        ):
+            raise ValueError("Triton linear+GELU layer index is outside the model")
+        self.triton_linear_gelu_layer_indices = frozenset(
+            triton_linear_gelu_layer_indices
+        )
         if len(set(triton_fused_add_norm_sites)) != len(
             triton_fused_add_norm_sites
         ):
@@ -403,6 +416,26 @@ class UserOptimizedTransformer(BaselineTransformer):
         context = context.transpose(1, 2).reshape(batch, seq_len, attention.d_model)
         return attention.out_proj(context)
 
+    def _ffn_hidden(
+        self,
+        layer_index: int,
+        layer: TransformerBlock,
+        normalized: torch.Tensor,
+        gelu_approximate: str,
+    ) -> torch.Tensor:
+        if layer_index in self.triton_linear_gelu_layer_indices:
+            from triton_kernels import linear_exact_gelu
+
+            return linear_exact_gelu(
+                normalized,
+                layer.ffn_in.weight,
+                layer.ffn_in.bias,
+            )
+        return F.gelu(
+            layer.ffn_in(normalized),
+            approximate=gelu_approximate,
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -441,9 +474,11 @@ class UserOptimizedTransformer(BaselineTransformer):
                 )
                 x = x + attention_output
                 x = x + layer.ffn_out(
-                    F.gelu(
-                        layer.ffn_in(layer.norm2(x)),
-                        approximate=gelu_approximate,
+                    self._ffn_hidden(
+                        layer_index,
+                        layer,
+                        layer.norm2(x),
+                        gelu_approximate,
                     )
                 )
                 continue
@@ -461,9 +496,11 @@ class UserOptimizedTransformer(BaselineTransformer):
                 )
                 x = x + attention_output
                 x = x + layer.ffn_out(
-                    F.gelu(
-                        layer.ffn_in(layer.norm2(x)),
-                        approximate=gelu_approximate,
+                    self._ffn_hidden(
+                        layer_index,
+                        layer,
+                        layer.norm2(x),
+                        gelu_approximate,
                     )
                 )
                 continue
@@ -479,9 +516,11 @@ class UserOptimizedTransformer(BaselineTransformer):
             )
             x = x + attention_output
             x = x + layer.ffn_out(
-                F.gelu(
-                    layer.ffn_in(layer.norm2(x)),
-                    approximate=gelu_approximate,
+                self._ffn_hidden(
+                    layer_index,
+                    layer,
+                    layer.norm2(x),
+                    gelu_approximate,
                 )
             )
 
@@ -565,9 +604,11 @@ class UserOptimizedTransformer(BaselineTransformer):
                 else "none"
             )
             ffn_output = layer.ffn_out(
-                F.gelu(
-                    layer.ffn_in(normalized_for_ffn),
-                    approximate=gelu_approximate,
+                self._ffn_hidden(
+                    layer_index,
+                    layer,
+                    normalized_for_ffn,
+                    gelu_approximate,
                 )
             )
 
@@ -1208,6 +1249,17 @@ def parse_args() -> argparse.Namespace:
         help="opt-in tanh GELU for comma-separated zero-based layers",
     )
     parser.add_argument(
+        "--triton-linear-gelu",
+        action="store_true",
+        help="fuse the FP16 FFN input projection and exact GELU in every layer",
+    )
+    parser.add_argument(
+        "--triton-linear-gelu-layer-indices",
+        type=parse_layer_indices,
+        default=(),
+        help="layers using the specialized FP16 linear+exact-GELU kernel",
+    )
+    parser.add_argument(
         "--triton-fused-add-norm-sites",
         type=parse_layer_indices,
         default=(),
@@ -1290,6 +1342,36 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("GELU approximation requires a packed-QKV implementation")
     if args.gelu_approx_layer_indices and device.type != "cuda":
         raise ValueError("GELU approximation is currently a CUDA-only experiment")
+    if args.triton_linear_gelu and args.triton_linear_gelu_layer_indices:
+        raise ValueError(
+            "use either --triton-linear-gelu or explicit linear+GELU indices"
+        )
+    triton_linear_gelu_requested = bool(
+        args.triton_linear_gelu or args.triton_linear_gelu_layer_indices
+    )
+    if triton_linear_gelu_requested and args.gelu_approx_layer_indices:
+        raise ValueError("exact Triton linear+GELU conflicts with approximate GELU")
+    if triton_linear_gelu_requested and device.type != "cuda":
+        raise ValueError("Triton linear+GELU requires a CUDA device")
+    if triton_linear_gelu_requested and dtype != torch.float16:
+        raise ValueError("Triton linear+GELU currently requires FP16")
+    if triton_linear_gelu_requested and (
+        args.d_model != 512 or args.ffn_dim != 2048
+    ):
+        raise ValueError("Triton linear+GELU requires d_model=512 and ffn_dim=2048")
+    if args.triton_linear_gelu and (
+        args.batch_size != 8 or args.seq_len != 128 or args.layers != 6
+    ):
+        raise ValueError(
+            "automatic Triton linear+GELU is gated for B=8, S=128, L=6"
+        )
+    if triton_linear_gelu_requested and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("Triton linear+GELU requires a packed-QKV implementation")
+    if triton_linear_gelu_requested and args.compile_user:
+        raise ValueError("Triton linear+GELU is not supported with torch.compile")
     if args.triton_exact_add_norm and args.triton_fused_add_norm_sites:
         raise ValueError(
             "use either --triton-exact-add-norm or explicit fused site indices"
@@ -1389,12 +1471,18 @@ def main() -> int:
         if args.triton_exact_add_norm
         else args.triton_fused_add_norm_sites
     )
+    triton_linear_gelu_layer_indices = (
+        tuple(range(config.num_layers))
+        if args.triton_linear_gelu
+        else args.triton_linear_gelu_layer_indices
+    )
     optimized = UserOptimizedTransformer(
         config,
         args.user_implementation,
         sdpa_layers,
         args.sdpa_layer_indices,
         args.gelu_approx_layer_indices,
+        triton_linear_gelu_layer_indices,
         triton_fused_add_norm_sites,
         triton_rounded_attention_layer_indices,
     )
@@ -1458,6 +1546,11 @@ def main() -> int:
             print(
                 "gelu_approx_layer_indices="
                 f"{sorted(args.gelu_approx_layer_indices)}"
+            )
+        if triton_linear_gelu_layer_indices:
+            print(
+                "triton_linear_gelu_layer_indices="
+                f"{sorted(triton_linear_gelu_layer_indices)}"
             )
         if triton_fused_add_norm_sites:
             print(

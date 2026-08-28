@@ -57,6 +57,7 @@ Current best verified FP16 experiment:
   --user-implementation packed-qkv \
   --triton-rounded-attention \
   --triton-exact-add-norm \
+  --triton-linear-gelu \
   --cuda-graph-user \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
@@ -102,6 +103,15 @@ Welford calculation and exact four-warp reduction tree; both the residual sum
 and normalized output are bit-exact. It compounds with rounded attention and
 passed 100 trials in every mask regime. Use
 `--triton-fused-add-norm-sites 8,9,10,11` only for explicit site experiments.
+
+`--triton-linear-gelu` replaces each width-512-to-2048 FFN input projection and
+following exact GELU with one tuned Triton kernel. It retains the intervening
+FP16 materialization and CUDA libdevice `erf`. The all-layer path had zero
+failed elements over 100 trials in each mask regime; unmasked output was
+bit-exact, while masked/causal maximum absolute difference was 0.00390625 and
+remained inside the combined tolerance. Use
+`--triton-linear-gelu-layer-indices 4,5` for explicit placement or other-row-
+count experiments; the shorthand is gated to the audited default model.
 
 For padded cases, the optimized path precomputes static causal masks, negates
 the padding mask only when a reference-attention fallback needs it, and excludes

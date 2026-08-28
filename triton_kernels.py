@@ -230,6 +230,108 @@ def add_layer_norm(
 
 
 @triton.jit
+def _linear_exact_gelu_kernel(
+    input_ptr,
+    weight_ptr,
+    bias_ptr,
+    output_ptr,
+    rows,
+    input_features: tl.constexpr,
+    output_features: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+    group_m: tl.constexpr,
+):
+    """FP16 linear materialization followed by PyTorch-order exact GELU."""
+    program_id = tl.program_id(0)
+    programs_m = tl.cdiv(rows, block_m)
+    programs_n = tl.cdiv(output_features, block_n)
+    programs_per_group = group_m * programs_n
+    group_id = program_id // programs_per_group
+    first_program_m = group_id * group_m
+    group_size_m = tl.minimum(programs_m - first_program_m, group_m)
+    program_m = first_program_m + (program_id % group_size_m)
+    program_n = (program_id % programs_per_group) // group_size_m
+
+    offsets_m = program_m * block_m + tl.arange(0, block_m)
+    offsets_n = program_n * block_n + tl.arange(0, block_n)
+    offsets_k = tl.arange(0, block_k)
+    accumulator = tl.zeros((block_m, block_n), tl.float32)
+
+    for k_start in range(0, input_features, block_k):
+        input_offsets = offsets_m[:, None] * input_features + (
+            k_start + offsets_k[None, :]
+        )
+        weight_offsets = offsets_n[None, :] * input_features + (
+            k_start + offsets_k[:, None]
+        )
+        input_values = tl.load(
+            input_ptr + input_offsets,
+            mask=offsets_m[:, None] < rows,
+            other=0.0,
+        )
+        weight_values = tl.load(weight_ptr + weight_offsets)
+        accumulator += tl.dot(input_values, weight_values)
+
+    bias = tl.load(bias_ptr + offsets_n)
+    linear_fp16 = (accumulator + bias[None, :]).to(tl.float16)
+    linear_fp32 = linear_fp16.to(tl.float32)
+    erf_values = libdevice.erf(linear_fp32 * 0.7071067811865476)
+    gelu = (linear_fp32 * 0.5) * (1.0 + erf_values)
+    output_offsets = offsets_m[:, None] * output_features + offsets_n[None, :]
+    tl.store(
+        output_ptr + output_offsets,
+        gelu,
+        mask=(offsets_m[:, None] < rows),
+    )
+
+
+def linear_exact_gelu(
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+) -> torch.Tensor:
+    """Run the fixed FP16 FFN input projection and exact GELU in one kernel."""
+    if not inputs.is_cuda or inputs.dtype != torch.float16:
+        raise ValueError("Triton linear+GELU requires a CUDA FP16 input")
+    if not inputs.is_contiguous() or inputs.shape[-1] != 512:
+        raise ValueError("Triton linear+GELU requires contiguous width-512 input")
+    if weight.shape != (2048, 512) or bias.shape != (2048,):
+        raise ValueError("Triton linear+GELU requires 2048x512 weight and bias")
+    if (
+        weight.device != inputs.device
+        or bias.device != inputs.device
+        or weight.dtype != torch.float16
+        or bias.dtype != torch.float16
+        or not weight.is_contiguous()
+        or not bias.is_contiguous()
+    ):
+        raise ValueError("Triton linear+GELU parameters must be contiguous CUDA FP16")
+
+    rows = inputs.numel() // inputs.shape[-1]
+    output = torch.empty((*inputs.shape[:-1], 2048), device=inputs.device, dtype=inputs.dtype)
+    block_m, block_n, block_k = 128, 128, 64
+    grid = (triton.cdiv(rows, block_m) * triton.cdiv(2048, block_n),)
+    _linear_exact_gelu_kernel[grid](
+        inputs,
+        weight,
+        bias,
+        output,
+        rows,
+        input_features=512,
+        output_features=2048,
+        block_m=block_m,
+        block_n=block_n,
+        block_k=block_k,
+        group_m=8,
+        num_warps=8,
+        num_stages=4,
+    )
+    return output
+
+
+@triton.jit
 def _rounded_attention_kernel(
     q_ptr,
     k_ptr,

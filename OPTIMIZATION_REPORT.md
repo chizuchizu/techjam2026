@@ -35,13 +35,14 @@ is the primary metric.
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Previous FP16 best |
 | Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
 | Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Previous robust FP16 best |
-| Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Current robust FP16 best |
+| Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Previous exact FP16 best |
+| Previous row + fused FFN input linear/exact-GELU, all 6 | pass, 0/209,715,200; unmasked exact | 2.401 ms | **0.2865 ms** | **8.383x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
-| Padded FP16, exact attention/add-norm + fused final mask | exact, 0/52,428,800 | 3.327 ms | **0.3086 ms** | **10.780x** | Current padded best |
+| Padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.325 ms | **0.3040 ms** | **10.939x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
-| Causal FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.241 ms | **0.3024 ms** | **7.412x** | New causal best |
+| Causal FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 2.968 ms | **0.2981 ms** | **9.957x** | Current causal best |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
-| Causal+padded FP16, exact attention/add-norm + fused final mask | exact, 0/52,428,800 | 3.866 ms | **0.3509 ms** | **11.017x** | Current causal+padded best |
+| Causal+padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.843 ms | **0.3443 ms** | **11.164x** | Current causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
@@ -220,6 +221,16 @@ A/B measured 0.3233 ms before fusion and 0.2933 ms after fusion, also a
 **1.102x incremental speedup**. The normal safe-output path measures 0.2942 ms;
 graph-owned static output measures 0.2923 ms.
 
+Fusing each FFN input projection with its exact-GELU consumer reduces the
+unmasked graph again, from 49 to **43 nodes** and from 268.039 to 265.409
+microseconds of summed kernel time. Six tuned 128x128x64, eight-warp,
+four-stage kernels take 64.896 microseconds; the six prior library GEMMs plus
+six standalone GELUs took 69.921 microseconds. A shared-weight, same-input
+interleaved graph A/B measured 0.2929 ms before and 0.2869 ms after fusion
+(**1.021x incremental**). Static output measures 0.2865 ms and safe output
+0.2898 ms. The saved node launches explain why end-to-end improvement slightly
+exceeds the 5.0-microsecond kernel-duration reduction.
+
 The corresponding padded graph also has **49 nodes** and 281.413 microseconds
 of summed kernel time. Its extra attention cost comes from padding predicates,
 but it contains neither mask negation nor final masked-fill. Folding final
@@ -269,10 +280,10 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.2923 ms, the current exact-Triton FP16 path sustains an effective 137.8
-TFLOP/s on the 40.265-GFLOP logical model, about 16.5% of the estimated 835.5
-TFLOP/s dense Tensor Core roof. It is 6.06x above the compute-only floor and
-2.46x above the logical-traffic floor. The remaining gap is consistent with the
+At 0.2865 ms, the current Triton FP16 path sustains an effective 140.5 TFLOP/s
+on the 40.265-GFLOP logical model, about 16.8% of the estimated 835.5 TFLOP/s
+dense Tensor Core roof. It is 5.94x above the compute-only floor and 2.41x above
+the logical-traffic floor. The remaining gap is consistent with the
 trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
 rather than the 39.0-microsecond total for six exact custom attention kernels.
 TensorRT FP32 at 0.5127 ms
@@ -291,7 +302,7 @@ because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P1 | Hoist static masks / remove invalid-query dead work | **Implemented** | Causal+padded candidate 0.675→0.568 ms | Low | Safe because masks exclude invalid keys and other ops are token-local |
 | P2 | Fused residual + LayerNorm + linear | **Exact Triton add+norm implemented** | Observed 10.2%; linear fusion may add more | Medium | Width-512 specialization; linear fusion remains open |
-| P2 | Fused LayerNorm + FFN and exact-GELU epilogue | No | 5–20% | Medium–high | FFN is 64% of FLOPs; tanh GELU may fail tolerance |
+| P2 | Fused LayerNorm + FFN and exact-GELU epilogue | Linear+exact-GELU implemented | Observed 2.1%; output-GEMM consumer fusion remains | Medium–high | FFN is 64% of FLOPs; preserve FP16 boundaries |
 | P2 | Pack valid tokens / variable-length execution | No | 1.2–2x with substantial padding | Medium–high | Pack whole block, not only attention; prefix-valid mask is favorable |
 | P2 | Per-shape autotuned dispatcher | Partial | 5–30% | Medium–high | Known shape has mask-aware layer counts; official matrix still required |
 | P3 | FP8 Transformer Engine/torchao path | No | 1.1–1.7x on large aligned GEMMs | High | Accuracy/scaling overhead; separate opt-in experiment |
@@ -342,6 +353,16 @@ differed on 151 finite FP16 inputs. Exact finite-domain lookup is therefore a
 useful novel technique only when the table access is cheaper than the native
 operation; it is not a win for this bandwidth-efficient CUDA GELU kernel.
 
+The retained alternative fuses GELU into the producer GEMM rather than
+replacing its mathematics. A 20-configuration launch sweep selected
+128x128x64, eight warps, four stages. The kernel rounds the biased GEMM output
+to FP16 before applying the same libdevice `erf` formula, preserving the
+reference materialization boundary. It was operator-bit-exact on a full
+2,097,152-element random test. At model level, unmasked output stayed bit-exact
+over 100 trials; padded, causal, and combined modes each passed 100 trials with
+zero failed elements and 0.00390625 maximum absolute difference. Input scales
+0.1 and 10 and padding ratios 0.1, 0.5, and 0.75 also passed 25 trials.
+
 The first Triton residual-add/LayerNorm prototype used a generic Welford
 reduction and failed 36 elements in 52,428,800 outputs. Inspecting PyTorch's
 CUDA implementation exposed the missing detail: width 512 launches four warps,
@@ -359,8 +380,8 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 2. With counter permissions enabled, capture one representative D×D GEMM, D×F
    GEMM, LayerNorm, exact GELU, mask kernel, and fused SDPA kernel using `ncu`'s
    roofline set.
-3. Test exact GELU/linear epilogue fusion; the six standalone exact GELU kernels
-   now account for 23.9 microseconds, while GEMMs dominate the remaining trace.
+3. Prototype an FFN output-GEMM/residual/normalization composite; the input
+   linear+GELU producer is now fused and the remaining library GEMMs dominate.
 4. Evaluate variable-length whole-block packing when padded official cases exist.
 
 ## Primary sources
@@ -376,6 +397,7 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 - [cuBLASLt epilogues](https://docs.nvidia.com/cuda/cublas/index.html)
 - [Triton fused LayerNorm](https://triton-lang.org/main/getting-started/tutorials/05-layer-norm.html)
 - [PyTorch CUDA LayerNorm implementation](https://github.com/pytorch/pytorch/blob/cf30153c4c131c8164ee7798e5022d810682e2cb/aten/src/ATen/native/cuda/layer_norm_kernel.cu)
+- [PyTorch CUDA GELU implementation](https://github.com/pytorch/pytorch/blob/cf30153c4c131c8164ee7798e5022d810682e2cb/aten/src/ATen/native/cuda/ActivationGeluKernel.cu)
 - [Triton fused attention](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)
 - [Triton Hopper persistent matmul](https://triton-lang.org/main/getting-started/tutorials/09-persistent-matmul.html)
 - [TensorRT Python installation](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-pip.html)

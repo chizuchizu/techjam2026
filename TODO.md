@@ -27,8 +27,9 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
 5. Keep the implemented static-mask hoisting and final add/LayerNorm invalid-row
    zeroing; the best padded path no longer launches mask-negation or final-mask
    kernels. Verify it across the official padding-mask cases.
-6. Keep the now-bit-exact Triton residual-add + LayerNorm fusion, which matches
-   PyTorch's Welford tree at all sites; next test linear and exact-GELU fusion.
+6. Keep the exact Triton residual-add/LayerNorm and implemented FFN input
+   linear+exact-GELU fusion. Next investigate combining the FFN output GEMM with
+   its residual/normalization consumer.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; the fixed unmasked TensorRT FP32 graph path is now implemented
