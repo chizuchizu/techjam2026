@@ -19,6 +19,8 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
 2. Enable Nsight Compute performance counters and collect per-kernel rooflines.
 3. Keep and expand the opt-in packed-QKV + SDPA implementation with per-shape
    accuracy dispatch (known FP16 shape: four unmasked, three padded, two causal).
+   Prefer the implemented score-rounded Triton attention for the known default
+   FP16 shape: four trailing layers pass the stronger 100-trial mask-mode audit.
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
    official static shape and mask regimes.
 5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
@@ -27,8 +29,9 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    numerically exact linear fusion; then test fused exact-GELU FFN.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
-   shape table; treat Transformer Engine and FP8 as separate accuracy-gated
-   experiments.
+   shape table; the fixed unmasked TensorRT FP32 graph path is now implemented
+   and faster, while TensorRT FP16 fails accuracy. Treat Transformer Engine and
+   FP8 as separate accuracy-gated experiments.
 9. Later, investigate novel sensitivity-guided approximations: identify the
    measured bottleneck, estimate layerwise error amplification, then apply
    cheaper math/precision only where the final elementwise tolerance has margin.

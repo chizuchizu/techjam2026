@@ -32,16 +32,23 @@ is the primary metric.
 | Packed QKV + SDPA, trailing 4, no redundant mask | pass, 0/13,107,200 | 2.425 ms | 1.829 ms | **1.325x** | Best eager FP16 |
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
 | Compile with eager precision casts + rounded division + CUDA libdevice | fail, 45/13,107,200 | — | — | — | Reject: same FP16 error pattern |
-| Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Current FP16 best |
+| Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Previous FP16 best |
 | Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
-| Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Current padded best |
+| Score-rounded Triton attention, trailing 4 + static graph output | pass, 0/52,428,800 | 2.454 ms | **0.3727 ms** | **6.585x** | Current robust FP16 best |
+| Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
+| Padded FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 3.376 ms | **0.4052 ms** | **8.330x** | New padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
-| Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Current causal+padded best |
+| Causal FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 2.258 ms | **0.3931 ms** | **5.744x** | New causal best |
+| Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
+| Causal+padded FP16, four rounded-Triton layers + static output | pass, 0/52,428,800 | 3.818 ms | **0.4218 ms** | **9.052x** | New causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
 | FP32 previous row + raw CUDA graph | pass, 0/5,242,880 | 2.389 ms | 0.562 ms | 4.248x | Safer/no compiler startup |
-| FP32 previous row + `reduce-overhead` compile | pass, 0/13,107,200 | 2.302 ms | 0.549 ms | **4.197x** | Current default-dtype best |
+| FP32 previous row + `reduce-overhead` compile | pass, 0/13,107,200 | 2.302 ms | 0.549 ms | **4.197x** | Previous default-dtype best |
+| TensorRT 11.2 FP32 engine + CUDA graph, safe I/O | pass, 0/13,107,200 | 2.282 ms | **0.5127 ms** | **4.451x** | Current default-dtype best |
+| TensorRT 11.2 FP32 engine + graph, static output | pass, 0/2,621,440 | 2.312 ms | **0.5097 ms** | **4.537x** | Keep when output lifetime permits |
+| TensorRT 11.2 FP16 engine | fail, 61,494/13,107,200 | — | — | — | Reject for FP16 |
 | FP32 previous row + `max-autotune` | pass, 0/5,242,880 | 1.921 ms | 0.525 ms | 3.659x | Slightly faster candidate, less accuracy headroom |
 | FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
 | FP16 tanh-approximate GELU | fail, 74/13,107,200 | — | — | — | Reject: exceeds elementwise tolerance |
@@ -66,10 +73,38 @@ The packed implementation still combines Q/K/V in BF16 while retaining the
 reference attention algorithm; tested BF16 outputs are bit-exact. CPU uses the
 baseline. Explicit `--sdpa-layers` values override FP32/FP16 selection.
 
+The new opt-in `--triton-rounded-attention` supersedes SDPA for the known
+default FP16 target. Its specialized `S=128`, head-dimension-64 kernel tiles 64
+queries against all keys, rounds the QK matmul result to FP16, rounds the scale
+multiply to FP16 again, then performs FP32 softmax and an FP16 probability/value
+dot. Those are the same materialization boundaries as the explicit reference.
+Trailing four layers passed 100 trials in every mask regime (52,428,800 outputs
+per regime); five layers failed. In contrast, a stronger audit found that the
+previous four-layer cuDNN path fails seven elements beyond its original 25-seed
+window. The Triton shorthand is therefore gated to the fully tested model,
+FP16, and input scale 1.0. At input scale 0.1, four Triton layers fail while two
+pass; explicit indices retain that sensitivity control.
+
 Compiled FP32 `reduce-overhead` also passed tested small, default,
 causal+padded, and long-sequence shapes. Observed speedups were respectively
 6.36x, 4.20x, 6.99x, and 1.10x, confirming that CUDA graph/launch fusion is most
 valuable for launch-bound cases and modest for large compute-bound work.
+
+TensorRT 11.2.1 was installed through its CUDA 13 Python wheel and tested
+through the native builder/runtime rather than Torch-TensorRT. The exact seeded
+baseline exports to a fixed-shape ONNX graph; TensorRT parses 417 layers and
+builds a content-addressed engine. The FP32 engine is about 76.1 MB, passes 25
+trials with maximum absolute error 0.000719, and takes 0.5127 ms when CUDA graph
+replay includes the dynamic input copy and safe output clone. This is about
+1.071x faster than the adjacent 0.5489 ms compiled PyTorch result. Static output
+reduces it to 0.5097 ms. Native, uncaptured TensorRT measured about 0.595 ms,
+showing that graph launch remains important even after TensorRT fusion.
+
+The corresponding strongly typed FP16 engine is about 38.3 MB but fails 61,494
+of 13,107,200 outputs, so it is rejected rather than benchmark-promoted. The
+standalone `tensorrt_transformer_benchmark.py` currently covers only the known
+unmasked FP32 shape; engine build artifacts are hardware/version-specific and
+remain ignored under `.tensorrt-cache/`.
 
 PyTorch 2.13's FP16 eager-numerics controls did not rescue whole-model
 compilation. `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1`, rounded division, and
@@ -157,6 +192,15 @@ Three noncausal padded layers and two causal layers passed 25 trials, including
 padding ratios 0.10, 0.25, 0.50, and 0.75. `--sdpa-layer-indices` preserves this
 experimental control while automatic dispatch uses the proven trailing sets.
 
+The score-rounded Triton default trace also has 79 graph nodes. After H200
+launch-geometry tuning, four custom attention launches total 18.21 microseconds
+versus 19.52 microseconds for four cuDNN SDPA launches in a neighboring trace.
+A shared-weight, same-process interleaved graph A/B measured 0.37386 ms for
+rounded Triton versus 0.39146 ms for cuDNN, a **1.047x incremental speedup**.
+Matching cuDNN's BSHD-backed output strides was essential: the first prototype
+forced four transpose copies and erased the kernel benefit. A sweep over query
+tiles, warps, and pipeline stages selected 64 rows, four warps, and one stage.
+
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
 `NVreg_RestrictProfilingToAdminUsers=0`, followed by the required driver reload.
@@ -199,14 +243,23 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
+At 0.3727 ms, the current rounded-Triton FP16 path sustains an effective 108.0
+TFLOP/s on the 40.265-GFLOP logical model, about 12.9% of the estimated 835.5
+TFLOP/s dense Tensor Core roof. It is 7.7x above the compute-only floor and 3.1x
+above the logical-traffic floor. The remaining gap is consistent with the trace:
+medium GEMMs, reductions, copies, GELU, and serial dependencies dominate rather
+than the now-18.2-microsecond custom attention total. TensorRT FP32 at 0.5127 ms
+is 78.5 effective TFLOP/s; this is not directly comparable to the FP16 roof
+because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
+
 ## Prioritized optimization backlog
 
 | Priority | Work | Present? | Expected end-to-end gain | Difficulty | Dependencies / conflicts |
 |---|---|---:|---:|---:|---|
 | P0 | Recover official shapes and dtype/mask matrix | No | Enables reliable dispatch | Low/admin | Prerequisite for every specialization |
-| P0 | Accuracy/backend gate SDPA per case | Partial | 1.05–2x, sequence-dependent | Low–medium | BF16 currently conflicts with tolerance |
+| P0 | Accuracy/backend gate attention per case | Rounded Triton implemented for known FP16 target | 1.05–2x, sequence-dependent | Low–medium | BF16 remains on reference math |
 | P1 | Packed QKV projection | **Implemented** | Observed incremental gain; usually 5–15% | Medium | Compounds with SDPA and BSHD layout |
-| P1 | Compile/CUDA graph mode sweep | **Implemented for FP32; FP16 rejected** | Observed 1.10–6.99x | Low | Static shapes; accuracy gate every case |
+| P1 | Compile/CUDA graph/TensorRT sweep | **TensorRT FP32 + graph implemented; FP16 rejected** | Observed 1.10–6.99x | Low–medium | Static shapes; accuracy gate every engine |
 | P1 | Raw CUDA graph replay | **Implemented** | Observed 4.25–6.12x | Low | Static shape/mask regime; preserves eager kernels and numerics |
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P1 | Hoist static masks / remove invalid-query dead work | **Implemented** | Causal+padded candidate 0.675→0.568 ms | Low | Safe because masks exclude invalid keys and other ops are token-local |
@@ -285,6 +338,8 @@ for reproducibility, but no automatic configuration enables it.
 - [Triton fused LayerNorm](https://triton-lang.org/main/getting-started/tutorials/05-layer-norm.html)
 - [Triton fused attention](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)
 - [Triton Hopper persistent matmul](https://triton-lang.org/main/getting-started/tutorials/09-persistent-matmul.html)
+- [TensorRT Python installation](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-pip.html)
+- [TensorRT performance benchmarking](https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/benchmarking.html)
 - [GPU MODE lectures](https://github.com/gpu-mode/lectures)
 - [Nsight Systems guide](https://docs.nvidia.com/nsight-systems/UserGuide/)
 - [Nsight Compute counter-permission remediation](https://developer.nvidia.com/nvidia-development-tools-solutions-err_nvgpuctrperm-permission-issue-performance-counters)

@@ -190,6 +190,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         sdpa_layer_indices: Optional[Tuple[int, ...]],
         gelu_approx_layer_indices: Tuple[int, ...],
         triton_fused_add_norm_sites: Tuple[int, ...],
+        triton_rounded_attention_layer_indices: Tuple[int, ...],
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -228,6 +229,20 @@ class UserOptimizedTransformer(BaselineTransformer):
             raise ValueError("Triton fused site index is outside the model")
         self.triton_fused_add_norm_sites = frozenset(
             triton_fused_add_norm_sites
+        )
+        if len(set(triton_rounded_attention_layer_indices)) != len(
+            triton_rounded_attention_layer_indices
+        ):
+            raise ValueError(
+                "triton_rounded_attention_layer_indices must not contain duplicates"
+            )
+        if any(
+            index < 0 or index >= config.num_layers
+            for index in triton_rounded_attention_layer_indices
+        ):
+            raise ValueError("Triton attention layer index is outside the model")
+        self.triton_rounded_attention_layer_indices = frozenset(
+            triton_rounded_attention_layer_indices
         )
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
@@ -354,6 +369,40 @@ class UserOptimizedTransformer(BaselineTransformer):
         output = attention.out_proj(context)
         return output
 
+    @staticmethod
+    def _triton_rounded_attention(
+        attention: BaselineSelfAttention,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor],
+        causal: bool,
+        packed_qkv: Tuple[torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        """Use shape-specialized attention with reference score rounding."""
+        from triton_kernels import rounded_attention
+
+        batch, seq_len, _ = x.shape
+        qkv = F.linear(x, packed_qkv[0], packed_qkv[1])
+        q, k, v = (
+            projected.transpose(1, 2)
+            for projected in qkv.view(
+                batch,
+                seq_len,
+                3,
+                attention.num_heads,
+                attention.head_dim,
+            ).unbind(dim=2)
+        )
+        context = rounded_attention(
+            q,
+            k,
+            v,
+            valid_token_mask,
+            causal,
+            attention.scale,
+        )
+        context = context.transpose(1, 2).reshape(batch, seq_len, attention.d_model)
+        return attention.out_proj(context)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -382,6 +431,23 @@ class UserOptimizedTransformer(BaselineTransformer):
                 if layer_index in self.gelu_approx_layer_indices
                 else "none"
             )
+            if layer_index in self.triton_rounded_attention_layer_indices:
+                attention_output = self._triton_rounded_attention(
+                    layer.attention,
+                    layer.norm1(x),
+                    valid_token_mask,
+                    self.config.causal,
+                    self._packed_qkv[layer_index],
+                )
+                x = x + attention_output
+                x = x + layer.ffn_out(
+                    F.gelu(
+                        layer.ffn_in(layer.norm2(x)),
+                        approximate=gelu_approximate,
+                    )
+                )
+                continue
+
             if layer_index not in sdpa_layer_indices:
                 if self.implementation == "sdpa":
                     x = layer(x, valid_token_mask, self.config.causal)
@@ -445,7 +511,15 @@ class UserOptimizedTransformer(BaselineTransformer):
         normalized_for_attention = self.layers[0].norm1(x)
 
         for layer_index, layer in enumerate(self.layers):
-            if layer_index in sdpa_layer_indices:
+            if layer_index in self.triton_rounded_attention_layer_indices:
+                attention_output = self._triton_rounded_attention(
+                    layer.attention,
+                    normalized_for_attention,
+                    valid_token_mask,
+                    self.config.causal,
+                    self._packed_qkv[layer_index],
+                )
+            elif layer_index in sdpa_layer_indices:
                 attention_output = self._sdpa_attention(
                     layer.attention,
                     normalized_for_attention,
@@ -1126,6 +1200,17 @@ def parse_args() -> argparse.Namespace:
         default=(),
         help="residual+following-LayerNorm sites to fuse (two sites per layer)",
     )
+    parser.add_argument(
+        "--triton-rounded-attention",
+        action="store_true",
+        help="use the proven trailing-four rounded Triton attention layers",
+    )
+    parser.add_argument(
+        "--triton-rounded-attention-layer-indices",
+        type=parse_layer_indices,
+        default=(),
+        help="layers using specialized FP16-score-rounded Triton attention",
+    )
 
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
@@ -1198,6 +1283,51 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("Triton add+LayerNorm requires a packed-QKV implementation")
     if args.triton_fused_add_norm_sites and args.compile_user:
         raise ValueError("Triton add+LayerNorm is not supported with torch.compile")
+    if (
+        args.triton_rounded_attention
+        and args.triton_rounded_attention_layer_indices
+    ):
+        raise ValueError(
+            "use either --triton-rounded-attention or explicit layer indices"
+        )
+    triton_attention_requested = bool(
+        args.triton_rounded_attention
+        or args.triton_rounded_attention_layer_indices
+    )
+    if triton_attention_requested and device.type != "cuda":
+        raise ValueError("Triton rounded attention requires a CUDA device")
+    if triton_attention_requested and dtype != torch.float16:
+        raise ValueError("Triton rounded attention currently requires FP16")
+    if triton_attention_requested and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("Triton rounded attention requires packed QKV")
+    if triton_attention_requested and (
+        args.seq_len != 128 or args.d_model // args.heads != 64
+    ):
+        raise ValueError("Triton rounded attention requires S=128 and head_dim=64")
+    if triton_attention_requested and args.compile_user:
+        raise ValueError("Triton rounded attention is not supported with torch.compile")
+    if (
+        triton_attention_requested
+        and args.triton_fused_add_norm_sites
+    ):
+        raise ValueError("enable only one Triton experiment at a time")
+    if args.triton_rounded_attention and args.input_scale != 1.0:
+        raise ValueError(
+            "automatic rounded attention is accuracy-gated only for input scale 1"
+        )
+    if args.triton_rounded_attention and (
+        args.batch_size != 8
+        or args.d_model != 512
+        or args.heads != 8
+        or args.ffn_dim != 2048
+        or args.layers != 6
+    ):
+        raise ValueError(
+            "automatic rounded attention is gated for the known default model shape"
+        )
 
 
 def main() -> int:
@@ -1231,6 +1361,11 @@ def main() -> int:
         dtype,
         args.padding_ratio,
     )
+    triton_rounded_attention_layer_indices = (
+        tuple(range(max(0, config.num_layers - 4), config.num_layers))
+        if args.triton_rounded_attention
+        else args.triton_rounded_attention_layer_indices
+    )
     optimized = UserOptimizedTransformer(
         config,
         args.user_implementation,
@@ -1238,6 +1373,7 @@ def main() -> int:
         args.sdpa_layer_indices,
         args.gelu_approx_layer_indices,
         args.triton_fused_add_norm_sites,
+        triton_rounded_attention_layer_indices,
     )
     copy_model_weights(
         baseline,
@@ -1260,7 +1396,14 @@ def main() -> int:
     selected_sdpa_layer_indices = (
         []
         if selected_sdpa_layers == 0
-        else sorted(optimized.sdpa_layer_indices)
+        else sorted(
+            optimized.sdpa_layer_indices
+            - optimized.triton_rounded_attention_layer_indices
+        )
+    )
+    selected_sdpa_layers = len(selected_sdpa_layer_indices)
+    selected_triton_attention_layer_indices = sorted(
+        optimized.triton_rounded_attention_layer_indices
     )
     optimized = maybe_compile(optimized, args.compile_user, args.compile_mode)
     if args.cuda_graph_user:
@@ -1297,6 +1440,11 @@ def main() -> int:
             print(
                 "triton_fused_add_norm_sites="
                 f"{sorted(args.triton_fused_add_norm_sites)}"
+            )
+        if selected_triton_attention_layer_indices:
+            print(
+                "triton_rounded_attention_layer_indices="
+                f"{selected_triton_attention_layer_indices}"
             )
     if args.compile_baseline or args.compile_user:
         print(
