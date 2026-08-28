@@ -187,10 +187,26 @@ class UserOptimizedTransformer(BaselineTransformer):
         config: TransformerConfig,
         implementation: str,
         sdpa_layers: int,
+        sdpa_layer_indices: Optional[Tuple[int, ...]],
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
-        self.sdpa_layers = config.num_layers if sdpa_layers < 0 else sdpa_layers
+        resolved_layers = config.num_layers if sdpa_layers < 0 else sdpa_layers
+        if sdpa_layer_indices is None:
+            self.sdpa_layer_indices = frozenset(
+                range(config.num_layers - resolved_layers, config.num_layers)
+            )
+        else:
+            if len(set(sdpa_layer_indices)) != len(sdpa_layer_indices):
+                raise ValueError("sdpa_layer_indices must not contain duplicates")
+            if any(
+                index < 0 or index >= config.num_layers
+                for index in sdpa_layer_indices
+            ):
+                raise ValueError("sdpa layer index is outside the model")
+            self.sdpa_layer_indices = frozenset(sdpa_layer_indices)
+            resolved_layers = len(self.sdpa_layer_indices)
+        self.sdpa_layers = resolved_layers
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
         if not 0 <= self.sdpa_layers <= config.num_layers:
@@ -331,14 +347,13 @@ class UserOptimizedTransformer(BaselineTransformer):
         invalid_token_mask = (
             None if valid_token_mask is None else ~valid_token_mask
         )
-        sdpa_layers = (
-            0
+        sdpa_layer_indices = (
+            frozenset()
             if self.implementation == "packed-qkv" or x.dtype == torch.bfloat16
-            else self.sdpa_layers
+            else self.sdpa_layer_indices
         )
-        first_sdpa_layer = len(self.layers) - sdpa_layers
         for layer_index, layer in enumerate(self.layers):
-            if layer_index < first_sdpa_layer:
+            if layer_index not in sdpa_layer_indices:
                 if self.implementation == "sdpa":
                     x = layer(x, valid_token_mask, self.config.causal)
                     continue
@@ -487,6 +502,15 @@ def parse_sdpa_layers(value: str) -> int:
         ) from error
 
 
+def parse_sdpa_layer_indices(value: str) -> Tuple[int, ...]:
+    try:
+        return tuple(int(item) for item in value.split(",") if item != "")
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "SDPA layer indices must be comma-separated integers"
+        ) from error
+
+
 def resolve_sdpa_layers(
     requested: int,
     config: TransformerConfig,
@@ -501,19 +525,21 @@ def resolve_sdpa_layers(
     if dtype == torch.float32:
         return config.num_layers
 
-    # Six fused FP16 layers miss the strict elementwise threshold by a handful
-    # of values. Four trailing layers passed 25 trials for the known default.
-    default_fp16_case = (
+    # The strict elementwise threshold gives each mask regime a different safe
+    # boundary on the known shape. The next layer beyond each value failed.
+    known_fp16_shape = (
         config.batch_size == 8
         and config.seq_len == 128
         and config.d_model == 512
         and config.num_heads == 8
         and config.ffn_dim == 2048
         and config.num_layers == 6
-        and not config.causal
-        and padding_ratio == 0.0
     )
-    if dtype == torch.float16 and default_fp16_case:
+    if dtype == torch.float16 and known_fp16_shape:
+        if config.causal:
+            return 2
+        if padding_ratio > 0.0:
+            return 3
         return 4
 
     # Conservative fallback for undisclosed FP16 cases. BF16 does not enter
@@ -962,6 +988,12 @@ def parse_args() -> argparse.Namespace:
         default=-2,
         help="trailing SDPA layers: auto, all, or an integer (default: auto)",
     )
+    parser.add_argument(
+        "--sdpa-layer-indices",
+        type=parse_sdpa_layer_indices,
+        default=None,
+        help="comma-separated zero-based SDPA layers; overrides --sdpa-layers",
+    )
 
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
@@ -1046,6 +1078,7 @@ def main() -> int:
         config,
         args.user_implementation,
         sdpa_layers,
+        args.sdpa_layer_indices,
     )
     copy_model_weights(
         baseline,
@@ -1064,6 +1097,11 @@ def main() -> int:
         if dtype == torch.bfloat16
         and args.user_implementation == "sdpa-packed-qkv"
         else optimized.sdpa_layers
+    )
+    selected_sdpa_layer_indices = (
+        []
+        if selected_sdpa_layers == 0
+        else sorted(optimized.sdpa_layer_indices)
     )
     optimized = maybe_compile(optimized, args.compile_user, args.compile_mode)
     if args.cuda_graph_user:
@@ -1089,6 +1127,7 @@ def main() -> int:
     if args.user_implementation != "baseline":
         if args.user_implementation != "packed-qkv":
             print(f"sdpa_layers={selected_sdpa_layers}")
+            print(f"sdpa_layer_indices={selected_sdpa_layer_indices}")
     if args.compile_baseline or args.compile_user:
         print(
             f"compile_baseline={args.compile_baseline}, "

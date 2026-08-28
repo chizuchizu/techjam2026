@@ -32,8 +32,9 @@ is the primary metric.
 | Packed QKV + SDPA, trailing 4, no redundant mask | pass, 0/13,107,200 | 2.425 ms | 1.829 ms | **1.325x** | Best eager FP16 |
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Current FP16 best |
-| Padded FP16, one SDPA layer + mask cleanup + raw graph | pass, 0/13,107,200 | 3.370 ms | 0.526 ms | **6.410x** | Keep |
-| Causal+padded FP16, same path | pass, 0/13,107,200 | 3.943 ms | 0.568 ms | **6.944x** | Keep |
+| Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Current padded best |
+| Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
+| Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Current causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
@@ -54,7 +55,8 @@ version-sensitive and contradicts older/documented pseudocode, so it remains an
 explicit test dimension.
 
 Automatic dispatch now uses all SDPA layers for FP32, four only for the known
-default noncausal FP16 shape, one for other FP16 shapes, and zero for BF16.
+default noncausal FP16 shape, three for its padded noncausal regime, two for its
+causal regimes, one for undisclosed FP16 shapes, and zero for BF16.
 The packed implementation still combines Q/K/V in BF16 while retaining the
 reference attention algorithm; tested BF16 outputs are bit-exact. CPU uses the
 baseline. Explicit `--sdpa-layers` values override FP32/FP16 selection.
@@ -67,8 +69,8 @@ valuable for launch-bound cases and modest for large compute-bound work.
 Raw CUDA graph capture preserves the selected eager kernels and their numerical
 results. It passed 25 default FP16 trials, 25 causal+padded FP16 trials, 25
 BF16 trials with exact output, and ten FP32 trials. Default FP16 reached 0.391
-ms and 6.12x versus baseline. Padded and causal+padded FP16 reached 6.41x and
-6.94x; BF16 reached 4.87x unmasked and 6.29x causal+padded, and FP32 4.25x.
+ms and 6.12x versus baseline. Padded and causal+padded FP16 reached 0.469 ms and
+0.528 ms; BF16 reached 4.87x unmasked and 6.29x causal+padded, and FP32 4.25x.
 Packing QKV in the two reference-attention prefix layers was
 numerically identical to the prior candidate and removed four more graph nodes.
 
@@ -117,10 +119,20 @@ from 79 individual launches to one
 gaps. The output clone deliberately preserves normal tensor ownership semantics;
 without it, a later graph replay would overwrite a previous result.
 
-The final causal+padded FP16 trace has 121 nodes and 483.9 microseconds of GPU
-work, down from 132 nodes and 520.6 microseconds before removing intermediate
-invalid-row fills. Mask fills fell from 22 to 11 nodes. Hoisting the causal-mask
-construction itself removes additional fill/triangle work from every replay.
+The final two-SDPA-layer causal+padded FP16 trace has 113 nodes and 455.3
+microseconds of GPU work. The one-layer path after dead-mask removal had 121
+nodes and 483.9 microseconds; before that cleanup it had 132 nodes and 520.6
+microseconds. Mask fills fell from 22 to 11 nodes, and hoisting causal-mask
+construction removes additional fill/triangle work from every replay.
+
+An exhaustive layer-placement screen confirmed the safe SDPA-count boundaries
+on the known FP16 shape. No five-layer unmasked subset, no four-layer padded
+subset, and no four-layer causal subset passed even five trials. Several
+three-layer causal placements initially passed five trials, but alternative
+`[2,3,5]` failed seven elements over 25 trials and trailing three failed one.
+Three noncausal padded layers and two causal layers passed 25 trials, including
+padding ratios 0.10, 0.25, 0.50, and 0.75. `--sdpa-layer-indices` preserves this
+experimental control while automatic dispatch uses the proven trailing sets.
 
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
@@ -178,7 +190,7 @@ projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 | P2 | Fused residual + LayerNorm + linear | No | 5–15% | Medium | Preserve FP32 normalization; compounds with QKV/FFN |
 | P2 | Fused LayerNorm + FFN and exact-GELU epilogue | No | 5–20% | Medium–high | FFN is 64% of FLOPs; tanh GELU may fail tolerance |
 | P2 | Pack valid tokens / variable-length execution | No | 1.2–2x with substantial padding | Medium–high | Pack whole block, not only attention; prefix-valid mask is favorable |
-| P2 | Per-shape autotuned dispatcher | No | 5–30% | Medium–high | Requires official matrix and robust accuracy corpus |
+| P2 | Per-shape autotuned dispatcher | Partial | 5–30% | Medium–high | Known shape has mask-aware layer counts; official matrix still required |
 | P3 | FP8 Transformer Engine/torchao path | No | 1.1–1.7x on large aligned GEMMs | High | Accuracy/scaling overhead; separate opt-in experiment |
 | P3 | Hopper TMA/WGMMA persistent kernels | No | 5–30% where libraries underfill | High | Only after `ncu` proves a specific library kernel inefficient |
 | P4 | Whole-block persistent megakernel | No | Shape-dependent | Very high | Alternative to library/Inductor scheduling, not an early additive step |

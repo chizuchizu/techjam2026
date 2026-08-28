@@ -18,7 +18,7 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
 1. Recover the missing official Feishu test-shape/dtype/mask table.
 2. Enable Nsight Compute performance counters and collect per-kernel rooflines.
 3. Keep and expand the opt-in packed-QKV + SDPA implementation with per-shape
-   accuracy dispatch (four layers currently pass the default FP16 case).
+   accuracy dispatch (known FP16 shape: four unmasked, three padded, two causal).
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
    official static shape and mask regimes.
 5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
