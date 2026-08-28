@@ -3,9 +3,9 @@
 This repository A/B tests an explicit PyTorch Transformer reference against
 opt-in optimized implementations on one NVIDIA H200 NVL. The best pure-PyTorch
 FP32/TF32 path packs Q/K/V, uses fused SDPA, and compiles into a CUDA graph; the
-optional fixed-shape TensorRT graph is faster. The best FP16 path uses a custom
-score-rounded Triton attention kernel, pretransposed FFN-output weights, and raw
-CUDA graph replay.
+optional fixed-shape TensorRT graph is faster. The best FP16 path uses custom
+exact Triton attention/normalization kernels, pretransposed FFN-output weights,
+and a CUDA graph with its dynamic input copy captured as a retargetable node.
 
 ## Setup
 
@@ -58,9 +58,11 @@ Current best verified FP16 experiment:
   --user-implementation packed-qkv \
   --triton-rounded-attention \
   --triton-exact-add-norm \
+  --triton-exact-initial-norm \
   --triton-linear-gelu \
   --pretranspose-ffn-output-weights \
   --cuda-graph-user --cuda-graph-static-output \
+  --cuda-graph-integrated-input-copy \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
 ```
@@ -99,12 +101,27 @@ BF16 numerics and is the recommended general launch-overhead optimization.
 Shapes and the presence/absence of a padding mask are static for each capture.
 It is mutually exclusive with `--compile-user`.
 
+`--cuda-graph-integrated-input-copy` captures the unmasked dynamic-input copy
+as the first graph node and retargets that node to each caller tensor before
+replay. This removes a separate GPU submission without assuming a fixed input
+pointer. Six fresh-process, order-balanced pairs improved the aggregate median
+from 0.28455 to 0.28290 ms (1.0058x), and all six pairs won. The current
+implementation is deliberately restricted to unmasked contiguous inputs; the
+normal CUDA-graph wrapper remains the masked fallback.
+
 `--triton-exact-add-norm` fuses every residual addition with its following
 LayerNorm. The kernel reproduces PyTorch CUDA's four-values-per-thread online
 Welford calculation and exact four-warp reduction tree; both the residual sum
 and normalized output are bit-exact. It compounds with rounded attention and
 passed 100 trials in every mask regime. Use
 `--triton-fused-add-norm-sites 8,9,10,11` only for explicit site experiments.
+
+`--triton-exact-initial-norm` applies the same PyTorch-compatible Welford tree
+to the one initial width-512 LayerNorm that cannot be folded into a preceding
+residual addition. It is bit-exact in isolation and across the full unmasked
+100-trial audit; the complete path also passed 100 trials in every mask regime.
+Six order-balanced pairs improved the prior aggregate median from 0.28615 to
+0.28530 ms (1.0030x) before the integrated-input graph optimization.
 
 `--triton-linear-gelu` replaces each width-512-to-2048 FFN input projection and
 following exact GELU with one tuned Triton kernel. It retains the intervening

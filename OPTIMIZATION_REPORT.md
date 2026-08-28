@@ -37,7 +37,9 @@ is the primary metric.
 | Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Previous robust FP16 best |
 | Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Previous exact FP16 best |
 | Previous row + fused FFN input linear/exact-GELU, all 6 | pass, 0/209,715,200; unmasked exact | 2.401 ms | **0.2865 ms** | **8.383x** | Previous robust FP16 best |
-| Previous row + pretransposed FFN-output weights | pass, 0/209,715,200; unmasked exact | 0.28675 ms prior graph | **0.28590 ms** | **1.003x** | Current robust FP16 best |
+| Previous row + pretransposed FFN-output weights | pass, 0/209,715,200; unmasked exact | 0.28675 ms prior graph | **0.28590 ms** | **1.003x** | Keep |
+| Previous row + exact initial LayerNorm | pass, 0/209,715,200; unmasked exact | 0.28615 ms paired prior graph | **0.28530 ms** | **1.003x** | Keep |
+| Previous row + integrated graph input-copy node | exact, 0/52,428,800 unmasked | 0.28455 ms paired prior graph | **0.28290 ms** | **1.006x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
 | Padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.325 ms | **0.3040 ms** | **10.939x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
@@ -236,7 +238,7 @@ Pretransposing only the six FFN-output weights once changes their NVJet tactic
 from `TNT` to `NNT`, without changing the 43-node graph. QKV and
 attention-output weights retain their original layouts: adjacent traces showed
 that broad pretransposition was neutral or slightly negative at those sites.
-The final trace sums to **264.714 microseconds**, with 47.938 microseconds in the
+That trace sums to **264.714 microseconds**, with 47.938 microseconds in the
 new FFN-output tactic and 182.984 microseconds across every GEMM/GELU group.
 Six order-balanced isolated-process A/B pairs all favored the packed FFN
 layout, with aggregate medians of 0.28675 versus 0.28590 ms (**1.003x
@@ -245,6 +247,27 @@ complete path passed 100 trials in each of the four mask regimes (209,715,200
 outputs, zero failed elements), plus 25 trials each at input scales 0.1/10 and
 padding ratios 0.1/0.75. Unmasked output is bit-exact; the masked audit retains
 the previous 0.00390625 maximum absolute difference.
+
+The remaining standalone initial LayerNorm uses the same width-512 Welford
+tree as the exact fused add/LayerNorm kernel. Its isolated latency fell from
+4.777 to 3.918 microseconds and was bit-exact. Six order-balanced process pairs
+improved the complete graph from a 0.28615-ms aggregate median to 0.28530 ms
+(**1.0030x incremental**), winning five of six pairs. The full path then passed
+100 trials in all four mask regimes (209,715,200 outputs and zero tolerance
+failures); the unmasked regime remained bit-exact.
+
+The next exact scheduling change captures the unmasked input D2D copy as the
+first CUDA graph node and uses `cudaGraphExecMemcpyNodeSetParams1D` to retarget
+its source pointer on every call. This preserves changing input tensors while
+replacing a separate copy submission plus replay with one 44-node graph replay
+(one memcpy and 43 kernels). Six fresh-process, order-balanced pairs all won,
+moving the aggregate median from 0.28455 to **0.28290 ms** (**1.0058x
+incremental**). A 100-trial audit was bit-exact over 52,428,800 outputs. The
+clean trace reports 261.859 microseconds of kernels and a 3.008-microsecond
+input copy; the remaining end-to-end gap is about 18 microseconds of graph
+scheduling and measurement overhead. The implementation is opt-in and
+unmasked-only until multiple memcpy nodes can be identified and retargeted
+robustly for dynamic padding masks.
 
 The corresponding padded graph also has **49 nodes** and 281.413 microseconds
 of summed kernel time. Its extra attention cost comes from padding predicates,
@@ -295,9 +318,9 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.2859 ms, the current Triton FP16 path sustains an effective 140.8 TFLOP/s
-on the 40.265-GFLOP logical model, about 16.9% of the estimated 835.5 TFLOP/s
-dense Tensor Core roof. It is 5.93x above the compute-only floor and 2.40x above
+At 0.2829 ms, the current Triton FP16 path sustains an effective 142.3 TFLOP/s
+on the 40.265-GFLOP logical model, about 17.0% of the estimated 835.5 TFLOP/s
+dense Tensor Core roof. It is 5.87x above the compute-only floor and 2.38x above
 the logical-traffic floor. The remaining gap is consistent with the
 trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
 rather than the 39.0-microsecond total for six exact custom attention kernels.
@@ -313,38 +336,40 @@ The requested conventional-versus-theoretical comparison is:
 |---|---:|---:|---:|---:|---:|
 | Conventional eager PyTorch FP16 | 2.401 ms | 16.8 TFLOP/s | 2.0% | 0.238 TB/s | 5.0% |
 | Earlier library-kernel CUDA graph (legacy screen) | 0.3900 ms | 103.2 TFLOP/s | 12.4% | 1.463 TB/s | 30.5% |
-| Current exact Triton/library CUDA graph | **0.2859 ms** | **140.8 TFLOP/s** | **16.9%** | **1.995 TB/s** | **41.6%** |
-| Current trace, summed active kernels only | 0.264714 ms | 152.1 TFLOP/s | 18.2% | 2.155 TB/s | 44.9% |
+| Current exact Triton/library CUDA graph | **0.2829 ms** | **142.3 TFLOP/s** | **17.0%** | **2.017 TB/s** | **42.0%** |
+| Current trace, summed active GPU operations | 0.264867 ms | 152.0 TFLOP/s | 18.2% | 2.154 TB/s | 44.9% |
 | H200 dense Tensor Core compute roof | 0.0482 ms | 835.5 TFLOP/s | 100% | — | — |
 
-Thus the retained path delivers **8.40x conventional eager throughput**, a
-**740% throughput increase** and **88.1% latency reduction**, while reaching
-16.9% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
+Thus the retained path delivers **8.49x conventional eager throughput**, a
+**749% throughput increase** and **88.2% latency reduction**, while reaching
+17.0% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
 were all served by HBM, the shape-aware bandwidth roof would instead be about
-338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 41.6%.
+338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 42.0%.
 The traffic columns are an algorithmic proxy, not an HBM-counter measurement:
 fusion reduces intermediate traffic and caches can serve weights or activations.
 `ncu` counters are needed to replace them with achieved DRAM and Tensor Core
 rates.
 
-The 43-node current trace identifies the remaining serial critical path:
+The current 44-node graph (43 kernels plus its input copy) identifies the
+remaining serial critical path:
 
 | Kernel group | Summed time | GPU-kernel share |
 |---|---:|---:|
-| FFN input projections + exact GELU | 64.547 us | 24.4% |
-| FFN output projections | 47.938 us | 18.1% |
-| Packed QKV projections | 41.858 us | 15.8% |
-| Attention output projections | 28.641 us | 10.8% |
-| Exact attention | 38.721 us | 14.6% |
-| Residual + LayerNorm | 38.784 us | 14.7% |
-| Initial LayerNorm | 4.225 us | 1.6% |
+| FFN input projections + exact GELU | 65.410 us | 25.0% |
+| FFN output projections | 47.169 us | 18.0% |
+| Packed QKV projections | 41.536 us | 15.9% |
+| Attention output projections | 27.136 us | 10.4% |
+| Exact attention | 38.944 us | 14.9% |
+| Residual + LayerNorm | 38.496 us | 14.7% |
+| Initial LayerNorm | 3.168 us | 1.2% |
+| Integrated input D2D copy | 3.008 us | separate graph memcpy node |
 
-All GEMM-containing groups total **182.984 microseconds (69.1%)**; the two FFN
-projections alone total **112.485 microseconds (42.5%)**. The bottleneck is
-therefore the sequence of medium, dependency-bound projection GEMMs—not HBM
-bandwidth or attention alone. Each layer must finish normalization before its
-next projection, limiting occupancy across the whole call even though each
-individual GEMM uses Tensor Cores.
+All GEMM-containing kernel groups total **181.251 microseconds (69.2%)**; the
+two FFN projections alone total **112.579 microseconds (43.0%)**. The
+bottleneck is therefore the sequence of medium, dependency-bound projection
+GEMMs—not HBM bandwidth or attention alone. Each layer must finish
+normalization before its next projection, limiting occupancy across the whole
+call even though each individual GEMM uses Tensor Cores.
 
 ## Prioritized optimization backlog
 
@@ -399,6 +424,13 @@ no measurable end-to-end gain on this shape. The opt-in
 `--gelu-approx-layer-indices` control remains only to reproduce sensitivity
 experiments on future shapes; automatic/default dispatch never enables it.
 
+An FP8 follow-up quantized only one FFN input projection at a time with Hopper
+E4M3 scaled GEMM. Even the least-sensitive final layer failed 1,028,312 of
+5,242,880 outputs over ten trials with per-tensor scales. Row-wise activation
+and output-channel weight scales still failed 1,023,841 elements and added
+reduction/quantization work. This is far outside the strict accuracy envelope,
+so FP8 remains rejected rather than hidden behind the production dispatcher.
+
 A later finite-domain experiment observed that FP16 GELU has only 65,536 input
 bit patterns. It generated the exact PyTorch output for every pattern once and
 replaced runtime `erf` with a 128-KiB Triton lookup table. The lookup was
@@ -428,6 +460,14 @@ The default input projection has 128 output tiles, approximately one wave on
 this H200, leaving no persistent scheduling opportunity to amortize descriptor
 or work-queue overhead.
 
+A CUTLASS 3.x SM90 TMA/WGMMA prototype then kept the biased GEMM's FP16
+materialization boundary and evaluated exact erf-GELU in a visitor epilogue.
+The cooperative 128x128 tile was best at 11.38 microseconds; four ping-pong
+64/128 tile combinations took 14.51--16.54 microseconds. The retained Triton
+kernel takes about 10.89 microseconds in the graph. CUTLASS differed from the
+PyTorch operator by at most 3.81e-6 in the isolated screen, but it was still
+slower, so the prototype remains outside the repository.
+
 The next trace-driven prototype fused the 2048-to-512 FFN output projection's
 residual addition, followed by a separate exact LayerNorm over the materialized
 sum. Its isolated outputs were bit-exact, but the pair took 18.91 microseconds
@@ -454,8 +494,8 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 2. With counter permissions enabled, capture one representative D×D GEMM, D×F
    GEMM, LayerNorm, exact GELU, mask kernel, and fused SDPA kernel using `ncu`'s
    roofline set.
-3. Test a library-quality CUTLASS visitor epilogue for FFN output
-   GEMM+residual; the generic Triton composite was exact but 1.58x slower.
+3. Extend the integrated input-copy graph to padded cases by robustly matching
+   and retargeting both input and validity-mask memcpy nodes.
 4. Evaluate variable-length whole-block packing when padded official cases exist.
 
 ## Primary sources

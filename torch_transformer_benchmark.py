@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
 import math
 import statistics
 import time
@@ -760,6 +761,149 @@ class CudaGraphedTransformer(nn.Module):
         return output.clone() if self.clone_output else output
 
 
+class IntegratedInputCudaGraphedTransformer(nn.Module):
+    """Capture input copy and inference in one retargetable CUDA graph.
+
+    ``make_graphed_callables`` submits its static-input copy separately from
+    graph replay. This inference-only wrapper captures that copy as the first
+    graph node, then updates the node's source pointer for each caller tensor.
+    """
+
+    _CUDA_MEMCPY_NODE_TYPE = 1
+    _CUDA_MEMCPY_DEVICE_TO_DEVICE = 3
+
+    def __init__(
+        self,
+        model: nn.Module,
+        sample_x: torch.Tensor,
+        clone_output: bool,
+        warmup_iterations: int,
+    ) -> None:
+        super().__init__()
+        if not sample_x.is_cuda or not sample_x.is_contiguous():
+            raise ValueError("integrated graph input must be contiguous CUDA storage")
+        model.requires_grad_(False)
+        self.model = model
+        self.clone_output = clone_output
+        self.input_shape = sample_x.shape
+        self.input_stride = sample_x.stride()
+        self.input_dtype = sample_x.dtype
+        self.input_device = sample_x.device
+        self.input_bytes = sample_x.numel() * sample_x.element_size()
+        self.register_buffer("static_input", sample_x.clone())
+        self.register_buffer("capture_source", sample_x.clone())
+
+        side_stream = torch.cuda.Stream(device=sample_x.device)
+        side_stream.wait_stream(torch.cuda.current_stream(sample_x.device))
+        with torch.cuda.stream(side_stream), torch.inference_mode():
+            for _ in range(max(1, warmup_iterations)):
+                model(self.static_input, None)
+        torch.cuda.current_stream(sample_x.device).wait_stream(side_stream)
+
+        self.graph = torch.cuda.CUDAGraph(keep_graph=True)
+        with torch.inference_mode(), torch.cuda.graph(self.graph):
+            self.static_input.copy_(self.capture_source)
+            self.static_output = model(self.static_input, None)
+        self.graph.instantiate()
+
+        # Resolve the CUDA runtime already loaded by PyTorch. This avoids
+        # accidentally opening a different system CUDA runtime through ctypes.
+        self._cudart = ctypes.CDLL(None)
+        pointer = ctypes.c_void_p
+        self._cudart.cudaGraphGetNodes.argtypes = [
+            pointer,
+            ctypes.POINTER(pointer),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self._cudart.cudaGraphGetNodes.restype = ctypes.c_int
+        self._cudart.cudaGraphNodeGetType.argtypes = [
+            pointer,
+            ctypes.POINTER(ctypes.c_int),
+        ]
+        self._cudart.cudaGraphNodeGetType.restype = ctypes.c_int
+        self._cudart.cudaGraphExecMemcpyNodeSetParams1D.argtypes = [
+            pointer,
+            pointer,
+            pointer,
+            pointer,
+            ctypes.c_size_t,
+            ctypes.c_int,
+        ]
+        self._cudart.cudaGraphExecMemcpyNodeSetParams1D.restype = ctypes.c_int
+
+        graph_handle = pointer(self.graph.raw_cuda_graph())
+        node_count = ctypes.c_size_t()
+        self._check_cuda(
+            self._cudart.cudaGraphGetNodes(
+                graph_handle, None, ctypes.byref(node_count)
+            ),
+            "query CUDA graph node count",
+        )
+        nodes = (pointer * node_count.value)()
+        self._check_cuda(
+            self._cudart.cudaGraphGetNodes(
+                graph_handle, nodes, ctypes.byref(node_count)
+            ),
+            "enumerate CUDA graph nodes",
+        )
+        memcpy_nodes = []
+        for node in nodes:
+            node_type = ctypes.c_int()
+            self._check_cuda(
+                self._cudart.cudaGraphNodeGetType(
+                    node, ctypes.byref(node_type)
+                ),
+                "query CUDA graph node type",
+            )
+            if node_type.value == self._CUDA_MEMCPY_NODE_TYPE:
+                memcpy_nodes.append(node)
+        if len(memcpy_nodes) != 1:
+            raise RuntimeError(
+                "integrated-input graph expected exactly one memcpy node, "
+                f"found {len(memcpy_nodes)}"
+            )
+        self._memcpy_node = memcpy_nodes[0]
+        self._graph_exec = pointer(self.graph.raw_cuda_graph_exec())
+
+    @staticmethod
+    def _check_cuda(status: int, operation: str) -> None:
+        if status != 0:
+            raise RuntimeError(f"failed to {operation}: CUDA status {status}")
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        valid_token_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if valid_token_mask is not None:
+            raise ValueError("integrated-input CUDA graph currently requires no mask")
+        if (
+            x.shape != self.input_shape
+            or x.stride() != self.input_stride
+            or x.dtype != self.input_dtype
+            or x.device != self.input_device
+        ):
+            raise ValueError("input metadata differs from integrated CUDA graph capture")
+        pointer = ctypes.c_void_p
+        self._check_cuda(
+            self._cudart.cudaGraphExecMemcpyNodeSetParams1D(
+                self._graph_exec,
+                self._memcpy_node,
+                pointer(self.static_input.data_ptr()),
+                pointer(x.data_ptr()),
+                self.input_bytes,
+                self._CUDA_MEMCPY_DEVICE_TO_DEVICE,
+            ),
+            "retarget CUDA graph input copy",
+        )
+        # The raw graph API is invisible to PyTorch's caching allocator. Mark
+        # the caller storage as used by this stream so an immediately dropped
+        # input cannot be recycled before the captured memcpy consumes it.
+        x.record_stream(torch.cuda.current_stream(self.input_device))
+        self.graph.replay()
+        return self.static_output.clone() if self.clone_output else self.static_output
+
+
 def copy_model_weights(
     baseline: nn.Module, optimized: nn.Module, strict: bool = True
 ) -> None:
@@ -1358,6 +1502,11 @@ def parse_args() -> argparse.Namespace:
         help="return graph-owned output directly; the next call overwrites it",
     )
     parser.add_argument(
+        "--cuda-graph-integrated-input-copy",
+        action="store_true",
+        help="capture the unmasked dynamic-input copy as a retargetable graph node",
+    )
+    parser.add_argument(
         "--compile-mode",
         choices=("default", "reduce-overhead", "max-autotune"),
         default="default",
@@ -1407,6 +1556,14 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("--cuda-graph-user and --compile-user are mutually exclusive")
     if args.cuda_graph_static_output and not args.cuda_graph_user:
         raise ValueError("--cuda-graph-static-output requires --cuda-graph-user")
+    if args.cuda_graph_integrated_input_copy and not args.cuda_graph_user:
+        raise ValueError(
+            "--cuda-graph-integrated-input-copy requires --cuda-graph-user"
+        )
+    if args.cuda_graph_integrated_input_copy and args.padding_ratio > 0.0:
+        raise ValueError(
+            "integrated CUDA graph input copy is currently verified only without a mask"
+        )
     if args.gelu_approx_layer_indices and args.user_implementation not in (
         "packed-qkv",
         "sdpa-packed-qkv",
@@ -1606,13 +1763,22 @@ def main() -> int:
             padding_ratio=args.padding_ratio,
             input_scale=args.input_scale,
         )
-        optimized = CudaGraphedTransformer(
-            optimized,
-            graph_x,
-            graph_mask,
-            warmup_iterations=min(max(args.warmup, 1), 10),
-            clone_output=not args.cuda_graph_static_output,
-        )
+        graph_warmup = min(max(args.warmup, 1), 10)
+        if args.cuda_graph_integrated_input_copy:
+            optimized = IntegratedInputCudaGraphedTransformer(
+                optimized,
+                graph_x,
+                clone_output=not args.cuda_graph_static_output,
+                warmup_iterations=graph_warmup,
+            )
+        else:
+            optimized = CudaGraphedTransformer(
+                optimized,
+                graph_x,
+                graph_mask,
+                warmup_iterations=graph_warmup,
+                clone_output=not args.cuda_graph_static_output,
+            )
 
     print("=== Configuration ===")
     print(config)
@@ -1653,6 +1819,8 @@ def main() -> int:
         )
     if args.cuda_graph_user:
         print("cuda_graph_user=True")
+        if args.cuda_graph_integrated_input_copy:
+            print("cuda_graph_integrated_input_copy=True")
         if args.cuda_graph_static_output:
             print("cuda_graph_static_output=True")
     if device.type == "cuda":

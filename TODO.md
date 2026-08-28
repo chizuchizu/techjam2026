@@ -23,15 +23,17 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    FP16 shape: all six layers are bit-exact in the stronger 100-trial audit for
    unmasked, padded, causal, and causal+padded modes.
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
-   official static shape and mask regimes.
+   official static shape and mask regimes. The unmasked FP16 best path now
+   captures its dynamic input copy inside the graph and retargets the source
+   pointer on every call; extend that exact optimization to masked inputs.
 5. Keep the implemented static-mask hoisting and final add/LayerNorm invalid-row
    zeroing; the best padded path no longer launches mask-negation or final-mask
    kernels. Verify it across the official padding-mask cases.
-6. Keep the exact Triton residual-add/LayerNorm and implemented FFN input
-   linear+exact-GELU fusion. Keep the opt-in pretransposed FFN-output weights,
-   which select a slightly faster exact NVJet tactic. A generic Triton
-   FFN-output residual composite was exact but slower; revisit that fusion only
-   with a library-quality CUTLASS visitor epilogue.
+6. Keep the exact Triton residual-add/LayerNorm, exact initial LayerNorm, and
+   implemented FFN input linear+exact-GELU fusion. Keep the opt-in
+   pretransposed FFN-output weights, which select a slightly faster exact NVJet
+   tactic. Generic Triton and CUTLASS visitor alternatives tested so far were
+   slower than the retained kernels.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; the fixed unmasked TensorRT FP32 graph path is now implemented
