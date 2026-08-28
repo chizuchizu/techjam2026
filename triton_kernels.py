@@ -302,8 +302,9 @@ def _linear_exact_gelu_kernel(
     block_n: tl.constexpr,
     block_k: tl.constexpr,
     group_m: tl.constexpr,
+    use_poly11: tl.constexpr,
 ):
-    """FP16 linear materialization followed by PyTorch-order exact GELU."""
+    """FP16 linear materialization followed by exact or polynomial GELU."""
     program_id = tl.program_id(0)
     programs_m = tl.cdiv(rows, block_m)
     programs_n = tl.cdiv(output_features, block_n)
@@ -337,8 +338,33 @@ def _linear_exact_gelu_kernel(
     bias = tl.load(bias_ptr + offsets_n)
     linear_fp16 = (accumulator + bias[None, :]).to(tl.float16)
     linear_fp32 = linear_fp16.to(tl.float32)
-    erf_values = libdevice.erf(linear_fp32 * 0.7071067811865476)
-    gelu = (linear_fp32 * 0.5) * (1.0 + erf_values)
+    if use_poly11:
+        clipped = tl.maximum(-3.5, tl.minimum(3.5, linear_fp32))
+        clipped_sq = clipped * clipped
+        cdf = 0.5 + clipped * (
+            0.39639100184010506
+            + clipped_sq
+            * (
+                -0.06247543670746915
+                + clipped_sq
+                * (
+                    0.0077960139440769235
+                    + clipped_sq
+                    * (
+                        -0.000606554913963472
+                        + clipped_sq
+                        * (
+                            2.5871031157700182e-05
+                            + clipped_sq * -4.5557832301351553e-07
+                        )
+                    )
+                )
+            )
+        )
+        gelu = linear_fp32 * tl.maximum(0.0, tl.minimum(1.0, cdf))
+    else:
+        erf_values = libdevice.erf(linear_fp32 * 0.7071067811865476)
+        gelu = (linear_fp32 * 0.5) * (1.0 + erf_values)
     output_offsets = offsets_m[:, None] * output_features + offsets_n[None, :]
     tl.store(
         output_ptr + output_offsets,
@@ -347,12 +373,13 @@ def _linear_exact_gelu_kernel(
     )
 
 
-def linear_exact_gelu(
+def _linear_gelu(
     inputs: torch.Tensor,
     weight: torch.Tensor,
     bias: torch.Tensor,
+    *,
+    use_poly11: bool,
 ) -> torch.Tensor:
-    """Run the fixed FP16 FFN input projection and exact GELU in one kernel."""
     if not inputs.is_cuda or inputs.dtype != torch.float16:
         raise ValueError("Triton linear+GELU requires a CUDA FP16 input")
     if not inputs.is_contiguous() or inputs.shape[-1] != 512:
@@ -370,7 +397,9 @@ def linear_exact_gelu(
         raise ValueError("Triton linear+GELU parameters must be contiguous CUDA FP16")
 
     rows = inputs.numel() // inputs.shape[-1]
-    output = torch.empty((*inputs.shape[:-1], 2048), device=inputs.device, dtype=inputs.dtype)
+    output = torch.empty(
+        (*inputs.shape[:-1], 2048), device=inputs.device, dtype=inputs.dtype
+    )
     block_m, block_n, block_k = 128, 128, 64
     grid = (triton.cdiv(rows, block_m) * triton.cdiv(2048, block_n),)
     _linear_exact_gelu_kernel[grid](
@@ -385,10 +414,29 @@ def linear_exact_gelu(
         block_n=block_n,
         block_k=block_k,
         group_m=8,
+        use_poly11=use_poly11,
         num_warps=8,
         num_stages=4,
     )
     return output
+
+
+def linear_exact_gelu(
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+) -> torch.Tensor:
+    """Run the fixed FP16 FFN input projection and exact GELU in one kernel."""
+    return _linear_gelu(inputs, weight, bias, use_poly11=False)
+
+
+def linear_poly11_gelu(
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+) -> torch.Tensor:
+    """Run the fixed FFN projection with CUTLASS's degree-11 CDF polynomial."""
+    return _linear_gelu(inputs, weight, bias, use_poly11=True)
 
 
 @triton.jit

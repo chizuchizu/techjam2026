@@ -209,6 +209,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         triton_rounded_attention_layer_indices: Tuple[int, ...],
         pretranspose_ffn_output_weights: bool = False,
         triton_exact_initial_norm: bool = False,
+        triton_poly11_gelu_layer_indices: Tuple[int, ...] = (),
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -247,6 +248,18 @@ class UserOptimizedTransformer(BaselineTransformer):
             raise ValueError("Triton linear+GELU layer index is outside the model")
         self.triton_linear_gelu_layer_indices = frozenset(
             triton_linear_gelu_layer_indices
+        )
+        if len(set(triton_poly11_gelu_layer_indices)) != len(
+            triton_poly11_gelu_layer_indices
+        ):
+            raise ValueError("Triton polynomial GELU indices must not duplicate")
+        if any(
+            index < 0 or index >= config.num_layers
+            for index in triton_poly11_gelu_layer_indices
+        ):
+            raise ValueError("Triton polynomial GELU layer index is outside the model")
+        self.triton_poly11_gelu_layer_indices = frozenset(
+            triton_poly11_gelu_layer_indices
         )
         if len(set(triton_fused_add_norm_sites)) != len(
             triton_fused_add_norm_sites
@@ -451,6 +464,14 @@ class UserOptimizedTransformer(BaselineTransformer):
         normalized: torch.Tensor,
         gelu_approximate: str,
     ) -> torch.Tensor:
+        if layer_index in self.triton_poly11_gelu_layer_indices:
+            from triton_kernels import linear_poly11_gelu
+
+            return linear_poly11_gelu(
+                normalized,
+                layer.ffn_in.weight,
+                layer.ffn_in.bias,
+            )
         if layer_index in self.triton_linear_gelu_layer_indices:
             from triton_kernels import linear_exact_gelu
 
@@ -1572,6 +1593,12 @@ def parse_args() -> argparse.Namespace:
         help="layers using the specialized FP16 linear+exact-GELU kernel",
     )
     parser.add_argument(
+        "--triton-poly11-gelu-layer-indices",
+        type=parse_layer_indices,
+        default=(),
+        help="layers using fused linear plus degree-11 polynomial GELU",
+    )
+    parser.add_argument(
         "--triton-fused-add-norm-sites",
         type=parse_layer_indices,
         default=(),
@@ -1712,6 +1739,28 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("Triton linear+GELU requires a packed-QKV implementation")
     if triton_linear_gelu_requested and args.compile_user:
         raise ValueError("Triton linear+GELU is not supported with torch.compile")
+    triton_poly11_gelu_requested = bool(
+        args.triton_poly11_gelu_layer_indices
+    )
+    if triton_poly11_gelu_requested and args.gelu_approx_layer_indices:
+        raise ValueError("polynomial and tanh GELU approximations conflict")
+    if triton_poly11_gelu_requested and device.type != "cuda":
+        raise ValueError("Triton polynomial GELU requires a CUDA device")
+    if triton_poly11_gelu_requested and dtype != torch.float16:
+        raise ValueError("Triton polynomial GELU currently requires FP16")
+    if triton_poly11_gelu_requested and (
+        args.d_model != 512 or args.ffn_dim != 2048
+    ):
+        raise ValueError(
+            "Triton polynomial GELU requires d_model=512 and ffn_dim=2048"
+        )
+    if triton_poly11_gelu_requested and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("Triton polynomial GELU requires packed QKV")
+    if triton_poly11_gelu_requested and args.compile_user:
+        raise ValueError("Triton polynomial GELU is not supported with torch.compile")
     if args.triton_exact_add_norm and args.triton_fused_add_norm_sites:
         raise ValueError(
             "use either --triton-exact-add-norm or explicit fused site indices"
@@ -1833,6 +1882,7 @@ def main() -> int:
         triton_rounded_attention_layer_indices,
         args.pretranspose_ffn_output_weights,
         args.triton_exact_initial_norm,
+        args.triton_poly11_gelu_layer_indices,
     )
     copy_model_weights(
         baseline,
@@ -1913,6 +1963,11 @@ def main() -> int:
             print(
                 "triton_linear_gelu_layer_indices="
                 f"{sorted(triton_linear_gelu_layer_indices)}"
+            )
+        if args.triton_poly11_gelu_layer_indices:
+            print(
+                "triton_poly11_gelu_layer_indices="
+                f"{sorted(args.triton_poly11_gelu_layer_indices)}"
             )
         if triton_fused_add_norm_sites:
             print(

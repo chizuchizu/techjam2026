@@ -60,6 +60,7 @@ Current best verified FP16 experiment:
   --triton-exact-add-norm \
   --triton-exact-initial-norm \
   --triton-linear-gelu \
+  --triton-poly11-gelu-layer-indices 5 \
   --pretranspose-ffn-output-weights \
   --cuda-graph-user --cuda-graph-static-output \
   --cuda-graph-integrated-input-copy \
@@ -132,6 +133,16 @@ bit-exact, while masked/causal maximum absolute difference was 0.00390625 and
 remained inside the combined tolerance. Use
 `--triton-linear-gelu-layer-indices 4,5` for explicit placement or other-row-
 count experiments; the shorthand is gated to the audited default model.
+
+`--triton-poly11-gelu-layer-indices 5` replaces libdevice `erf` only in the
+least-sensitive final FFN with CUTLASS's clipped degree-11 standard-normal-CDF
+polynomial. A layerwise screen rejected earlier layers. The retained final-layer
+setting passed 100 trials in every mask regime (209,715,200 outputs total), plus
+25-trial checks at input scales 0.1 and 10 and padding ratios 0.1 and 0.75. A
+14-round shared-weight alternating A/B improved 0.28169 to 0.27859 ms (1.0111x),
+with every round favoring the polynomial. Approximating layers 4 and 5 was
+faster but is deliberately rejected: it failed 79 of 13,107,200 outputs at
+input scale 0.1.
 
 `--pretranspose-ffn-output-weights` packs the six FFN-output weights once as
 contiguous `[K, N]` operands and dispatches them through `torch.addmm`. On H200

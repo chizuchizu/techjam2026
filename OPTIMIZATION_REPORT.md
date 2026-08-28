@@ -39,7 +39,8 @@ is the primary metric.
 | Previous row + fused FFN input linear/exact-GELU, all 6 | pass, 0/209,715,200; unmasked exact | 2.401 ms | **0.2865 ms** | **8.383x** | Previous robust FP16 best |
 | Previous row + pretransposed FFN-output weights | pass, 0/209,715,200; unmasked exact | 0.28675 ms prior graph | **0.28590 ms** | **1.003x** | Keep |
 | Previous row + exact initial LayerNorm | pass, 0/209,715,200; unmasked exact | 0.28615 ms paired prior graph | **0.28530 ms** | **1.003x** | Keep |
-| Previous row + integrated graph input-copy node | exact, 0/52,428,800 unmasked | 0.28455 ms paired prior graph | **0.28290 ms** | **1.006x** | Current robust FP16 best |
+| Previous row + integrated graph input-copy node | exact, 0/52,428,800 unmasked | 0.28455 ms paired prior graph | **0.28290 ms** | **1.006x** | Prior exact FP16 best |
+| Previous row + polynomial GELU in final FFN only | pass, 0/209,715,200 across four mask regimes; scale/padding stress pass | 0.28169 ms paired exact path | **0.27859 ms** | **1.011x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
 | Padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.325 ms | **0.3040 ms** | **10.939x** | Current padded best |
 | Padded FP16, integrated input+mask graph nodes | exact versus prior path, 0/5,242,880 | 0.30778 ms paired prior graph | **0.30658 ms** | **1.004x** | Keep |
@@ -277,6 +278,17 @@ trials (104,857,600 outputs total and zero tolerance failures); their maximum
 absolute difference from the baseline remained 0.00390625. The opt-in path now
 supports both masked and unmasked contiguous inputs.
 
+The first retained accuracy-gated approximation targets the trace's largest
+kernel group rather than attention. It swaps libdevice `erf` for CUTLASS's
+clipped degree-11 normal-CDF polynomial only in the final FFN input projection.
+A shared-weight, same-input, 14-round alternating A/B won every round and moved
+the median from 0.28169 to **0.27859 ms** (**1.0111x incremental**). The setting
+passed 100 trials in all four mask regimes (209,715,200 outputs total), plus 25
+trials each at input scales 0.1/10 and padding ratios 0.1/0.75. A clean trace
+reports 63.777 microseconds for the six fused FFN-input/GELU kernels, versus
+65.410 microseconds in the prior exact trace. The dependency-bound projection
+chain remains the bottleneck.
+
 The corresponding padded graph also has **49 nodes** and 281.413 microseconds
 of summed kernel time. Its extra attention cost comes from padding predicates,
 but it contains neither mask negation nor final masked-fill. Folding final
@@ -326,9 +338,9 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.2829 ms, the current Triton FP16 path sustains an effective 142.3 TFLOP/s
-on the 40.265-GFLOP logical model, about 17.0% of the estimated 835.5 TFLOP/s
-dense Tensor Core roof. It is 5.87x above the compute-only floor and 2.38x above
+At 0.27859 ms, the current Triton FP16 path sustains an effective 144.5 TFLOP/s
+on the 40.265-GFLOP logical model, about 17.3% of the estimated 835.5 TFLOP/s
+dense Tensor Core roof. It is 5.78x above the compute-only floor and 2.34x above
 the logical-traffic floor. The remaining gap is consistent with the
 trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
 rather than the 39.0-microsecond total for six exact custom attention kernels.
@@ -344,21 +356,22 @@ The requested conventional-versus-theoretical comparison is:
 |---|---:|---:|---:|---:|---:|
 | Conventional eager PyTorch FP16 | 2.401 ms | 16.8 TFLOP/s | 2.0% | 0.238 TB/s | 5.0% |
 | Earlier library-kernel CUDA graph (legacy screen) | 0.3900 ms | 103.2 TFLOP/s | 12.4% | 1.463 TB/s | 30.5% |
-| Current exact Triton/library CUDA graph | **0.2829 ms** | **142.3 TFLOP/s** | **17.0%** | **2.017 TB/s** | **42.0%** |
-| Current trace, summed active GPU operations | 0.264867 ms | 152.0 TFLOP/s | 18.2% | 2.154 TB/s | 44.9% |
+| Prior exact Triton/library CUDA graph | 0.2829 ms | 142.3 TFLOP/s | 17.0% | 2.017 TB/s | 42.0% |
+| Current sensitivity-gated polynomial CUDA graph | **0.27859 ms** | **144.5 TFLOP/s** | **17.3%** | **2.048 TB/s** | **42.7%** |
+| Prior exact trace, summed active GPU operations | 0.264867 ms | 152.0 TFLOP/s | 18.2% | 2.154 TB/s | 44.9% |
 | H200 dense Tensor Core compute roof | 0.0482 ms | 835.5 TFLOP/s | 100% | — | — |
 
-Thus the retained path delivers **8.49x conventional eager throughput**, a
-**749% throughput increase** and **88.2% latency reduction**, while reaching
-17.0% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
+Thus the retained path delivers **8.62x conventional eager throughput**, a
+**762% throughput increase** and **88.4% latency reduction**, while reaching
+17.3% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
 were all served by HBM, the shape-aware bandwidth roof would instead be about
-338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 42.0%.
+338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 42.7%.
 The traffic columns are an algorithmic proxy, not an HBM-counter measurement:
 fusion reduces intermediate traffic and caches can serve weights or activations.
 `ncu` counters are needed to replace them with achieved DRAM and Tensor Core
 rates.
 
-The current 44-node graph (43 kernels plus its input copy) identifies the
+The prior exact 44-node graph (43 kernels plus its input copy) identifies the
 remaining serial critical path:
 
 | Kernel group | Summed time | GPU-kernel share |
@@ -431,6 +444,15 @@ ms for both one approximate layer and all six, so the cheaper formula produced
 no measurable end-to-end gain on this shape. The opt-in
 `--gelu-approx-layer-indices` control remains only to reproduce sensitivity
 experiments on future shapes; automatic/default dispatch never enables it.
+
+A more accurate clipped degree-11 CDF polynomial then made the trace-driven
+approximation useful. A 25-trial one-layer sensitivity sweep produced 258, 52,
+13, 0, 0, and 0 failed elements for layers zero through five. The final layer
+was retained only after the full mask and scale stress suite above. Although
+layers 4 and 5 together passed all four default-scale 100-trial mask regimes,
+that combination failed 79 of 13,107,200 outputs at input scale 0.1 and was
+rejected. This demonstrates why default-input validation alone is insufficient
+for choosing an approximate fast path.
 
 An FP8 follow-up quantized only one FFN input projection at a time with Hopper
 E4M3 scaled GEMM. Even the least-sensitive final layer failed 1,028,312 of
@@ -522,6 +544,7 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 - [PyTorch CUDA GELU implementation](https://github.com/pytorch/pytorch/blob/cf30153c4c131c8164ee7798e5022d810682e2cb/aten/src/ATen/native/cuda/ActivationGeluKernel.cu)
 - [Triton fused attention](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)
 - [Triton Hopper persistent matmul](https://triton-lang.org/main/getting-started/tutorials/09-persistent-matmul.html)
+- [CUTLASS CuTe DSL persistent GEMM + GELU example](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/cute/hopper/kernel/dense_gemm/dense_gemm_fp8_gelu_persistent.py)
 - [TensorRT Python installation](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-pip.html)
 - [TensorRT performance benchmarking](https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/benchmarking.html)
 - [GPU MODE lectures](https://github.com/gpu-mode/lectures)
