@@ -141,3 +141,34 @@ MFU = 0.91% — that framing is unfair because 18% of nominal FLOPs are fp32 and
 cannot run on the int peak; those fp32 parts actually account for **97% of the
 peak-equivalent time**, so the practical lever is fixed-point
 attention/LayerNorm/GELU, not the GEMMs.
+
+### 2-node / inter-node bandwidth
+
+Relevant when the workload is split across 2+ small boards: each node must
+exchange a per-forward data amount (`node_traf`/2 each way) with its partner,
+and the measured node-to-node link peak (`node_bw`) can become the **binding
+resource**. `tools/score.py` supports this with an overlap model:
+
+- `t_transfer = node_traf/node_bw (+ host_traf/2 / host_bw)`
+- per-case link-bound score = `score / max(1, t_transfer/t_measured)` — a link
+  faster than the compute leaves the score unchanged; a slower link scales the
+  score down proportionally (compute/communication assumed overlapped).
+
+Measured links (source of truth: `esp32-linkbench/` ESP-NOW benchmark +
+`tools/serial_bw.py`; values below captured from a 2-board run):
+
+| Link | Direction | Measured | Note |
+|---|---|---|---|
+| ESP-NOW node↔node (2.4 GHz, 1 Mbps PHY) | board→board | TBD | 250 B/frame; app-ACK used; ~KB/s class expected |
+| USB-CDC host↔board | host→board | ~200 KB/s | reliable ceiling 200–290 KB/s (faster drops, no RX timeout) |
+| USB-CDC host↔board | board→host | ~286 KB/s | identical on both boards |
+| Driver pacing (device_test) | host→board | ~50 KB/s | 1 KB/20 ms, 7× safety margin |
+
+Run: `python3 tools/score.py --node-bw <B/s> --node-traf <bytes/forward>`
+(e.g. `--node-bw 200000 --node-traf 131072` = 64 KB in + 64 KB out per forward;
+synthetic example — replace with the real split). Published reference
+(primary Espressif docs, verified): ESP-NOW default link rate 1 Mbps, max
+250 B/frame; classic-ESP32 measured payload ~27–100 KB/s at 1 Mbps; ESP32-C3
+Wi-Fi PHY 1x1 b/g/n up to 150 Mbps, iperf C3 over-the-air TCP 20/35,
+UDP 30/50 Mbit/s (so a TCP/UDP link would be ~100× faster than ESP-NOW if a
+router is available).
