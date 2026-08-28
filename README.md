@@ -4,7 +4,8 @@ This repository A/B tests an explicit PyTorch Transformer reference against
 opt-in optimized implementations on one NVIDIA H200 NVL. The best pure-PyTorch
 FP32/TF32 path packs Q/K/V, uses fused SDPA, and compiles into a CUDA graph; the
 optional fixed-shape TensorRT graph is faster. The best FP16 path uses a custom
-score-rounded Triton attention kernel and raw CUDA graph replay.
+score-rounded Triton attention kernel, pretransposed FFN-output weights, and raw
+CUDA graph replay.
 
 ## Setup
 
@@ -58,7 +59,8 @@ Current best verified FP16 experiment:
   --triton-rounded-attention \
   --triton-exact-add-norm \
   --triton-linear-gelu \
-  --cuda-graph-user \
+  --pretranspose-ffn-output-weights \
+  --cuda-graph-user --cuda-graph-static-output \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
 ```
@@ -112,6 +114,16 @@ bit-exact, while masked/causal maximum absolute difference was 0.00390625 and
 remained inside the combined tolerance. Use
 `--triton-linear-gelu-layer-indices 4,5` for explicit placement or other-row-
 count experiments; the shorthand is gated to the audited default model.
+
+`--pretranspose-ffn-output-weights` packs the six FFN-output weights once as
+contiguous `[K, N]` operands and dispatches them through `torch.addmm`. On H200
+this selects an NVJet `NNT` tactic instead of `TNT`. QKV and attention-output
+weights deliberately retain their original layout because adjacent traces found
+no benefit. Six order-balanced isolated process pairs improved the prior graph
+from a 0.28675-ms aggregate median to 0.28590 ms (1.003x), with all six pairs
+winning. The flag is bit-identical to the prior optimized graph over the tested
+inputs and passed the full 100-trial audit in all four mask regimes. Packing
+happens after device/dtype transfer and outside accuracy and timing regions.
 
 For padded cases, the optimized path precomputes static causal masks, negates
 the padding mask only when a reference-attention fallback needs it, and excludes

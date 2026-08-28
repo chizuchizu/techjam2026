@@ -172,6 +172,20 @@ class BaselineTransformer(nn.Module):
         return x
 
 
+def _linear_with_pretransposed_weight(
+    x: torch.Tensor,
+    weight_transposed: torch.Tensor,
+    bias: torch.Tensor,
+) -> torch.Tensor:
+    """Apply a linear using an inference-time contiguous ``[K, N]`` weight."""
+    output_shape = (*x.shape[:-1], weight_transposed.shape[1])
+    return torch.addmm(
+        bias,
+        x.reshape(-1, x.shape[-1]),
+        weight_transposed,
+    ).view(output_shape)
+
+
 class UserOptimizedTransformer(BaselineTransformer):
     """
     Opt-in SDPA and packed-QKV experiments with exact baseline fallbacks.
@@ -192,6 +206,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         triton_linear_gelu_layer_indices: Tuple[int, ...],
         triton_fused_add_norm_sites: Tuple[int, ...],
         triton_rounded_attention_layer_indices: Tuple[int, ...],
+        pretranspose_ffn_output_weights: bool = False,
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -257,14 +272,17 @@ class UserOptimizedTransformer(BaselineTransformer):
         self.triton_rounded_attention_layer_indices = frozenset(
             triton_rounded_attention_layer_indices
         )
+        self.pretranspose_ffn_output_weights = pretranspose_ffn_output_weights
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        self._packed_ffn_out: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
         if not 0 <= self.sdpa_layers <= config.num_layers:
             raise ValueError("sdpa_layers must be between 0 and num_layers, or -1")
 
     def prepare_optimized_weights(self) -> None:
-        """Pack Q/K/V parameters once, outside the measured inference path."""
+        """Pack inference parameters once, outside the measured hot path."""
         self._packed_qkv = []
+        self._packed_ffn_out = []
         if self.config.causal:
             parameter = next(self.parameters())
             self._causal_mask = torch.ones(
@@ -293,6 +311,13 @@ class UserOptimizedTransformer(BaselineTransformer):
                 dim=0,
             ).detach()
             self._packed_qkv.append((weight, bias))
+            if self.pretranspose_ffn_output_weights:
+                self._packed_ffn_out.append(
+                    (
+                        layer.ffn_out.weight.transpose(0, 1).contiguous().detach(),
+                        layer.ffn_out.bias.detach(),
+                    )
+                )
 
     @staticmethod
     def _sdpa_attention(
@@ -436,6 +461,19 @@ class UserOptimizedTransformer(BaselineTransformer):
             approximate=gelu_approximate,
         )
 
+    def _ffn_output(
+        self,
+        layer_index: int,
+        layer: TransformerBlock,
+        hidden: torch.Tensor,
+    ) -> torch.Tensor:
+        if not self.pretranspose_ffn_output_weights:
+            return layer.ffn_out(hidden)
+        return _linear_with_pretransposed_weight(
+            hidden,
+            *self._packed_ffn_out[layer_index],
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -473,7 +511,9 @@ class UserOptimizedTransformer(BaselineTransformer):
                     self._packed_qkv[layer_index],
                 )
                 x = x + attention_output
-                x = x + layer.ffn_out(
+                x = x + self._ffn_output(
+                    layer_index,
+                    layer,
                     self._ffn_hidden(
                         layer_index,
                         layer,
@@ -495,7 +535,9 @@ class UserOptimizedTransformer(BaselineTransformer):
                     self._packed_qkv[layer_index],
                 )
                 x = x + attention_output
-                x = x + layer.ffn_out(
+                x = x + self._ffn_output(
+                    layer_index,
+                    layer,
                     self._ffn_hidden(
                         layer_index,
                         layer,
@@ -515,7 +557,9 @@ class UserOptimizedTransformer(BaselineTransformer):
                 else self._packed_qkv[layer_index],
             )
             x = x + attention_output
-            x = x + layer.ffn_out(
+            x = x + self._ffn_output(
+                layer_index,
+                layer,
                 self._ffn_hidden(
                     layer_index,
                     layer,
@@ -603,7 +647,9 @@ class UserOptimizedTransformer(BaselineTransformer):
                 if layer_index in self.gelu_approx_layer_indices
                 else "none"
             )
-            ffn_output = layer.ffn_out(
+            ffn_output = self._ffn_output(
+                layer_index,
+                layer,
                 self._ffn_hidden(
                     layer_index,
                     layer,
@@ -1281,6 +1327,11 @@ def parse_args() -> argparse.Namespace:
         default=(),
         help="layers using specialized FP16-score-rounded Triton attention",
     )
+    parser.add_argument(
+        "--pretranspose-ffn-output-weights",
+        action="store_true",
+        help="prepack FFN output weights as contiguous [K, N] addmm operands",
+    )
 
     parser.add_argument("--compile-baseline", action="store_true")
     parser.add_argument("--compile-user", action="store_true")
@@ -1323,6 +1374,15 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("accuracy_trials must be positive")
     if args.rtol < 0 or args.atol < 0:
         raise ValueError("rtol and atol must be non-negative")
+    if args.pretranspose_ffn_output_weights and device.type != "cuda":
+        raise ValueError("pretransposed FFN output weights currently target CUDA")
+    if args.pretranspose_ffn_output_weights and dtype != torch.float16:
+        raise ValueError("pretransposed FFN output weights are verified only for FP16")
+    if args.pretranspose_ffn_output_weights and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("pretransposed FFN output weights require packed QKV")
     if args.warmup < 0:
         raise ValueError("warmup must be non-negative")
     if args.repeats <= 0 or args.benchmark_rounds <= 0:
@@ -1485,6 +1545,7 @@ def main() -> int:
         triton_linear_gelu_layer_indices,
         triton_fused_add_norm_sites,
         triton_rounded_attention_layer_indices,
+        args.pretranspose_ffn_output_weights,
     )
     copy_model_weights(
         baseline,
@@ -1547,6 +1608,8 @@ def main() -> int:
                 "gelu_approx_layer_indices="
                 f"{sorted(args.gelu_approx_layer_indices)}"
             )
+        if args.pretranspose_ffn_output_weights:
+            print("pretranspose_ffn_output_weights=True")
         if triton_linear_gelu_layer_indices:
             print(
                 "triton_linear_gelu_layer_indices="

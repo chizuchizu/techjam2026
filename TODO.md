@@ -28,8 +28,10 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    zeroing; the best padded path no longer launches mask-negation or final-mask
    kernels. Verify it across the official padding-mask cases.
 6. Keep the exact Triton residual-add/LayerNorm and implemented FFN input
-   linear+exact-GELU fusion. Next investigate combining the FFN output GEMM with
-   its residual/normalization consumer.
+   linear+exact-GELU fusion. Keep the opt-in pretransposed FFN-output weights,
+   which select a slightly faster exact NVJet tactic. A generic Triton
+   FFN-output residual composite was exact but slower; revisit that fusion only
+   with a library-quality CUTLASS visitor epilogue.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; the fixed unmasked TensorRT FP32 graph path is now implemented

@@ -36,7 +36,8 @@ is the primary metric.
 | Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
 | Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Previous robust FP16 best |
 | Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Previous exact FP16 best |
-| Previous row + fused FFN input linear/exact-GELU, all 6 | pass, 0/209,715,200; unmasked exact | 2.401 ms | **0.2865 ms** | **8.383x** | Current robust FP16 best |
+| Previous row + fused FFN input linear/exact-GELU, all 6 | pass, 0/209,715,200; unmasked exact | 2.401 ms | **0.2865 ms** | **8.383x** | Previous robust FP16 best |
+| Previous row + pretransposed FFN-output weights | pass, 0/209,715,200; unmasked exact | 0.28675 ms prior graph | **0.28590 ms** | **1.003x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
 | Padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.325 ms | **0.3040 ms** | **10.939x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
@@ -231,6 +232,20 @@ interleaved graph A/B measured 0.2929 ms before and 0.2869 ms after fusion
 0.2898 ms. The saved node launches explain why end-to-end improvement slightly
 exceeds the 5.0-microsecond kernel-duration reduction.
 
+Pretransposing only the six FFN-output weights once changes their NVJet tactic
+from `TNT` to `NNT`, without changing the 43-node graph. QKV and
+attention-output weights retain their original layouts: adjacent traces showed
+that broad pretransposition was neutral or slightly negative at those sites.
+The final trace sums to **264.714 microseconds**, with 47.938 microseconds in the
+new FFN-output tactic and 182.984 microseconds across every GEMM/GELU group.
+Six order-balanced isolated-process A/B pairs all favored the packed FFN
+layout, with aggregate medians of 0.28675 versus 0.28590 ms (**1.003x
+incremental**). Prepacking is outside every accuracy and timing region. The
+complete path passed 100 trials in each of the four mask regimes (209,715,200
+outputs, zero failed elements), plus 25 trials each at input scales 0.1/10 and
+padding ratios 0.1/0.75. Unmasked output is bit-exact; the masked audit retains
+the previous 0.00390625 maximum absolute difference.
+
 The corresponding padded graph also has **49 nodes** and 281.413 microseconds
 of summed kernel time. Its extra attention cost comes from padding predicates,
 but it contains neither mask negation nor final masked-fill. Folding final
@@ -280,9 +295,9 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.2865 ms, the current Triton FP16 path sustains an effective 140.5 TFLOP/s
-on the 40.265-GFLOP logical model, about 16.8% of the estimated 835.5 TFLOP/s
-dense Tensor Core roof. It is 5.94x above the compute-only floor and 2.41x above
+At 0.2859 ms, the current Triton FP16 path sustains an effective 140.8 TFLOP/s
+on the 40.265-GFLOP logical model, about 16.9% of the estimated 835.5 TFLOP/s
+dense Tensor Core roof. It is 5.93x above the compute-only floor and 2.40x above
 the logical-traffic floor. The remaining gap is consistent with the
 trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
 rather than the 39.0-microsecond total for six exact custom attention kernels.
@@ -298,15 +313,15 @@ The requested conventional-versus-theoretical comparison is:
 |---|---:|---:|---:|---:|---:|
 | Conventional eager PyTorch FP16 | 2.401 ms | 16.8 TFLOP/s | 2.0% | 0.238 TB/s | 5.0% |
 | Earlier library-kernel CUDA graph (legacy screen) | 0.3900 ms | 103.2 TFLOP/s | 12.4% | 1.463 TB/s | 30.5% |
-| Current exact Triton/library CUDA graph | **0.2865 ms** | **140.5 TFLOP/s** | **16.8%** | **1.991 TB/s** | **41.5%** |
-| Current trace, summed active kernels only | 0.265409 ms | 151.7 TFLOP/s | 18.2% | 2.150 TB/s | 44.8% |
+| Current exact Triton/library CUDA graph | **0.2859 ms** | **140.8 TFLOP/s** | **16.9%** | **1.995 TB/s** | **41.6%** |
+| Current trace, summed active kernels only | 0.264714 ms | 152.1 TFLOP/s | 18.2% | 2.155 TB/s | 44.9% |
 | H200 dense Tensor Core compute roof | 0.0482 ms | 835.5 TFLOP/s | 100% | — | — |
 
-Thus the retained path delivers **8.38x conventional eager throughput**, a
-**738% throughput increase** and **88.1% latency reduction**, while reaching
-16.8% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
+Thus the retained path delivers **8.40x conventional eager throughput**, a
+**740% throughput increase** and **88.1% latency reduction**, while reaching
+16.9% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
 were all served by HBM, the shape-aware bandwidth roof would instead be about
-338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 41.5%.
+338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 41.6%.
 The traffic columns are an algorithmic proxy, not an HBM-counter measurement:
 fusion reduces intermediate traffic and caches can serve weights or activations.
 `ncu` counters are needed to replace them with achieved DRAM and Tensor Core
@@ -316,16 +331,16 @@ The 43-node current trace identifies the remaining serial critical path:
 
 | Kernel group | Summed time | GPU-kernel share |
 |---|---:|---:|
-| FFN input projections + exact GELU | 64.896 us | 24.5% |
-| FFN output projections | 48.800 us | 18.4% |
-| Packed QKV projections | 41.473 us | 15.6% |
-| Attention output projections | 28.864 us | 10.9% |
-| Exact attention | 38.784 us | 14.6% |
-| Residual + LayerNorm | 38.336 us | 14.4% |
-| Initial LayerNorm | 4.256 us | 1.6% |
+| FFN input projections + exact GELU | 64.547 us | 24.4% |
+| FFN output projections | 47.938 us | 18.1% |
+| Packed QKV projections | 41.858 us | 15.8% |
+| Attention output projections | 28.641 us | 10.8% |
+| Exact attention | 38.721 us | 14.6% |
+| Residual + LayerNorm | 38.784 us | 14.7% |
+| Initial LayerNorm | 4.225 us | 1.6% |
 
-All GEMM-containing groups total **184.033 microseconds (69.3%)**; the two FFN
-projections alone total **113.696 microseconds (42.8%)**. The bottleneck is
+All GEMM-containing groups total **182.984 microseconds (69.1%)**; the two FFN
+projections alone total **112.485 microseconds (42.5%)**. The bottleneck is
 therefore the sequence of medium, dependency-bound projection GEMMs—not HBM
 bandwidth or attention alone. Each layer must finish normalization before its
 next projection, limiting occupancy across the whole call even though each
@@ -338,6 +353,7 @@ individual GEMM uses Tensor Cores.
 | P0 | Recover official shapes and dtype/mask matrix | No | Enables reliable dispatch | Low/admin | Prerequisite for every specialization |
 | P0 | Accuracy/backend gate attention per case | Exact rounded Triton implemented for all layers of known FP16 target | 1.05–2x, sequence-dependent | Low–medium | BF16 remains on reference math |
 | P1 | Packed QKV projection | **Implemented** | Observed incremental gain; usually 5–15% | Medium | Compounds with SDPA and BSHD layout |
+| P1 | Pretranspose FFN-output operands | **Implemented** | Observed 0.3%; exact tactic change | Low | Compounds with packed QKV and CUDA graph |
 | P1 | Compile/CUDA graph/TensorRT sweep | **TensorRT FP32 + graph implemented; FP16 rejected** | Observed 1.10–6.99x | Low–medium | Static shapes; accuracy gate every engine |
 | P1 | Raw CUDA graph replay | **Implemented** | Observed 4.25–6.12x | Low | Static shape/mask regime; preserves eager kernels and numerics |
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
