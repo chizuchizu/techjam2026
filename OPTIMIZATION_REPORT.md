@@ -32,12 +32,13 @@ is the primary metric.
 | Packed QKV + SDPA, trailing 4, no redundant mask | pass, 0/13,107,200 | 2.425 ms | 1.829 ms | **1.325x** | Best eager FP16 |
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Current FP16 best |
-| BF16 exact fallback + raw CUDA graph | exact, 0/5,242,880 | 2.394 ms | 0.536 ms | **4.471x** | Current BF16 best |
+| BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
 | FP32 previous row + raw CUDA graph | pass, 0/5,242,880 | 2.389 ms | 0.562 ms | 4.248x | Safer/no compiler startup |
 | FP32 previous row + `reduce-overhead` compile | pass, 0/13,107,200 | 2.302 ms | 0.549 ms | **4.197x** | Current default-dtype best |
 | FP32 previous row + `max-autotune` | pass, 0/5,242,880 | 1.921 ms | 0.525 ms | 3.659x | Slightly faster candidate, less accuracy headroom |
 | FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
+| FP16 tanh-approximate GELU | fail, 74/13,107,200 | — | — | — | Reject: exceeds elementwise tolerance |
 
 The packed weights are built once after weight copying and device/dtype transfer,
 outside accuracy and timing regions. Original parameter names remain intact.
@@ -49,9 +50,11 @@ baseline. Current PyTorch accepts `attn_mask` together with `is_causal`; this is
 version-sensitive and contradicts older/documented pseudocode, so it remains an
 explicit test dimension.
 
-Automatic dispatch now uses all layers for FP32, four layers only for the known
-default noncausal FP16 shape, one layer for other FP16 shapes, and the baseline
-for BF16/CPU. Explicit `--sdpa-layers` values override this selection.
+Automatic dispatch now uses all SDPA layers for FP32, four only for the known
+default noncausal FP16 shape, one for other FP16 shapes, and zero for BF16.
+The packed implementation still combines Q/K/V in BF16 while retaining the
+reference attention algorithm; tested BF16 outputs are bit-exact. CPU uses the
+baseline. Explicit `--sdpa-layers` values override FP32/FP16 selection.
 
 Compiled FP32 `reduce-overhead` also passed tested small, default,
 causal+padded, and long-sequence shapes. Observed speedups were respectively
@@ -59,9 +62,9 @@ causal+padded, and long-sequence shapes. Observed speedups were respectively
 valuable for launch-bound cases and modest for large compute-bound work.
 
 Raw CUDA graph capture preserves the selected eager kernels and their numerical
-results. It passed 25 default FP16 trials, 25 causal+padded FP16 trials, ten
+results. It passed 25 default FP16 trials, 25 causal+padded FP16 trials, 25
 BF16 trials with exact output, and ten FP32 trials. Default FP16 reached 0.391
-ms and 6.12x versus baseline. Causal+padded FP16 reached 5.67x, BF16 4.47x,
+ms and 6.12x versus baseline. Causal+padded FP16 reached 5.67x, BF16 4.87x,
 and FP32 4.25x. Packing QKV in the two reference-attention prefix layers was
 numerically identical to the prior candidate and removed four more graph nodes.
 
@@ -168,6 +171,27 @@ packing + variable-length attention + FFN skipping; and residual/LayerNorm +
 linear epilogues. FlashAttention, cuDNN SDPA, and Transformer Engine attention
 are competing backends and must be A/B tested rather than stacked. Approximate
 GELU and FP8 conflict most directly with the strict numerical gate.
+
+## Later approximation research
+
+Approximation work should follow measured bottlenecks and use the final model
+output—not isolated operator error—as its gate. Promising experiments include:
+
+1. Layerwise sensitivity sweeps: approximate one layer at a time, measure error
+   amplification, then combine only low-sensitivity layers.
+2. Mixed-precision islands: retain normalization and sensitive late layers in
+   higher precision while downcasting only attention or FFN work with margin.
+3. Fast approximation plus correction: compute a cheap polynomial/quantized
+   result and apply a small residual correction only in ranges that dominate
+   the final error.
+4. Long-sequence softmax sparsification: omit provably negligible probability
+   mass by tile, with an explicit bound and dense fallback near the threshold.
+5. Shape-specific low-rank or structured FFN experiments only if the disclosed
+   fixed weights/shapes make setup cost amortizable and the output gate passes.
+
+The first broad approximation test, tanh GELU in all six FP16 layers, failed 74
+of 13,107,200 elements. This rules out indiscriminate replacement but motivates
+a later per-layer sensitivity sweep rather than abandoning approximation.
 
 ## Next profiling and implementation steps
 

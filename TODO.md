@@ -26,6 +26,9 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
 7. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; treat Transformer Engine and FP8 as separate accuracy-gated
    experiments.
+8. Later, investigate novel sensitivity-guided approximations: identify the
+   measured bottleneck, estimate layerwise error amplification, then apply
+   cheaper math/precision only where the final elementwise tolerance has margin.
 
 you can use nvhpc 26.2 from here
 source /export/home/alien/software/nvhpc/setup.sh

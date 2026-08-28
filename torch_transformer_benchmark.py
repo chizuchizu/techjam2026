@@ -198,7 +198,7 @@ class UserOptimizedTransformer(BaselineTransformer):
     def prepare_optimized_weights(self) -> None:
         """Pack Q/K/V parameters once, outside the measured inference path."""
         self._packed_qkv = []
-        if self.implementation != "sdpa-packed-qkv":
+        if self.implementation not in ("packed-qkv", "sdpa-packed-qkv"):
             return
         for layer in self.layers:
             attention = layer.attention
@@ -320,14 +320,17 @@ class UserOptimizedTransformer(BaselineTransformer):
     ) -> torch.Tensor:
         # BF16 changes in attention algorithms exceed this benchmark's fixed
         # 0.002 absolute tolerance. Keep that configuration bit-identical.
-        if (
-            self.implementation == "baseline"
-            or x.dtype == torch.bfloat16
-            or not x.is_cuda
-        ):
+        if self.implementation == "baseline" or not x.is_cuda:
+            return super().forward(x, valid_token_mask)
+        if x.dtype == torch.bfloat16 and self.implementation == "sdpa":
             return super().forward(x, valid_token_mask)
 
-        first_sdpa_layer = len(self.layers) - self.sdpa_layers
+        sdpa_layers = (
+            0
+            if self.implementation == "packed-qkv" or x.dtype == torch.bfloat16
+            else self.sdpa_layers
+        )
+        first_sdpa_layer = len(self.layers) - sdpa_layers
         for layer_index, layer in enumerate(self.layers):
             if layer_index < first_sdpa_layer:
                 if self.implementation == "sdpa":
@@ -948,7 +951,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--user-implementation",
-        choices=("baseline", "sdpa", "sdpa-packed-qkv"),
+        choices=("baseline", "packed-qkv", "sdpa", "sdpa-packed-qkv"),
         default="baseline",
         help="opt-in implementation used by UserOptimizedTransformer",
     )
@@ -1055,7 +1058,12 @@ def main() -> int:
 
     # Compile only after model construction, weight copy, device transfer, and eval().
     baseline = maybe_compile(baseline, args.compile_baseline, args.compile_mode)
-    selected_sdpa_layers = optimized.sdpa_layers
+    selected_sdpa_layers = (
+        0
+        if dtype == torch.bfloat16
+        and args.user_implementation == "sdpa-packed-qkv"
+        else optimized.sdpa_layers
+    )
     optimized = maybe_compile(optimized, args.compile_user, args.compile_mode)
     if args.cuda_graph_user:
         graph_x, graph_mask = generate_random_case(
@@ -1078,7 +1086,8 @@ def main() -> int:
     print(f"device={device}, dtype={dtype}, torch={torch.__version__}")
     print(f"user_implementation={args.user_implementation}")
     if args.user_implementation != "baseline":
-        print(f"sdpa_layers={selected_sdpa_layers}")
+        if args.user_implementation != "packed-qkv":
+            print(f"sdpa_layers={selected_sdpa_layers}")
     if args.compile_baseline or args.compile_user:
         print(
             f"compile_baseline={args.compile_baseline}, "
