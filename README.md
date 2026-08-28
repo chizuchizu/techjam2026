@@ -58,6 +58,9 @@ noncausal FP16 shape, three for padded noncausal FP16, two for causal FP16, and
 one for undisclosed FP16 shapes. BF16 uses packed QKV with the original attention
 math and is bit-exact on the tested cases. Explicit values and `all` override
 auto; `--sdpa-layer-indices 1,3,5` can override placement for experiments.
+`--gelu-approx-layer-indices 1,3,5` similarly exposes the cheaper tanh GELU
+for sensitivity experiments only; every individual layer failed the default
+FP16 25-trial accuracy screen, so the verified best commands leave it empty.
 
 Compilation is recommended only for accuracy-tested FP32 cases. It failed the
 strict FP16 numerical gate.

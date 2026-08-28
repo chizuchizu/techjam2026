@@ -44,6 +44,7 @@ is the primary metric.
 | FP32 previous row + `max-autotune` | pass, 0/5,242,880 | 1.921 ms | 0.525 ms | 3.659x | Slightly faster candidate, less accuracy headroom |
 | FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
 | FP16 tanh-approximate GELU | fail, 74/13,107,200 | — | — | — | Reject: exceeds elementwise tolerance |
+| FP16 tanh GELU, one layer at a time | every layer fails | — | ~0.386 ms graphed | no measurable gain | Reject; retain opt-in sensitivity control |
 
 The packed weights are built once after weight copying and device/dtype transfer,
 outside accuracy and timing regions. Original parameter names remain intact.
@@ -231,8 +232,14 @@ output—not isolated operator error—as its gate. Promising experiments includ
    fixed weights/shapes make setup cost amortizable and the output gate passes.
 
 The first broad approximation test, tanh GELU in all six FP16 layers, failed 74
-of 13,107,200 elements. This rules out indiscriminate replacement but motivates
-a later per-layer sensitivity sweep rather than abandoning approximation.
+of 13,107,200 elements. The follow-up per-layer sweep also rejected every
+layer: layers zero through five respectively failed 39, 13, 2, 2, 1, and 1
+elements over 13,107,200 outputs. Sensitivity falls strongly toward the output,
+but the strict gate allows no failures. Graph-replayed latency was about 0.386
+ms for both one approximate layer and all six, so the cheaper formula produced
+no measurable end-to-end gain on this shape. The opt-in
+`--gelu-approx-layer-indices` control remains only to reproduce sensitivity
+experiments on future shapes; automatic/default dispatch never enables it.
 
 ## Next profiling and implementation steps
 

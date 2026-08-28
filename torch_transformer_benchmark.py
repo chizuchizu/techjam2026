@@ -188,6 +188,7 @@ class UserOptimizedTransformer(BaselineTransformer):
         implementation: str,
         sdpa_layers: int,
         sdpa_layer_indices: Optional[Tuple[int, ...]],
+        gelu_approx_layer_indices: Tuple[int, ...],
     ) -> None:
         super().__init__(config)
         self.implementation = implementation
@@ -207,6 +208,14 @@ class UserOptimizedTransformer(BaselineTransformer):
             self.sdpa_layer_indices = frozenset(sdpa_layer_indices)
             resolved_layers = len(self.sdpa_layer_indices)
         self.sdpa_layers = resolved_layers
+        if len(set(gelu_approx_layer_indices)) != len(gelu_approx_layer_indices):
+            raise ValueError("gelu_approx_layer_indices must not contain duplicates")
+        if any(
+            index < 0 or index >= config.num_layers
+            for index in gelu_approx_layer_indices
+        ):
+            raise ValueError("GELU approximation layer index is outside the model")
+        self.gelu_approx_layer_indices = frozenset(gelu_approx_layer_indices)
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.register_buffer("_causal_mask", None, persistent=False)
         if not 0 <= self.sdpa_layers <= config.num_layers:
@@ -353,6 +362,11 @@ class UserOptimizedTransformer(BaselineTransformer):
             else self.sdpa_layer_indices
         )
         for layer_index, layer in enumerate(self.layers):
+            gelu_approximate = (
+                "tanh"
+                if layer_index in self.gelu_approx_layer_indices
+                else "none"
+            )
             if layer_index not in sdpa_layer_indices:
                 if self.implementation == "sdpa":
                     x = layer(x, valid_token_mask, self.config.causal)
@@ -366,7 +380,10 @@ class UserOptimizedTransformer(BaselineTransformer):
                 )
                 x = x + attention_output
                 x = x + layer.ffn_out(
-                    F.gelu(layer.ffn_in(layer.norm2(x)), approximate="none")
+                    F.gelu(
+                        layer.ffn_in(layer.norm2(x)),
+                        approximate=gelu_approximate,
+                    )
                 )
                 continue
 
@@ -381,7 +398,10 @@ class UserOptimizedTransformer(BaselineTransformer):
             )
             x = x + attention_output
             x = x + layer.ffn_out(
-                F.gelu(layer.ffn_in(layer.norm2(x)), approximate="none")
+                F.gelu(
+                    layer.ffn_in(layer.norm2(x)),
+                    approximate=gelu_approximate,
+                )
             )
 
         x = self.final_norm(x)
@@ -502,12 +522,12 @@ def parse_sdpa_layers(value: str) -> int:
         ) from error
 
 
-def parse_sdpa_layer_indices(value: str) -> Tuple[int, ...]:
+def parse_layer_indices(value: str) -> Tuple[int, ...]:
     try:
         return tuple(int(item) for item in value.split(",") if item != "")
     except ValueError as error:
         raise argparse.ArgumentTypeError(
-            "SDPA layer indices must be comma-separated integers"
+            "layer indices must be comma-separated integers"
         ) from error
 
 
@@ -990,9 +1010,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sdpa-layer-indices",
-        type=parse_sdpa_layer_indices,
+        type=parse_layer_indices,
         default=None,
         help="comma-separated zero-based SDPA layers; overrides --sdpa-layers",
+    )
+    parser.add_argument(
+        "--gelu-approx-layer-indices",
+        type=parse_layer_indices,
+        default=(),
+        help="opt-in tanh GELU for comma-separated zero-based layers",
     )
 
     parser.add_argument("--compile-baseline", action="store_true")
@@ -1041,6 +1067,13 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("--cuda-graph-user requires a CUDA device")
     if args.cuda_graph_user and args.compile_user:
         raise ValueError("--cuda-graph-user and --compile-user are mutually exclusive")
+    if args.gelu_approx_layer_indices and args.user_implementation not in (
+        "packed-qkv",
+        "sdpa-packed-qkv",
+    ):
+        raise ValueError("GELU approximation requires a packed-QKV implementation")
+    if args.gelu_approx_layer_indices and device.type != "cuda":
+        raise ValueError("GELU approximation is currently a CUDA-only experiment")
 
 
 def main() -> int:
@@ -1079,6 +1112,7 @@ def main() -> int:
         args.user_implementation,
         sdpa_layers,
         args.sdpa_layer_indices,
+        args.gelu_approx_layer_indices,
     )
     copy_model_weights(
         baseline,
@@ -1128,6 +1162,11 @@ def main() -> int:
         if args.user_implementation != "packed-qkv":
             print(f"sdpa_layers={selected_sdpa_layers}")
             print(f"sdpa_layer_indices={selected_sdpa_layer_indices}")
+        if args.gelu_approx_layer_indices:
+            print(
+                "gelu_approx_layer_indices="
+                f"{sorted(args.gelu_approx_layer_indices)}"
+            )
     if args.compile_baseline or args.compile_user:
         print(
             f"compile_baseline={args.compile_baseline}, "
