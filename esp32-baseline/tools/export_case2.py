@@ -138,7 +138,10 @@ def main() -> int:
             config=config, device=device, dtype=torch.float32,
             seed=SEED + t, padding_ratio=0.0, input_scale=1.0,
         )
-        assert valid is None
+        # Official top-level benchmark returns (x, valid_token_mask); with
+        # padding_ratio=0 every token is valid (mask all-True), which the C
+        # baseline already assumes. Accept the mask instead of requiring None.
+        assert valid is None or bool(valid.all())
         with torch.inference_mode():
             ref = model(x, None)
         xb = x.detach().cpu().numpy().astype(np.float32).ravel().tobytes()

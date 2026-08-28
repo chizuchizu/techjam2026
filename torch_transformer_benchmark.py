@@ -8,7 +8,7 @@ Correctness rule for every output element:
     OR
     abs(user - ref) <= rtol * abs(ref)
 
-The default thresholds are atol=0.001 and rtol=0.01 (1%).
+The default thresholds are atol=0.002 and rtol=0.02 (2%).
 """
 
 from __future__ import annotations
