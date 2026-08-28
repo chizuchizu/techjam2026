@@ -139,20 +139,22 @@ def capture_serial(port: str, timeout: float) -> str:
         os.close(descriptor)
 
 
-def parse_outputs(text: str) -> tuple[dict[int, list[float]], list[str]]:
-    outputs = {0: [math.nan] * (SEQUENCE * MODEL_DIMENSION),
-               1: [math.nan] * (SEQUENCE * MODEL_DIMENSION)}
+def parse_outputs(text: str) -> tuple[dict[tuple[str, int], list[float]], list[str]]:
+    outputs: dict[tuple[str, int], list[float]] = {}
     result_lines: list[str] = []
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("E2E_RESULT,"):
             result_lines.append(line)
         elif line.startswith("E2E_OUTPUT,"):
-            _, causal_text, index_text, value_text = line.split(",", 3)
+            _, candidate, causal_text, index_text, value_text = line.split(",", 4)
             causal = int(causal_text)
             index = int(index_text)
-            if causal in outputs and 0 <= index < len(outputs[causal]):
-                outputs[causal][index] = float(value_text)
+            key = (candidate, causal)
+            if key not in outputs:
+                outputs[key] = [math.nan] * (SEQUENCE * MODEL_DIMENSION)
+            if 0 <= index < len(outputs[key]):
+                outputs[key][index] = float(value_text)
     return outputs, result_lines
 
 
@@ -195,13 +197,27 @@ def main() -> int:
     outputs, board_results = parse_outputs(captured)
     for line in board_results:
         print(f"BOARD,{line}")
-    all_passed = len(board_results) == 2
-    print("HOST,causal,max_abs_error,max_relative_error,failed_elements,status")
-    for causal in (0, 1):
-        stats = compare(reference(bool(causal)), outputs[causal])
-        status = "PASS" if stats[2] == 0 else "FAIL"
-        print(f"HOST,{causal},{stats[0]:.9g},{stats[1]:.9g},{stats[2]},{status}")
-        all_passed = all_passed and stats[2] == 0
+    expected_candidates = {
+        "float_proj_mixed_attention",
+        "int16_act_int8_proj_mixed_attention",
+    }
+    all_passed = len(board_results) == 4
+    print(
+        "HOST,candidate,causal,max_abs_error,max_relative_error,"
+        "failed_elements,status"
+    )
+    for candidate in sorted(expected_candidates):
+        for causal in (0, 1):
+            actual = outputs.get(
+                (candidate, causal), [math.nan] * (SEQUENCE * MODEL_DIMENSION)
+            )
+            stats = compare(reference(bool(causal)), actual)
+            status = "PASS" if stats[2] == 0 else "FAIL"
+            print(
+                f"HOST,{candidate},{causal},{stats[0]:.9g},{stats[1]:.9g},"
+                f"{stats[2]},{status}"
+            )
+            all_passed = all_passed and stats[2] == 0
     return 0 if all_passed else 1
 
 

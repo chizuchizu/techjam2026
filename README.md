@@ -19,6 +19,8 @@ material, not an implementation target.
 - Causal and non-causal cases.
 - A complete 4-head attention layer with Q/K/V and output projections, padding
   masks, causal masks, and timed activation quantization/dequantization.
+- Projection optimization using int16 activations, per-output-channel int8
+  weights, and native int32 dot products.
 - Independent host validation that reconstructs the fixture without calling the
   ESP32 implementation.
 - Per-element validation using the hackathon rule: absolute error <= 0.002 or
@@ -39,11 +41,12 @@ the float reference. Full results are in
 [`results/esp32c3_attention_v3.csv`](results/esp32c3_attention_v3.csv).
 
 The end-to-end `N=16, d_model=32, 4 heads` benchmark also passes every output
-for causal and non-causal padding-mask cases. Including projections and
-quantization changes the result: mixed precision is 1.015x faster for the
-non-causal case and 0.999x for causal attention. This identifies projections
-and format conversion as the next optimization target. See
-[`results/esp32c3_end_to_end_v1.csv`](results/esp32c3_end_to_end_v1.csv).
+for causal and non-causal padding-mask cases. The first float-projection version
+was only 1.015x faster non-causally and 0.999x for causal attention. Replacing
+the four float projection matrices with per-output-channel int8 weights and
+int16 activations improves that to 3.05x and 3.87x, while reducing their modeled
+working set from 31,328 B to 21,600 B. See
+[`results/esp32c3_end_to_end_v2.csv`](results/esp32c3_end_to_end_v2.csv).
 
 ## Repository map
 
@@ -78,7 +81,7 @@ attention-layer suite. Validate the latter directly from WSL with:
 
 ```bash
 python3 tools/validate_e2e.py --port /dev/ttyACM0 \
-  --capture results/esp32c3_end_to_end_v1.log
+  --capture results/esp32c3_end_to_end_v2.log
 ```
 
 The first build used Arduino CLI 1.5.1, Arduino-ESP32 3.3.11, and esptool 5.3.1.
@@ -88,8 +91,10 @@ The first build used Arduino CLI 1.5.1, Arduino-ESP32 3.3.11, and esptool 5.3.1.
 - This now benchmarks a complete attention layer, not layer normalization, the
   feed-forward network, residual connections, or a complete Transformer block.
 - Batch is 1 and the end-to-end fixture is `N=16, d_model=32, 4 heads`.
-- Projection weights remain float32; the next optimization should quantize or
-  fuse them. Activation quantization is included in end-to-end timing.
+- The tested fixture is synthetic and small; the projection format must be
+  recalibrated and validated on weights and activations from a trained model.
+- Activation quantization is included in end-to-end timing. Offline model-weight
+  quantization is excluded, as weights are stored in their inference format.
 - Latency is measured; energy has not yet been instrumented.
 - Only one ESP32 is currently available, so cluster speedup remains a design,
   not a measured claim.

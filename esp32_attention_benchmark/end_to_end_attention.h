@@ -26,6 +26,10 @@ struct EndToEndBuffers {
   int8_t *query_int8 = nullptr;
   int8_t *key_int8 = nullptr;
   int16_t *value_int16 = nullptr;
+  int16_t *input_int16 = nullptr;
+  int16_t *context_int16 = nullptr;
+  int8_t *weights_int8 = nullptr;
+  float *weight_scales = nullptr;
 };
 
 // The fixture uses formulas rather than an on-device PRNG so the host validator
@@ -55,7 +59,15 @@ void runEndToEndMixedTiled(const EndToEndConfig &config,
                            EndToEndBuffers &buffers,
                            bool causal);
 
+// Projection-optimized candidate: float inputs are converted to int16, all
+// four projection matrices use per-output-channel int8 weights and int32 dot
+// products, and the selected mixed tiled attention kernel remains unchanged.
+void runEndToEndIntProjectionMixedTiled(const EndToEndConfig &config,
+                                        EndToEndBuffers &buffers,
+                                        bool causal);
+
 size_t endToEndWeightBytes(const EndToEndConfig &config);
 size_t endToEndMixedWorkspaceBytes(const EndToEndConfig &config);
 size_t endToEndMixedWorkingSetBytes(const EndToEndConfig &config);
-
+size_t endToEndIntProjectionWeightBytes(const EndToEndConfig &config);
+size_t endToEndIntProjectionWorkingSetBytes(const EndToEndConfig &config);

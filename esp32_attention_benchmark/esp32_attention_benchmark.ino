@@ -427,13 +427,15 @@ void runBenchmarkSuite() {
 
 uint64_t benchmarkEndToEnd(EndToEndBuffers &buffers,
                            bool causal,
-                           bool mixed) {
+                           uint8_t candidate) {
   constexpr uint8_t REPETITIONS = 5;
   uint64_t samples[REPETITIONS];
   for (uint8_t repetition = 0; repetition < REPETITIONS; ++repetition) {
     const int64_t start = esp_timer_get_time();
-    if (mixed) {
+    if (candidate == 1) {
       runEndToEndMixedTiled(END_TO_END_CONFIG, buffers, causal);
+    } else if (candidate == 2) {
+      runEndToEndIntProjectionMixedTiled(END_TO_END_CONFIG, buffers, causal);
     } else {
       runEndToEndFloatReference(END_TO_END_CONFIG, buffers, causal);
     }
@@ -444,17 +446,35 @@ uint64_t benchmarkEndToEnd(EndToEndBuffers &buffers,
   return median(samples, REPETITIONS);
 }
 
-void emitEndToEndOutput(const EndToEndBuffers &buffers, bool causal) {
+const char *endToEndCandidateName(uint8_t candidate) {
+  return candidate == 2 ? "int16_act_int8_proj_mixed_attention"
+                        : "float_proj_mixed_attention";
+}
+
+void runEndToEndCandidate(EndToEndBuffers &buffers,
+                          bool causal,
+                          uint8_t candidate) {
+  if (candidate == 2) {
+    runEndToEndIntProjectionMixedTiled(END_TO_END_CONFIG, buffers, causal);
+  } else {
+    runEndToEndMixedTiled(END_TO_END_CONFIG, buffers, causal);
+  }
+}
+
+void emitEndToEndOutput(const EndToEndBuffers &buffers,
+                        bool causal,
+                        uint8_t candidate) {
   const size_t elements = static_cast<size_t>(END_TO_END_CONFIG.sequence) *
                           END_TO_END_CONFIG.model_dimension;
   for (size_t index = 0; index < elements; ++index) {
-    Serial.printf("E2E_OUTPUT,%u,%u,%.9g\n", causal ? 1 : 0,
+    Serial.printf("E2E_OUTPUT,%s,%u,%u,%.9g\n",
+                  endToEndCandidateName(candidate), causal ? 1 : 0,
                   static_cast<unsigned int>(index), buffers.candidate[index]);
   }
 }
 
 void runEndToEndSuite() {
-  Serial.println("TECHJAM_END_TO_END_ATTENTION_V1");
+  Serial.println("TECHJAM_END_TO_END_ATTENTION_V2");
   Serial.printf(
       "E2E_CONFIG,sequence=%u,model_dimension=%u,heads=%u,head_dimension=%u,"
       "tile=%u,padding_rule=token_mod_7_not_5\n",
@@ -477,28 +497,35 @@ void runEndToEndSuite() {
   for (uint8_t causal_value = 0; causal_value <= 1; ++causal_value) {
     const bool causal = causal_value != 0;
     runEndToEndFloatReference(END_TO_END_CONFIG, buffers, causal);
-    runEndToEndMixedTiled(END_TO_END_CONFIG, buffers, causal);
-    const AccuracyStats accuracy = compareAttentionOutputs(
-        buffers.reference, buffers.candidate, elements, RELATIVE_TOLERANCE,
-        ABSOLUTE_TOLERANCE);
-    const uint64_t reference_us = benchmarkEndToEnd(buffers, causal, false);
-    const uint64_t mixed_us = benchmarkEndToEnd(buffers, causal, true);
-    // Re-run after timing so emitted values always belong to the mixed path.
-    runEndToEndMixedTiled(END_TO_END_CONFIG, buffers, causal);
-    Serial.printf(
-        "E2E_RESULT,%u,%llu,%llu,%.6f,%u,%u,%.9g,%.9g,%lu,%s\n",
-        causal ? 1 : 0,
-        static_cast<unsigned long long>(reference_us),
-        static_cast<unsigned long long>(mixed_us),
-        static_cast<double>(reference_us) / static_cast<double>(mixed_us),
-        static_cast<unsigned int>(
-            endToEndMixedWorkspaceBytes(END_TO_END_CONFIG)),
-        static_cast<unsigned int>(
-            endToEndMixedWorkingSetBytes(END_TO_END_CONFIG)),
-        accuracy.max_absolute_error, accuracy.max_relative_error,
-        static_cast<unsigned long>(accuracy.failed_elements),
-        accuracy.failed_elements == 0 ? "PASS" : "FAIL");
-    emitEndToEndOutput(buffers, causal);
+    const uint64_t reference_us = benchmarkEndToEnd(buffers, causal, 0);
+    for (uint8_t candidate = 1; candidate <= 2; ++candidate) {
+      runEndToEndCandidate(buffers, causal, candidate);
+      const AccuracyStats accuracy = compareAttentionOutputs(
+          buffers.reference, buffers.candidate, elements, RELATIVE_TOLERANCE,
+          ABSOLUTE_TOLERANCE);
+      const uint64_t candidate_us =
+          benchmarkEndToEnd(buffers, causal, candidate);
+      // Re-run after timing so emitted values belong to this candidate.
+      runEndToEndCandidate(buffers, causal, candidate);
+      const size_t working_set =
+          candidate == 2
+              ? endToEndIntProjectionWorkingSetBytes(END_TO_END_CONFIG)
+              : endToEndMixedWorkingSetBytes(END_TO_END_CONFIG);
+      Serial.printf(
+          "E2E_RESULT,%s,%u,%llu,%llu,%.6f,%u,%u,%.9g,%.9g,%lu,%s\n",
+          endToEndCandidateName(candidate), causal ? 1 : 0,
+          static_cast<unsigned long long>(reference_us),
+          static_cast<unsigned long long>(candidate_us),
+          static_cast<double>(reference_us) /
+              static_cast<double>(candidate_us),
+          static_cast<unsigned int>(
+              endToEndMixedWorkspaceBytes(END_TO_END_CONFIG)),
+          static_cast<unsigned int>(working_set),
+          accuracy.max_absolute_error, accuracy.max_relative_error,
+          static_cast<unsigned long>(accuracy.failed_elements),
+          accuracy.failed_elements == 0 ? "PASS" : "FAIL");
+      emitEndToEndOutput(buffers, causal, candidate);
+    }
   }
 
   releaseEndToEndBuffers(buffers);
@@ -517,7 +544,7 @@ void setup() {
     delay(10);
   }
   delay(250);
-  Serial.println("TECHJAM_ATTENTION_READY_V4");
+  Serial.println("TECHJAM_ATTENTION_READY_V5");
   Serial.println("Send r for kernels or e for end-to-end attention.");
 }
 

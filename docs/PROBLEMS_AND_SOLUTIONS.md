@@ -11,7 +11,7 @@ problem rather than presented as an unsupported optimization claim.
 | A “fast” exponential may not be fast on this CPU. | Polynomial exp was consistently slower than `expf`. | It remains as measured negative evidence, not the default. | Profile ROM `expf`; only revisit with integer LUT softmax. |
 | Naive int8 can violate accuracy. | Fully int8 Q/K/V failed six elements for causal `N=64,d=32`, max absolute error 0.003645. | Preserve V as int16; max absolute error becomes 0.000369 and all cases pass. | Calibrate per layer/head on real model activations. |
 | Relative error explodes near zero. | Some passing cases show large max relative error even though absolute error is below 0.002. | Apply the exact specified OR rule element by element and report both metrics. | Add error histograms and adversarial input scales. |
-| Kernel speedup can disappear end to end. | With projections and activation conversion included, mixed precision is only 1.015x faster non-causally and 0.999x for causal attention. | Added a complete timed layer rather than extrapolating from the primitive. | Quantize/fuse projection layers and avoid intermediate float Q/K/V. |
+| Kernel speedup can disappear end to end. | With float projections and activation conversion included, mixed precision is only 1.015x faster non-causally and 0.999x for causal attention. | Int16 activations plus per-output-channel int8 projection weights raise measured speedup to 3.05x and 3.87x while passing. | Validate on trained-model data and fuse intermediate conversion. |
 | Model weights exceed on-chip flash/RAM. | A standard 6-layer `d=512,ffn=2048` float model needs tens of MB of weights. | Current milestone isolates attention and reports its true scope. | Quantize and partition stationary weights across nodes. |
 | Wireless traffic can erase parallel speedup. | Attention sharding exchanges activations and requires synchronization. | Head-parallelism is the first cluster design because heads are independent. | Measure links first; batch packets, use binary layouts, and model crossover. |
 | Distributed softmax needs global normalization. | Local softmax values cannot simply be concatenated. | Use mergeable `(max, denominator, numerator)` online-softmax statistics. | Validate bit-for-bit protocol behavior on two nodes before scaling. |
@@ -29,7 +29,8 @@ problem rather than presented as an unsupported optimization claim.
 - A complete four-head layer with padding and causal masks whose 512 outputs
   pass an independent host reference in both cases.
 - An end-to-end result showing that projection and conversion overhead consumes
-  the primitive's speedup, which defines the next engineering problem.
+  the primitive's speedup, followed by a projection format that restores a
+  measured 3.05–3.87x speedup.
 
 The failed iteration is valuable: it shows why accuracy validation must guide
 optimization rather than being added after performance work.

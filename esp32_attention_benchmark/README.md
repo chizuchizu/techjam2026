@@ -26,12 +26,15 @@ boards.
 
 Send `e` to run the complete attention-layer benchmark: Q/K/V projections,
 four heads, padding and causal masks, mixed-precision tiled attention, and the
-output projection. Its timing includes activation conversion. Validate every
-emitted output against the independent host implementation with:
+output projection. It compares float projections against int16 activations with
+per-output-channel int8 projection weights. Timing includes activation
+conversion, and offline weight quantization is excluded because weights are
+stored in inference format. Validate every emitted output against the
+independent host implementation with:
 
 ```sh
 python3 tools/validate_e2e.py --port /dev/ttyACM0 \
-  --capture results/esp32c3_end_to_end_v1.log
+  --capture results/esp32c3_end_to_end_v2.log
 ```
 
 ## Scope

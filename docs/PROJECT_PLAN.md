@@ -43,7 +43,10 @@ Every optimization must satisfy all of these before it is called successful:
 - End-to-end latency includes projection weight reads, activation quantization,
   tiled attention, fused dequantization, and output projection.
 - Both validation cases pass. Mixed precision is 1.015x faster non-causally and
-  0.999x for causal attention, showing that projection work now dominates.
+  0.999x for causal attention, showing that projection work dominated.
+- Follow-up complete: int16 activations and per-output-channel int8 projection
+  weights raise end-to-end speedup to 3.05x non-causal and 3.87x causal, with
+  every output still passing.
 
 ### M3 — Four-node cluster (next; additional hardware required for scaling)
 
@@ -61,8 +64,8 @@ Every optimization must satisfy all of these before it is called successful:
 
 ## Immediate experiment backlog
 
-1. Quantize or fuse Q/K/V and output projections, now the dominant end-to-end
-   work.
+1. Validate the int16-activation/int8-weight projections on a trained model,
+   then test fusing their output quantization into attention.
 2. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
 3. Sweep online tile sizes 4, 8, 16, and 32.

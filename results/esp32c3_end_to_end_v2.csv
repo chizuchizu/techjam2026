@@ -1,0 +1,6 @@
+candidate,causal,reference_median_us,candidate_median_us,speedup,workspace_bytes,working_set_bytes,board_max_abs_error,board_max_relative_error,board_failed_elements,board_status,host_max_abs_error,host_max_relative_error,host_failed_elements,host_status
+float_proj_mixed_attention,0,132291,130428,1.014284,96,31328,0.000179991126,3.13382912,0,PASS,0.000179966103,3.13072794,0,PASS
+int16_act_int8_proj_mixed_attention,0,132291,43362,3.050851,96,21600,0.000451894477,24.4962807,0,PASS,0.000451902601,24.4786542,0,PASS
+float_proj_mixed_attention,1,117061,117278,0.998150,96,31328,0.000231683254,0.174059063,0,PASS,0.000231686936,0.17402873,0,PASS
+int16_act_int8_proj_mixed_attention,1,117061,30250,3.869785,96,21600,0.00219158828,0.626238823,0,PASS,0.00219152292,0.626234671,0,PASS
+

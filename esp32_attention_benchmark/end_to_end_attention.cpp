@@ -33,6 +33,19 @@ float *bias(EndToEndBuffers &buffers,
                               projection;
 }
 
+int8_t *matrixInt8(EndToEndBuffers &buffers,
+                   const EndToEndConfig &config,
+                   uint8_t projection) {
+  return buffers.weights_int8 + matrixElements(config) * projection;
+}
+
+float *weightScales(EndToEndBuffers &buffers,
+                    const EndToEndConfig &config,
+                    uint8_t projection) {
+  return buffers.weight_scales +
+         static_cast<size_t>(config.model_dimension) * projection;
+}
+
 void project(const float *input,
              const float *weights,
              const float *biases,
@@ -88,6 +101,65 @@ float quantizeInt16(const float *source,
     destination[index] = static_cast<int16_t>(value);
   }
   return scale;
+}
+
+void quantizeWeightColumns(const float *source,
+                           int8_t *destination,
+                           float *scales,
+                           uint16_t dimension) {
+  for (uint16_t output_feature = 0; output_feature < dimension;
+       ++output_feature) {
+    float maximum = 0.0f;
+    for (uint16_t input_feature = 0; input_feature < dimension;
+         ++input_feature) {
+      maximum = fmaxf(
+          maximum,
+          fabsf(source[static_cast<size_t>(input_feature) * dimension +
+                       output_feature]));
+    }
+    const float scale = maximum > 0.0f ? maximum / 127.0f : 1.0f;
+    scales[output_feature] = scale;
+    const float inverse_scale = 1.0f / scale;
+    for (uint16_t input_feature = 0; input_feature < dimension;
+         ++input_feature) {
+      const size_t index =
+          static_cast<size_t>(input_feature) * dimension + output_feature;
+      int32_t value =
+          static_cast<int32_t>(lroundf(source[index] * inverse_scale));
+      value = value > 127 ? 127 : value;
+      value = value < -127 ? -127 : value;
+      destination[index] = static_cast<int8_t>(value);
+    }
+  }
+}
+
+void projectInt16Int8(const int16_t *input,
+                      float input_scale,
+                      const int8_t *weights,
+                      const float *weight_scales,
+                      const float *biases,
+                      float *output,
+                      const EndToEndConfig &config) {
+  const uint16_t dimension = config.model_dimension;
+  for (uint16_t token = 0; token < config.sequence; ++token) {
+    const int16_t *input_row =
+        input + static_cast<size_t>(token) * dimension;
+    float *output_row = output + static_cast<size_t>(token) * dimension;
+    for (uint16_t output_feature = 0; output_feature < dimension;
+         ++output_feature) {
+      int32_t dot = 0;
+      for (uint16_t input_feature = 0; input_feature < dimension;
+           ++input_feature) {
+        dot += static_cast<int32_t>(input_row[input_feature]) *
+               weights[static_cast<size_t>(input_feature) * dimension +
+                       output_feature];
+      }
+      output_row[output_feature] =
+          biases[output_feature] +
+          static_cast<float>(dot) * input_scale *
+              weight_scales[output_feature];
+    }
+  }
 }
 
 inline bool keyIsVisible(uint16_t query, uint16_t key, bool causal) {
@@ -289,6 +361,26 @@ void runProjections(const EndToEndConfig &config,
           bias(buffers, config, VALUE_PROJECTION), buffers.value, config);
 }
 
+void runIntProjections(const EndToEndConfig &config,
+                       EndToEndBuffers &buffers,
+                       float input_scale) {
+  projectInt16Int8(
+      buffers.input_int16, input_scale,
+      matrixInt8(buffers, config, QUERY_PROJECTION),
+      weightScales(buffers, config, QUERY_PROJECTION),
+      bias(buffers, config, QUERY_PROJECTION), buffers.query, config);
+  projectInt16Int8(
+      buffers.input_int16, input_scale,
+      matrixInt8(buffers, config, KEY_PROJECTION),
+      weightScales(buffers, config, KEY_PROJECTION),
+      bias(buffers, config, KEY_PROJECTION), buffers.key, config);
+  projectInt16Int8(
+      buffers.input_int16, input_scale,
+      matrixInt8(buffers, config, VALUE_PROJECTION),
+      weightScales(buffers, config, VALUE_PROJECTION),
+      bias(buffers, config, VALUE_PROJECTION), buffers.value, config);
+}
+
 }  // namespace
 
 bool endToEndTokenIsValid(uint16_t token) {
@@ -353,6 +445,14 @@ bool allocateEndToEndBuffers(const EndToEndConfig &config,
   buffers.key_int8 = static_cast<int8_t *>(malloc(activations));
   buffers.value_int16 =
       static_cast<int16_t *>(malloc(activations * sizeof(int16_t)));
+  buffers.input_int16 =
+      static_cast<int16_t *>(malloc(activations * sizeof(int16_t)));
+  buffers.context_int16 =
+      static_cast<int16_t *>(malloc(activations * sizeof(int16_t)));
+  buffers.weights_int8 =
+      static_cast<int8_t *>(malloc(matrices * 4 * sizeof(int8_t)));
+  buffers.weight_scales = static_cast<float *>(
+      malloc(static_cast<size_t>(config.model_dimension) * 4 * sizeof(float)));
 
   const bool allocated = buffers.input && buffers.weights && buffers.biases &&
                          buffers.query && buffers.key && buffers.value &&
@@ -360,7 +460,9 @@ bool allocateEndToEndBuffers(const EndToEndConfig &config,
                          buffers.candidate && buffers.reference_scores &&
                          buffers.scratch_scores && buffers.scratch_value &&
                          buffers.query_int8 && buffers.key_int8 &&
-                         buffers.value_int16;
+                         buffers.value_int16 && buffers.input_int16 &&
+                         buffers.context_int16 && buffers.weights_int8 &&
+                         buffers.weight_scales;
   if (!allocated) {
     releaseEndToEndBuffers(buffers);
   }
@@ -383,6 +485,10 @@ void releaseEndToEndBuffers(EndToEndBuffers &buffers) {
   free(buffers.query_int8);
   free(buffers.key_int8);
   free(buffers.value_int16);
+  free(buffers.input_int16);
+  free(buffers.context_int16);
+  free(buffers.weights_int8);
+  free(buffers.weight_scales);
   buffers = EndToEndBuffers{};
 }
 
@@ -410,6 +516,9 @@ void initializeEndToEndFixture(const EndToEndConfig &config,
     for (uint16_t feature = 0; feature < config.model_dimension; ++feature) {
       projection_bias[feature] = endToEndFixtureBias(projection, feature);
     }
+    quantizeWeightColumns(
+        projection_matrix, matrixInt8(buffers, config, projection),
+        weightScales(buffers, config, projection), config.model_dimension);
   }
 }
 
@@ -440,6 +549,30 @@ void runEndToEndMixedTiled(const EndToEndConfig &config,
   zeroPaddedRows(buffers.candidate, config);
 }
 
+void runEndToEndIntProjectionMixedTiled(const EndToEndConfig &config,
+                                        EndToEndBuffers &buffers,
+                                        bool causal) {
+  const size_t elements = activationElements(config);
+  const float input_scale =
+      quantizeInt16(buffers.input, buffers.input_int16, elements);
+  runIntProjections(config, buffers, input_scale);
+  const float query_scale =
+      quantizeInt8(buffers.query, buffers.query_int8, elements);
+  const float key_scale = quantizeInt8(buffers.key, buffers.key_int8, elements);
+  const float value_scale =
+      quantizeInt16(buffers.value, buffers.value_int16, elements);
+  attentionMixedTiled(config, buffers, causal, query_scale, key_scale,
+                      value_scale);
+  const float context_scale =
+      quantizeInt16(buffers.context, buffers.context_int16, elements);
+  projectInt16Int8(
+      buffers.context_int16, context_scale,
+      matrixInt8(buffers, config, OUTPUT_PROJECTION),
+      weightScales(buffers, config, OUTPUT_PROJECTION),
+      bias(buffers, config, OUTPUT_PROJECTION), buffers.candidate, config);
+  zeroPaddedRows(buffers.candidate, config);
+}
+
 size_t endToEndWeightBytes(const EndToEndConfig &config) {
   return (matrixElements(config) * 4 +
           static_cast<size_t>(config.model_dimension) * 4) *
@@ -460,3 +593,18 @@ size_t endToEndMixedWorkingSetBytes(const EndToEndConfig &config) {
          quantized_activations + endToEndMixedWorkspaceBytes(config);
 }
 
+size_t endToEndIntProjectionWeightBytes(const EndToEndConfig &config) {
+  return matrixElements(config) * 4 * sizeof(int8_t) +
+         static_cast<size_t>(config.model_dimension) * 4 *
+             (sizeof(float) + sizeof(float));  // scales and biases
+}
+
+size_t endToEndIntProjectionWorkingSetBytes(const EndToEndConfig &config) {
+  const size_t elements = activationElements(config);
+  const size_t float_activations = elements * 6 * sizeof(float);
+  const size_t quantized_attention = elements * 4;
+  const size_t int16_projection_activations = elements * 2 * sizeof(int16_t);
+  return endToEndIntProjectionWeightBytes(config) + float_activations +
+         quantized_attention + int16_projection_activations +
+         endToEndMixedWorkspaceBytes(config);
+}
