@@ -24,6 +24,70 @@
 
 #include <math.h>
 #include <string.h>
+#define TM_PROFILE 0
+
+/* may be overridden (device: Serial.print per line) */
+__attribute__((weak)) void tm_prof_emit(const char* line) { (void)line; }
+
+/* ================= on-device per-kernel profiling (TM_PROFILE) ================= */
+#ifdef TM_PROFILE
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include <esp_timer.h>
+#define TM_PROF_NOW() ((int64_t)esp_timer_get_time())
+#else
+#include <time.h>
+static inline int64_t tm_prof_now_host(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000 + (int64_t)ts.tv_nsec / 1000;
+}
+#define TM_PROF_NOW() tm_prof_now_host()
+#endif
+#define TM_PROF_SLOTS 15
+enum {
+    P_NORM1 = 0, P_QKV, P_QUANT, P_ATTN, P_OPROJ, P_RES1,
+    P_NORM2, P_F1, P_GELU, P_F2, P_RES2, P_FINAL, P_ATTN_QK, P_ATTN_EXP, P_ATTN_PV
+};
+static int64_t  p_start[TM_PROF_SLOTS];
+static uint64_t p_acc[TM_PROF_SLOTS];
+static uint32_t p_cnt[TM_PROF_SLOTS];
+static const char* const p_name[TM_PROF_SLOTS] = {
+    "norm1", "qkv", "quant", "attn", "oproj", "res1",
+    "norm2", "f1", "gelu", "f2", "res2", "final",
+    "attn_qk", "attn_exp", "attn_pv"
+};
+#define PB(i) do { p_start[(i)] = TM_PROF_NOW(); } while (0)
+#define PE(i) do { int64_t d = TM_PROF_NOW() - p_start[(i)]; \
+                   if (d > 0) { p_acc[(i)] += (uint64_t)d; p_cnt[(i)]++; } } while (0)
+static uint64_t prof_total_us = 0;
+#define PBT() do { prof_total_us = (uint64_t)TM_PROF_NOW(); } while (0)
+#define PET() do { prof_total_us = (uint64_t)TM_PROF_NOW() - prof_total_us; } while (0)
+#else
+#define PB(i) do {} while (0)
+#define PE(i) do {} while (0)
+#define PBT() do {} while (0)
+#define PET() do {} while (0)
+#endif
+#ifdef TM_PROFILE
+#include <stdio.h>
+#endif
+void tm_profile_dump(void) {
+#ifdef TM_PROFILE
+    static char line[160];
+    for (int i = 0; i < TM_PROF_SLOTS; i++) {
+        if (p_cnt[i] && p_acc[i]) {
+            (void)snprintf(line, sizeof line,
+                "%s  total_us=%llu n=%u avg_us=%.1f  (%.1f%%)\n",
+                p_name[i], (unsigned long long)p_acc[i], p_cnt[i],
+                (double)p_acc[i] / (double)p_cnt[i],
+                100.0 * (double)p_acc[i] / (double)(prof_total_us ? prof_total_us : 1));
+            tm_prof_emit(line);
+        }
+    }
+    (void)snprintf(line, sizeof line, "TOTAL ~ %llu us total_wall\n", prof_total_us);
+    tm_prof_emit(line);
+#endif
+}
+
 
 static int g_mode = TM_MODE_DEFAULT;
 
@@ -89,54 +153,140 @@ static float quant_head(const float* src, int rowStride, int16_t* dst) {
         const float* row = src + (size_t)i * rowStride;
         int16_t* drow = dst + (size_t)i * TM_HD;
         for (int d = 0; d < TM_HD; d++) {
-            int q = (int)llrintf(row[d] * sa);
-            if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX;
-            if (q < -TM_QACT_MAX) q = -(int)TM_QACT_MAX;
+            float v = row[d] * sa;
+            int q;
+            if (v >= 0.0f) { q = (int)(v + 0.5f); if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX; }
+            else           { q = (int)(v - 0.5f); if (q < -TM_QACT_MAX) q = -(int)TM_QACT_MAX; }
             drow[d] = (int16_t)q;
         }
     }
     return amax / (float)TM_QACT_MAX;
 }
 
-/* Streaming online-rescale causal attention for one head over all S tokens.
- * qh/kh/vh are int16 [S,HD] + per-buffer dequant scales; the QK/PV math is
- * fp32 (dequantized). Result written into ctx[i*D + head*HD]. */
+/* Integer causal attention for one head over all S tokens (two-pass).
+ *
+ * qh/kh/vh are int16 Q15 [S,HD] with per-buffer dequant scales.
+ *   QK:  s = (sum_d qi16[d]*kj16[d]) * (sq*sk*TM_ATTN_SCALE)
+ *        dot accumulated in int64 (Q15*Q15 ~ 2^30; 32 terms can reach 2^35)
+ *        -> one multiply per (i,j) pair instead of 32 fp32 soft-float ops.
+ *   softmax (two-pass, exact max, no online rescale):
+ *        FAST: integer exp via 513-entry LUT on [-10,0] (TFLM-style linear
+ *              interp).  diff*M>>15 maps the logit range onto the LUT.
+ *        EXACT: fp32 expf kept (reference fidelity).
+ *   PV:  p15 (Q15, int) * v Q15 accumulated in int64; one fp32 dequant at
+ *        row end o[d] = acc[d] * (sv/lsum15).
+ * Result written into ctx[i*D + head*HD]. */
+static const int16_t g_exp_lut[513] = {
+    32767, 32133, 31512, 30902, 30305, 29718, 29144, 28580, 28027, 27485, 26953, 26432, 25921, 25419, 24928, 24446,
+    23973, 23509, 23054, 22609, 22171, 21742, 21322, 20909, 20505, 20108, 19720, 19338, 18964, 18597, 18238, 17885,
+    17539, 17200, 16867, 16541, 16221, 15907, 15599, 15298, 15002, 14712, 14427, 14148, 13874, 13606, 13343, 13085,
+    12832, 12584, 12340, 12101, 11867, 11638, 11413, 11192, 10976, 10763, 10555, 10351, 10151, 9954, 9762, 9573,
+    9388, 9206, 9028, 8854, 8682, 8514, 8350, 8188, 8030, 7875, 7722, 7573, 7426, 7283, 7142, 7004,
+    6868, 6735, 6605, 6477, 6352, 6229, 6109, 5991, 5875, 5761, 5650, 5540, 5433, 5328, 5225, 5124,
+    5025, 4928, 4832, 4739, 4647, 4557, 4469, 4383, 4298, 4215, 4133, 4053, 3975, 3898, 3823, 3749,
+    3676, 3605, 3536, 3467, 3400, 3334, 3270, 3207, 3145, 3084, 3024, 2966, 2908, 2852, 2797, 2743,
+    2690, 2638, 2587, 2537, 2488, 2439, 2392, 2346, 2301, 2256, 2212, 2170, 2128, 2087, 2046, 2007,
+    1968, 1930, 1892, 1856, 1820, 1785, 1750, 1716, 1683, 1651, 1619, 1587, 1557, 1527, 1497, 1468,
+    1440, 1412, 1385, 1358, 1331, 1306, 1280, 1256, 1231, 1208, 1184, 1161, 1139, 1117, 1095, 1074,
+    1053, 1033, 1013, 993, 974, 955, 937, 919, 901, 884, 866, 850, 833, 817, 801, 786,
+    771, 756, 741, 727, 713, 699, 685, 672, 659, 646, 634, 622, 610, 598, 586, 575,
+    564, 553, 542, 532, 521, 511, 501, 492, 482, 473, 464, 455, 446, 437, 429, 421,
+    412, 404, 397, 389, 381, 374, 367, 360, 353, 346, 339, 333, 326, 320, 314, 308,
+    302, 296, 290, 285, 279, 274, 268, 263, 258, 253, 248, 243, 239, 234, 230, 225,
+    221, 217, 212, 208, 204, 200, 196, 193, 189, 185, 182, 178, 175, 171, 168, 165,
+    162, 158, 155, 152, 149, 146, 144, 141, 138, 135, 133, 130, 128, 125, 123, 121,
+    118, 116, 114, 111, 109, 107, 105, 103, 101, 99, 97, 95, 93, 92, 90, 88,
+    86, 85, 83, 82, 80, 78, 77, 75, 74, 73, 71, 70, 68, 67, 66, 65,
+    63, 62, 61, 60, 59, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47,
+    46, 45, 45, 44, 43, 42, 41, 40, 40, 39, 38, 37, 37, 36, 35, 35,
+    34, 33, 33, 32, 31, 31, 30, 30, 29, 28, 28, 27, 27, 26, 26, 25,
+    25, 24, 24, 23, 23, 22, 22, 22, 21, 21, 20, 20, 20, 19, 19, 18,
+    18, 18, 17, 17, 17, 16, 16, 16, 16, 15, 15, 15, 14, 14, 14, 14,
+    13, 13, 13, 13, 12, 12, 12, 12, 11, 11, 11, 11, 10, 10, 10, 10,
+    10, 10, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 8, 8, 7, 7,
+    7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5,
+    5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    1,
+};
+
+static float g_qkv_sa;                  /* its Q15 scale */
+static int64_t g_attn_score[TM_S];   /* per-row dot products (1 KB) */
+
 static void attn_head(float* ctx, const int16_t* qh, float sq,
                       const int16_t* kh, float sk,
                       const int16_t* vh, float sv, int head) {
+    const float gsc = sq * sk * TM_ATTN_SCALE;   /* > 0 */
+    const int fast = (g_mode == TM_MODE_FAST);
+    static int32_t g_p15[TM_S];
     for (int i = 0; i < TM_S; i++) {
         const int16_t* qi16 = qh + (size_t)i * TM_HD;
-        float m = -INFINITY, lsum = 0.0f;
-        float acc[TM_HD];
-        for (int d = 0; d < TM_HD; d++) acc[d] = 0.0f;
-        for (int j = 0; j <= i; j++) {
+        int64_t maxs = INT64_MIN;
+        PB(P_ATTN_QK);
+        for (int j = 0; j <= i; j++) {           /* pass 1: QK scores + max */
             const int16_t* kj16 = kh + (size_t)j * TM_HD;
-            const int16_t* vj16 = vh + (size_t)j * TM_HD;
-            /* q row dequantized once per i (recompute per j here: cheap) */
-            float s = 0.0f;
-            for (int d = 0; d < TM_HD; d++)
-                s += (float)qi16[d] * sq * (float)kj16[d] * sk;
-            s *= TM_ATTN_SCALE;
-            if (s > m) {                       /* new running max */
-                float m2 = s;
-                float r = (g_mode == TM_MODE_FAST)
-                              ? tm_exp_fast(m - m2)   /* <=1, m2>m */
-                              : tm_exp_f32(m - m2);
-                lsum *= r;
-                for (int d = 0; d < TM_HD; d++) acc[d] *= r;
-                m = m2;
-            }
-            float p = (g_mode == TM_MODE_FAST) ? tm_exp_fast(s - m)
-                                               : tm_exp_f32(s - m);
-            lsum += p;
-            for (int d = 0; d < TM_HD; d++)
-                acc[d] += p * (float)vj16[d] * sv;
+            int64_t dot = 0;
+            int d = 0;
+            /* two int16 products fit int32 (<=2^31); 16 int64 adds instead of 32 */
+            for (; d + 1 < TM_HD; d += 2)
+                dot += (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d]
+                     + (int32_t)(int16_t)qi16[d+1] * (int32_t)kj16[d+1];
+            for (; d < TM_HD; d++)
+                dot += (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d];
+            g_attn_score[j] = dot;
+            if (dot > maxs) maxs = dot;
         }
+        PE(P_ATTN_QK);
+        /* exp pass: p15 per j (kept in g_p15) + lsum */
+        int32_t lsum15 = 0;
+        PB(P_ATTN_EXP);
+        for (int j = 0; j <= i; j++) {
+            int64_t diff = g_attn_score[j] - maxs;   /* <= 0 */
+            int32_t p15;
+            if (fast) {
+                float logit = (float)diff * gsc;
+                int32_t y16 = (int32_t)(logit * 6553.5f);
+                if (y16 > 0) y16 = 0;
+                else if (y16 < -65535) y16 = -65535;
+                int32_t vv = -y16;
+                int32_t idx = vv >> 7;
+                int32_t off = vv & 127;
+                p15 = (int32_t)g_exp_lut[idx] +
+                      ((((int32_t)g_exp_lut[idx+1] - (int32_t)g_exp_lut[idx]) * off + 64) >> 7);
+            } else {
+                float p = expf((float)diff * gsc);
+                p15 = (int32_t)(p * 32768.0f + 0.5f);
+            }
+            g_p15[j] = p15;
+            lsum15 += p15;
+        }
+        float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;
+        PE(P_ATTN_EXP);
+        /* PV: j-outer with 4 parallel int64 accumulators in registers
+         * (d-block of 4 -> contiguous vj loads, no acc-array SRAM spill). */
         float* o = ctx + (size_t)i * TM_D + head * TM_HD;
-        float inv = 1.0f / lsum;
-        for (int d = 0; d < TM_HD; d++) o[d] = acc[d] * inv;
+        PB(P_ATTN_PV);
+        for (int db = 0; db < TM_HD; db += 4) {
+            int64_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+            for (int j = 0; j <= i; j++) {
+                const int16_t* vj = vh + (size_t)j * TM_HD;
+                int32_t p = g_p15[j];
+                a0 += (int64_t)p * (int32_t)vj[db];
+                a1 += (int64_t)p * (int32_t)vj[db+1];
+                a2 += (int64_t)p * (int32_t)vj[db+2];
+                a3 += (int64_t)p * (int32_t)vj[db+3];
+            }
+            o[db]   = (float)a0 * inv;
+            o[db+1] = (float)a1 * inv;
+            o[db+2] = (float)a2 * inv;
+            o[db+3] = (float)a3 * inv;
+        }
+        PE(P_ATTN_PV);
     }
 }
+
 
 void tm_scan_q12(const void* blob, TMQ12Weights* out) {
     const uint8_t* p = (const uint8_t*)blob;
@@ -156,76 +306,102 @@ void tm_forward(const float* xin, float* yout,
                 const float* W, const TMQ12Weights* q12) {
     if (xin != g_x) memcpy(g_x, xin, sizeof g_x);
     int fast = (g_mode == TM_MODE_FAST);
+    PBT();
 
     for (int l = 0; l < TM_L; l++) {
         /* ---- norm1 ---- */
+        PB(P_NORM1);
         tm_layernorm(g_x,
                      W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
                      g_buf1, TM_S, TM_D);
+        PE(P_NORM1);
 
-        /* ---- attention ----
-         * Each head's Q/K/V projection is GEMMed directly into its own
-         * final ctx slice g_buf2[i*TM_D + h*TM_HD + d] (rowStride=TM_D),
-         * quantized to int16 Q15 head slices (g_qh/g_kh/g_vh + per-head
-         * scales, saves 24 KB), then attn_head overwrites that same slice
-         * with the head output. No staging aliases another head's slice. */
+        /* ---- attention: per-head Q/K/V proj (quantized) + attn ---- */
         {
+            /* FAST: quantize the shared norm1 output g_buf1 ONCE per layer;
+             * all 4 heads x 3 (Q/K/V) GEMMs reuse the same Q15 A (32 KB). */
+            if (fast) {
+                PB(P_QUANT);
+                g_qkv_sa = tm_gemm_amax(g_buf1, TM_S * TM_D);
+                tm_gemm_quantA_into(g_buf1, TM_S * TM_D, tm_gemm_a16(), g_qkv_sa);
+                PE(P_QUANT);
+            }
             const int h_order[TM_H] = {1, 2, 3, 0};
             for (int t = 0; t < TM_H; t++) {
                 int h = h_order[t];
+                PB(P_QKV);
                 if (fast) {
-                    /* per-head Q/K/V projections via Q15 x Q12 rows [h*HD:(h+1)*HD] */
+                    float sainv = 1.0f / g_qkv_sa;
                     const int16_t* wq = q12->q[l][0] + (size_t)h * TM_HD * TM_D;
                     const int16_t* wk = q12->q[l][1] + (size_t)h * TM_HD * TM_D;
                     const int16_t* wv = q12->q[l][2] + (size_t)h * TM_HD * TM_D;
-                    tm_gemm_q12(g_buf1, wq, q12->ws[l][0],
-                                W + woff(l, TM_W_BLK_QB) + h * TM_HD,
-                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-                    g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
-                    tm_gemm_q12(g_buf1, wk, q12->ws[l][1],
-                                W + woff(l, TM_W_BLK_KB) + h * TM_HD,
-                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-                    g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
-                    tm_gemm_q12(g_buf1, wv, q12->ws[l][2],
-                                W + woff(l, TM_W_BLK_VB) + h * TM_HD,
-                                g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-                    g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
+                    PB(P_QUANT);
+                    g_qs = tm_gemm_head_q15(tm_gemm_a16(), sainv, wq, q12->ws[l][0],
+                                        W + woff(l, TM_W_BLK_QB) + h * TM_HD,
+                                        (int32_t*)g_buf1, g_qh, TM_D);
+                    PE(P_QUANT);
+                    PB(P_QUANT);
+                    g_ks = tm_gemm_head_q15(tm_gemm_a16(), sainv, wk, q12->ws[l][1],
+                                        W + woff(l, TM_W_BLK_KB) + h * TM_HD,
+                                        (int32_t*)g_buf1, g_kh, TM_D);
+                    PE(P_QUANT);
+                    PB(P_QUANT);
+                    g_vs = tm_gemm_head_q15(tm_gemm_a16(), sainv, wv, q12->ws[l][2],
+                                        W + woff(l, TM_W_BLK_VB) + h * TM_HD,
+                                        (int32_t*)g_buf1, g_vh, TM_D);
+                    PE(P_QUANT);
                 } else {
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_QW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_QB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    PB(P_QUANT);
                     g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
+                    PE(P_QUANT);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_KW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_KB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    PB(P_QUANT);
                     g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
+                    PE(P_QUANT);
                     tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_VW) + (size_t)h * TM_HD * TM_D,
                                 W + woff(l, TM_W_BLK_VB) + h * TM_HD,
                                 g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
+                    PB(P_QUANT);
                     g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
+                    PE(P_QUANT);
                 }
+                PE(P_QKV);
+                PB(P_ATTN);
                 attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks, g_vh, g_vs, h);
+                PE(P_ATTN);
             }
         }
 
-        /* ---- out projection (ctx in g_buf2 -> out into g_buf2 in place) ---- */
+        /* ---- out projection ---- */
+        PB(P_OPROJ);
         if (fast) {
-            /* reuse g_vh as temporaries: keep ctx, write result to g_buf1 */
             tm_gemm_q12(g_buf2, q12->q[l][3], q12->ws[l][3],
                         W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
         } else {
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_OW),
                         W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
         }
+        PE(P_OPROJ);
+
         /* ---- residual ---- */
+        PB(P_RES1);
         tm_add_inplace(g_buf1, g_x, TM_S * TM_D);
+        PE(P_RES1);
 
         /* ---- norm2 ---- */
+        PB(P_NORM2);
         tm_layernorm(g_x,
                      W + woff(l, TM_W_BLK_N2W), W + woff(l, TM_W_BLK_N2B),
                      g_buf1, TM_S, TM_D);
+        PE(P_NORM2);
 
         /* ---- FFN ---- */
+        PB(P_F1);
         if (fast) {
             tm_gemm_q12(g_buf1, q12->q[l][4], q12->ws[l][4],
                         W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
@@ -233,19 +409,39 @@ void tm_forward(const float* xin, float* yout,
             tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_F1W),
                         W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
         }
-        tm_gelu_inplace(g_buf2, TM_S * TM_F);
+        PE(P_F1);
+
+        PB(P_F2);
+        PB(P_GELU);
         if (fast) {
-            tm_gemm_q12(g_buf2, q12->q[l][5], q12->ws[l][5],
-                        W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
+            /* FUSED GELU + f2 quantize: quantize f1 out to Q15, apply integer
+             * GELU in place (I-BERT), feed core GEMM directly.  Saves the
+             * standalone fp32 gelu pass AND f2's re-quantization+amax scan. */
+            float sa2 = tm_gemm_amax(g_buf2, TM_S * TM_F);
+            int16_t* a2 = tm_gemm_a16();
+            tm_gemm_quantA_into(g_buf2, TM_S * TM_F, a2, sa2);
+            tm_gelu_q15_lut(a2, TM_S * TM_F, TM_QACT_MAX / sa2);
+            PE(P_GELU);
+            tm_gemm_core3(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+                         W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
+            tm_gelu_inplace(g_buf2, TM_S * TM_F);
+            PE(P_GELU);
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_F2W),
                         W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         }
+        PE(P_F2);
+
         /* ---- residual ---- */
+        PB(P_RES2);
         tm_add_inplace(g_buf1, g_x, TM_S * TM_D);
+        PE(P_RES2);
     }
 
     /* ---- final norm ---- */
+    PB(P_FINAL);
     tm_layernorm(g_x, W + TM_W_FINALW, W + TM_W_FINALB, g_buf1, TM_S, TM_D);
     memcpy(yout, g_buf1, sizeof g_buf1);
+    PE(P_FINAL);
+    PET();
 }

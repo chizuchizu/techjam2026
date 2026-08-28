@@ -50,6 +50,30 @@ float tm_exp_fast(float y);
 
 /* fp32 expf for the exact path (libgcc soft-float on the C3). */
 float tm_exp_f32(float y);
+void tm_gelu_q15_lut(int16_t* x, int n, float amax);
+
+
+/* FAST GEMM split API (Q15xQ12): quantize A once, reuse across heads. */
+void tm_gemm_quantA_into(const float* A, int n, int16_t* out, float sa);
+float tm_gemm_amax(const float* A, int n);
+int16_t* tm_gemm_a16(void);
+float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                       float w_scale, const float* bias,
+                       int32_t* acc, int16_t* dst, int K);
+
+void tm_gemm_core3(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+               float w_scale, const float* bias, float* C,
+               int M, int K, int N, int rowStride);
+
+void tm_gemm_core2(const int16_t* Aq, float sa_inv,
+                  const int16_t* Wq, float w_scale, const float* bias,
+                  float* C, int M, int K, int N, int rowStride);
+
+void tm_gemm_core(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                  float w_scale, const float* bias, float* C,
+                  int M, int K, int N, int rowStride);
+
+float tm_exp_f32(float y);
 
 #ifdef __cplusplus
 }

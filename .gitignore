@@ -9,3 +9,6 @@ __pycache__/
 *.swp
 .tensorrt-cache/
 .pio/
+
+# firecrawl raw scrapes (research; distilled into esp32-baseline/optimizations)
+.firecrawl/

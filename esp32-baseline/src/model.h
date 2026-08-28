@@ -22,6 +22,8 @@ void tm_scan_q12(const void* blob, TMQ12Weights* out);
 void tm_set_mode(int mode);
 
 int  tm_get_mode(void);
+void tm_profile_dump(void);
+void tm_prof_emit(const char* line);
 
 /* Forward: y = model(x), x,y: [TM_S*TM_D] fp32 row-major.
  * weights_f32: flat fp32 buffer (TM_W_TOTAL floats).

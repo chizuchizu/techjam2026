@@ -40,6 +40,13 @@ static void ensure_q12(void) {
 
 static long g_forward_counter = 0;
 
+/* device: route profile output to Serial (overrides weak model.c stub).
+ * MUST have C linkage (declared in model.h's extern "C" block) so it
+ * shadows the weak .C stub and not a mangled C++ sibling. */
+__attribute__((used)) void tm_prof_emit(const char* line) {
+    Serial.print(line);
+}
+
 static void run_forward(void) {
     ensure_q12();
     /* workspace lives in model.c: input = g_x, output = g_buf1 */
@@ -114,6 +121,10 @@ void loop() {
                 if (i > 0) Serial.printf(" %lu", (unsigned long)(t1 - t0));
             }
             Serial.println();
+            break;
+        }
+        case 'P': {
+            tm_profile_dump();
             break;
         }
         case 'X': {
