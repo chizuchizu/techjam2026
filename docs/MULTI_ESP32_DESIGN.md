@@ -65,6 +65,14 @@ Message types: `HELLO`, `CONFIG`, `INPUT_SHARD`, `RUN`, `PARTIAL`, `RESULT`,
 `ERROR`, and `HEARTBEAT`. Every result includes compute microseconds separately
 from transport time.
 
+The implemented V1 head-parallel prototype uses a smaller 12-byte envelope
+(`magic`, version, type, payload bytes, request ID) with `HEAD_TASK` and
+`HEAD_RESULT` messages. One fixed `N=16,d_head=8` task carries its padding mask,
+causal flag, scales, int8 Q/K, and int16 V in 534 bytes. The 528-byte result
+carries float context plus decode and compute microseconds. It is deliberately
+small enough for one UDP datagram. The larger header above remains the target
+when layers, shards, node identity, and checksums are added.
+
 ## Network experiment order
 
 1. Measure payload throughput and RTT for 256 B through 32 KB over TCP, UDP, and

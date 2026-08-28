@@ -25,6 +25,8 @@ material, not an implementation target.
   ESP32 implementation.
 - A binary UDP/TCP cluster transport and physical LAN benchmark from WSL to the
   ESP32.
+- A working binary head-task protocol and coordinator that reassembles four
+  remotely computed heads and validates the complete output.
 - Per-element validation using the hackathon rule: absolute error <= 0.002 or
   relative error <= 0.02.
 - Reproducible latency, workspace, working-set, and accuracy output over USB.
@@ -60,6 +62,8 @@ working set from 31,328 B to 21,600 B. See
   and validated binary echo firmware.
 - [`results/TRANSPORT_RESULTS.md`](results/TRANSPORT_RESULTS.md) — measured UDP
   and TCP latency, throughput, and loss.
+- [`results/HEAD_PARALLEL_RESULTS.md`](results/HEAD_PARALLEL_RESULTS.md) — real
+  one-worker head-task timings and accuracy.
 - [`results/`](results/) — raw board measurements and interpretation.
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — narrow milestones and gates.
 - [`docs/PROBLEMS_AND_SOLUTIONS.md`](docs/PROBLEMS_AND_SOLUTIONS.md) — pitch-ready

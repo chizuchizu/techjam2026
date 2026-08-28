@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <cfloat>
+#include <esp_timer.h>
 
 #include "secrets.h"
 
@@ -12,11 +14,20 @@ constexpr uint8_t TYPE_ECHO_REQUEST = 1;
 constexpr uint8_t TYPE_ECHO_REPLY = 2;
 constexpr uint8_t TYPE_DISCOVER_REQUEST = 3;
 constexpr uint8_t TYPE_DISCOVER_REPLY = 4;
+constexpr uint8_t TYPE_HEAD_TASK = 5;
+constexpr uint8_t TYPE_HEAD_RESULT = 6;
 constexpr uint16_t UDP_PORT = 4210;
 constexpr uint16_t TCP_PORT = 4211;
 constexpr size_t HEADER_BYTES = 12;
 constexpr size_t MAX_UDP_PAYLOAD = 1400;
 constexpr size_t MAX_TCP_PAYLOAD = 32768;
+constexpr uint16_t MAX_HEAD_SEQUENCE = 16;
+constexpr uint16_t MAX_HEAD_DIMENSION = 8;
+constexpr uint16_t MAX_HEAD_ELEMENTS =
+    MAX_HEAD_SEQUENCE * MAX_HEAD_DIMENSION;
+constexpr uint16_t MAX_HEAD_TILE = 16;
+constexpr size_t HEAD_TASK_FIXED_BYTES = 20;
+constexpr size_t HEAD_RESULT_FIXED_BYTES = 16;
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr unsigned long TCP_READ_TIMEOUT_MS = 3000;
 
@@ -25,6 +36,14 @@ WiFiServer tcp_server(TCP_PORT);
 WiFiClient tcp_client;
 uint8_t udp_buffer[HEADER_BYTES + MAX_UDP_PAYLOAD];
 uint8_t *tcp_payload = nullptr;
+int8_t head_query[MAX_HEAD_ELEMENTS];
+int8_t head_key[MAX_HEAD_ELEMENTS];
+int16_t head_value[MAX_HEAD_ELEMENTS];
+float head_output[MAX_HEAD_ELEMENTS];
+float head_scratch_scores[MAX_HEAD_TILE];
+float head_scratch_value[MAX_HEAD_DIMENSION];
+uint16_t head_scratch_indices[MAX_HEAD_TILE];
+uint8_t head_valid_mask[(MAX_HEAD_SEQUENCE + 7) / 8];
 unsigned long last_wifi_retry = 0;
 
 uint16_t readU16(const uint8_t *source) {
@@ -49,6 +68,19 @@ void writeU32(uint8_t *destination, uint32_t value) {
   destination[1] = static_cast<uint8_t>(value >> 16);
   destination[2] = static_cast<uint8_t>(value >> 8);
   destination[3] = static_cast<uint8_t>(value);
+}
+
+float readFloat(const uint8_t *source) {
+  const uint32_t bits = readU32(source);
+  float value;
+  memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+void writeFloat(uint8_t *destination, float value) {
+  uint32_t bits;
+  memcpy(&bits, &value, sizeof(bits));
+  writeU32(destination, bits);
 }
 
 void writeHeader(uint8_t *destination,
@@ -108,6 +140,172 @@ bool writeExact(WiFiClient &client, const uint8_t *source, size_t bytes) {
   return written == bytes;
 }
 
+bool headTokenIsValid(uint16_t token) {
+  return (head_valid_mask[token / 8] & (1u << (token % 8))) != 0;
+}
+
+void computeHeadAttention(uint16_t sequence,
+                          uint16_t dimension,
+                          uint16_t tile_size,
+                          bool causal,
+                          float query_scale,
+                          float key_scale,
+                          float value_scale) {
+  const float score_scale =
+      query_scale * key_scale / sqrtf(static_cast<float>(dimension));
+  memset(head_output, 0,
+         static_cast<size_t>(sequence) * dimension * sizeof(float));
+
+  for (uint16_t query_index = 0; query_index < sequence; ++query_index) {
+    if (!headTokenIsValid(query_index)) {
+      continue;
+    }
+    const int8_t *query_row =
+        head_query + static_cast<size_t>(query_index) * dimension;
+    float *output_row =
+        head_output + static_cast<size_t>(query_index) * dimension;
+    float running_max = -FLT_MAX;
+    float running_sum = 0.0f;
+    bool has_values = false;
+
+    for (uint16_t tile_begin = 0; tile_begin < sequence;
+         tile_begin += tile_size) {
+      const uint16_t tile_end =
+          static_cast<uint16_t>(tile_begin + tile_size < sequence
+                                    ? tile_begin + tile_size
+                                    : sequence);
+      uint16_t tile_count = 0;
+      float tile_max = -FLT_MAX;
+      for (uint16_t key_index = tile_begin; key_index < tile_end; ++key_index) {
+        if (!headTokenIsValid(key_index) ||
+            (causal && key_index > query_index)) {
+          continue;
+        }
+        const int8_t *key_row =
+            head_key + static_cast<size_t>(key_index) * dimension;
+        int32_t dot = 0;
+        for (uint16_t feature = 0; feature < dimension; ++feature) {
+          dot += static_cast<int32_t>(query_row[feature]) * key_row[feature];
+        }
+        const float score = static_cast<float>(dot) * score_scale;
+        head_scratch_scores[tile_count] = score;
+        head_scratch_indices[tile_count] = key_index;
+        tile_max = fmaxf(tile_max, score);
+        ++tile_count;
+      }
+      if (tile_count == 0) {
+        continue;
+      }
+
+      memset(head_scratch_value, 0,
+             static_cast<size_t>(dimension) * sizeof(float));
+      float tile_sum = 0.0f;
+      for (uint16_t offset = 0; offset < tile_count; ++offset) {
+        const float weight = expf(head_scratch_scores[offset] - tile_max);
+        tile_sum += weight;
+        const int16_t *value_row =
+            head_value +
+            static_cast<size_t>(head_scratch_indices[offset]) * dimension;
+        for (uint16_t feature = 0; feature < dimension; ++feature) {
+          head_scratch_value[feature] += weight * value_row[feature];
+        }
+      }
+
+      if (!has_values) {
+        memcpy(output_row, head_scratch_value,
+               static_cast<size_t>(dimension) * sizeof(float));
+        running_max = tile_max;
+        running_sum = tile_sum;
+        has_values = true;
+        continue;
+      }
+
+      const float merged_max = fmaxf(running_max, tile_max);
+      const float old_scale = expf(running_max - merged_max);
+      const float tile_scale = expf(tile_max - merged_max);
+      for (uint16_t feature = 0; feature < dimension; ++feature) {
+        output_row[feature] = output_row[feature] * old_scale +
+                              head_scratch_value[feature] * tile_scale;
+      }
+      running_sum = running_sum * old_scale + tile_sum * tile_scale;
+      running_max = merged_max;
+    }
+
+    if (has_values) {
+      const float output_scale = value_scale / running_sum;
+      for (uint16_t feature = 0; feature < dimension; ++feature) {
+        output_row[feature] *= output_scale;
+      }
+    }
+  }
+}
+
+int handleHeadTask(int packet_bytes, uint32_t request_id) {
+  const uint8_t *payload = udp_buffer + HEADER_BYTES;
+  const uint16_t sequence = readU16(payload);
+  const uint16_t dimension = readU16(payload + 2);
+  const bool causal = (payload[4] & 1u) != 0;
+  const uint16_t tile_size = payload[5];
+  const uint16_t mask_bytes = readU16(payload + 6);
+  const float query_scale = readFloat(payload + 8);
+  const float key_scale = readFloat(payload + 12);
+  const float value_scale = readFloat(payload + 16);
+
+  if (sequence == 0 || sequence > MAX_HEAD_SEQUENCE || dimension == 0 ||
+      dimension > MAX_HEAD_DIMENSION || tile_size == 0 ||
+      tile_size > MAX_HEAD_TILE ||
+      mask_bytes != (sequence + 7) / 8 || !isfinite(query_scale) ||
+      !isfinite(key_scale) || !isfinite(value_scale) || query_scale <= 0.0f ||
+      key_scale <= 0.0f || value_scale <= 0.0f) {
+    return 0;
+  }
+  const size_t elements = static_cast<size_t>(sequence) * dimension;
+  const size_t expected_payload = HEAD_TASK_FIXED_BYTES + mask_bytes +
+                                  elements * 2 + elements * sizeof(int16_t);
+  if (packet_bytes !=
+      static_cast<int>(HEADER_BYTES + expected_payload)) {
+    return 0;
+  }
+
+  const int64_t decode_start = esp_timer_get_time();
+  const uint8_t *cursor = payload + HEAD_TASK_FIXED_BYTES;
+  memcpy(head_valid_mask, cursor, mask_bytes);
+  cursor += mask_bytes;
+  memcpy(head_query, cursor, elements);
+  cursor += elements;
+  memcpy(head_key, cursor, elements);
+  cursor += elements;
+  for (size_t index = 0; index < elements; ++index) {
+    head_value[index] = static_cast<int16_t>(readU16(cursor + index * 2));
+  }
+  const uint32_t decode_us =
+      static_cast<uint32_t>(esp_timer_get_time() - decode_start);
+
+  const int64_t compute_start = esp_timer_get_time();
+  computeHeadAttention(sequence, dimension, tile_size, causal, query_scale,
+                       key_scale, value_scale);
+  const uint32_t compute_us =
+      static_cast<uint32_t>(esp_timer_get_time() - compute_start);
+
+  const uint16_t response_payload_bytes =
+      static_cast<uint16_t>(HEAD_RESULT_FIXED_BYTES +
+                            elements * sizeof(float));
+  writeHeader(udp_buffer, TYPE_HEAD_RESULT, response_payload_bytes, request_id);
+  uint8_t *response = udp_buffer + HEADER_BYTES;
+  writeU16(response, sequence);
+  writeU16(response + 2, dimension);
+  response[4] = causal ? 1 : 0;
+  response[5] = 0;  // status
+  writeU16(response + 6, static_cast<uint16_t>(elements));
+  writeU32(response + 8, decode_us);
+  writeU32(response + 12, compute_us);
+  for (size_t index = 0; index < elements; ++index) {
+    writeFloat(response + HEAD_RESULT_FIXED_BYTES + index * sizeof(float),
+               head_output[index]);
+  }
+  return HEADER_BYTES + response_payload_bytes;
+}
+
 void handleUdp() {
   const int packet_bytes = udp.parsePacket();
   if (packet_bytes <= 0) {
@@ -126,6 +324,7 @@ void handleUdp() {
   uint16_t payload_bytes = 0;
   uint32_t request_id = 0;
   const uint8_t request_type = udp_buffer[5];
+  int reply_bytes = packet_bytes;
   if (request_type == TYPE_DISCOVER_REQUEST) {
     if (!validHeader(udp_buffer, TYPE_DISCOVER_REQUEST, 0, payload_bytes,
                      request_id) ||
@@ -140,12 +339,21 @@ void handleUdp() {
       return;
     }
     writeHeader(udp_buffer, TYPE_ECHO_REPLY, payload_bytes, request_id);
+  } else if (request_type == TYPE_HEAD_TASK) {
+    if (!validHeader(udp_buffer, TYPE_HEAD_TASK, MAX_UDP_PAYLOAD,
+                     payload_bytes, request_id)) {
+      return;
+    }
+    reply_bytes = handleHeadTask(packet_bytes, request_id);
+    if (reply_bytes == 0) {
+      return;
+    }
   } else {
     return;
   }
 
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
-  udp.write(udp_buffer, packet_bytes);
+  udp.write(udp_buffer, reply_bytes);
   udp.endPacket();
 }
 

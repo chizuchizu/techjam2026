@@ -52,7 +52,10 @@ Every optimization must satisfy all of these before it is called successful:
 
 - TCP and UDP payload throughput and round-trip latency are measured against one
   physical worker; ESP-NOW and concurrent-worker tests remain.
-- Implement head-parallel execution first.
+- Head-parallel execution is implemented: the coordinator sends four 534-byte
+  tasks, reconstructs the returned heads, applies the output projection, and
+  passes independent validation. It dispatches concurrently when given multiple
+  worker IPs; only the one-worker sequential path is physically measured.
 - Implement exact key/value sharding with distributed online-softmax reduction.
 - Compare one versus two versus four nodes at identical shapes and accuracy.
 
