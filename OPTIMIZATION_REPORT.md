@@ -290,6 +290,47 @@ TensorRT FP32 at 0.5127 ms
 is 78.5 effective TFLOP/s; this is not directly comparable to the FP16 roof
 because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 
+### Throughput and bottleneck comparison
+
+The requested conventional-versus-theoretical comparison is:
+
+| Execution point | Latency | Effective throughput | Dense compute roof achieved | Logical traffic rate | HBM roof fraction |
+|---|---:|---:|---:|---:|---:|
+| Conventional eager PyTorch FP16 | 2.401 ms | 16.8 TFLOP/s | 2.0% | 0.238 TB/s | 5.0% |
+| Earlier library-kernel CUDA graph (legacy screen) | 0.3900 ms | 103.2 TFLOP/s | 12.4% | 1.463 TB/s | 30.5% |
+| Current exact Triton/library CUDA graph | **0.2865 ms** | **140.5 TFLOP/s** | **16.8%** | **1.991 TB/s** | **41.5%** |
+| Current trace, summed active kernels only | 0.265409 ms | 151.7 TFLOP/s | 18.2% | 2.150 TB/s | 44.8% |
+| H200 dense Tensor Core compute roof | 0.0482 ms | 835.5 TFLOP/s | 100% | — | — |
+
+Thus the retained path delivers **8.38x conventional eager throughput**, a
+**738% throughput increase** and **88.1% latency reduction**, while reaching
+16.8% of the raw dense compute roof. If the 570.5-MB logical traffic estimate
+were all served by HBM, the shape-aware bandwidth roof would instead be about
+338.6 TFLOP/s (118.9 microseconds), of which the current path reaches 41.5%.
+The traffic columns are an algorithmic proxy, not an HBM-counter measurement:
+fusion reduces intermediate traffic and caches can serve weights or activations.
+`ncu` counters are needed to replace them with achieved DRAM and Tensor Core
+rates.
+
+The 43-node current trace identifies the remaining serial critical path:
+
+| Kernel group | Summed time | GPU-kernel share |
+|---|---:|---:|
+| FFN input projections + exact GELU | 64.896 us | 24.5% |
+| FFN output projections | 48.800 us | 18.4% |
+| Packed QKV projections | 41.473 us | 15.6% |
+| Attention output projections | 28.864 us | 10.9% |
+| Exact attention | 38.784 us | 14.6% |
+| Residual + LayerNorm | 38.336 us | 14.4% |
+| Initial LayerNorm | 4.256 us | 1.6% |
+
+All GEMM-containing groups total **184.033 microseconds (69.3%)**; the two FFN
+projections alone total **113.696 microseconds (42.8%)**. The bottleneck is
+therefore the sequence of medium, dependency-bound projection GEMMs—not HBM
+bandwidth or attention alone. Each layer must finish normalization before its
+next projection, limiting occupancy across the whole call even though each
+individual GEMM uses Tensor Cores.
+
 ## Prioritized optimization backlog
 
 | Priority | Work | Present? | Expected end-to-end gain | Difficulty | Dependencies / conflicts |
@@ -302,11 +343,11 @@ because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P1 | Hoist static masks / remove invalid-query dead work | **Implemented** | Causal+padded candidate 0.675→0.568 ms | Low | Safe because masks exclude invalid keys and other ops are token-local |
 | P2 | Fused residual + LayerNorm + linear | **Exact Triton add+norm implemented** | Observed 10.2%; linear fusion may add more | Medium | Width-512 specialization; linear fusion remains open |
-| P2 | Fused LayerNorm + FFN and exact-GELU epilogue | Linear+exact-GELU implemented | Observed 2.1%; output-GEMM consumer fusion remains | Medium–high | FFN is 64% of FLOPs; preserve FP16 boundaries |
+| P2 | Fused LayerNorm + FFN and exact-GELU epilogue | Linear+exact-GELU implemented; output composite prototype rejected | Observed 2.1% | Medium–high | FFN is 64% of FLOPs; preserve FP16 boundaries |
 | P2 | Pack valid tokens / variable-length execution | No | 1.2–2x with substantial padding | Medium–high | Pack whole block, not only attention; prefix-valid mask is favorable |
 | P2 | Per-shape autotuned dispatcher | Partial | 5–30% | Medium–high | Known shape has mask-aware layer counts; official matrix still required |
 | P3 | FP8 Transformer Engine/torchao path | No | 1.1–1.7x on large aligned GEMMs | High | Accuracy/scaling overhead; separate opt-in experiment |
-| P3 | Hopper TMA/WGMMA persistent kernels | No | 5–30% where libraries underfill | High | Only after `ncu` proves a specific library kernel inefficient |
+| P3 | Hopper TMA/WGMMA persistent kernels | TMA input-FFN prototype rejected | 5–30% where libraries underfill | High | Revisit only after `ncu` proves a specific library kernel inefficient |
 | P4 | Whole-block persistent megakernel | No | Shape-dependent | Very high | Alternative to library/Inductor scheduling, not an early additive step |
 
 Strongly compounding groups are packed QKV + BSHD + Flash attention; token
@@ -363,6 +404,23 @@ over 100 trials; padded, causal, and combined modes each passed 100 trials with
 zero failed elements and 0.00390625 maximum absolute difference. Input scales
 0.1 and 10 and padding ratios 0.1, 0.5, and 0.75 also passed 25 trials.
 
+A follow-up Hopper scheduling experiment replaced pointer loads with Triton TMA
+descriptors and swept two pipeline depths beyond the baseline, four/eight
+warps, and warp specialization. The best TMA result was about 19.8 microseconds
+versus 19.4 microseconds for the retained pointer kernel, so TMA was removed.
+The default input projection has 128 output tiles, approximately one wave on
+this H200, leaving no persistent scheduling opportunity to amortize descriptor
+or work-queue overhead.
+
+The next trace-driven prototype fused the 2048-to-512 FFN output projection's
+residual addition, followed by a separate exact LayerNorm over the materialized
+sum. Its isolated outputs were bit-exact, but the pair took 18.91 microseconds
+versus 11.96 microseconds for the NVIDIA library GEMM plus retained exact
+add/LayerNorm. Saving one activation transfer could not offset the custom
+GEMM's lower efficiency, so this code was also removed. A future output
+epilogue should retain the library-quality GEMM, for example through a CUTLASS
+visitor epilogue, rather than replace it with a generic Triton matmul.
+
 The first Triton residual-add/LayerNorm prototype used a generic Welford
 reduction and failed 36 elements in 52,428,800 outputs. Inspecting PyTorch's
 CUDA implementation exposed the missing detail: width 512 launches four warps,
@@ -380,8 +438,8 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 2. With counter permissions enabled, capture one representative D×D GEMM, D×F
    GEMM, LayerNorm, exact GELU, mask kernel, and fused SDPA kernel using `ncu`'s
    roofline set.
-3. Prototype an FFN output-GEMM/residual/normalization composite; the input
-   linear+GELU producer is now fused and the remaining library GEMMs dominate.
+3. Test a library-quality CUTLASS visitor epilogue for FFN output
+   GEMM+residual; the generic Triton composite was exact but 1.58x slower.
 4. Evaluate variable-length whole-block packing when padded official cases exist.
 
 ## Primary sources
