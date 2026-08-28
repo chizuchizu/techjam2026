@@ -18,7 +18,7 @@ problem rather than presented as an unsupported optimization claim.
 | A cluster protocol diagram is not an implementation. | Real head tasks need dtype/shape/mask metadata, byte order, validation, timing, retry behavior, and reassembly. | Added a 534-byte binary `HEAD_TASK`, 528-byte `HEAD_RESULT`, stateless retries, concurrent coordinator, and independent full-output validation. | Measure four simultaneous workers and add duplicate/straggler telemetry. |
 | Distributed softmax needs global normalization. | Local softmax values cannot simply be concatenated. | Implemented mergeable `(max, denominator, numerator)` worker results; all four heads and both full outputs pass after host merging. | Validate concurrent behavior on two and four nodes. |
 | Exact sharding can still be the wrong decomposition. | Four KV shards per head move 14,560 B and take 152 ms on one worker, versus 4,248 B and 58 ms for whole heads. | Measured both protocols at identical shape, dtype, and accuracy and selected head parallelism first. | Revisit KV sharding only when a whole head exceeds node memory or compute limits. |
-| More boards introduce stragglers and failures. | End-to-end time becomes the slowest-node time plus communication. | Protocol design includes run IDs and explicit result ownership. | Add deadlines, retries, health telemetry, and profiled assignment. |
+| More boards introduce stragglers and failures. | The measured dual-core ESP32 finishes a head about 14x faster than the C3, so equal two-board assignment leaves the C3 on the critical path. | Added measured scheduling: a both-active 1+3 split improves the C3 baseline by 3.93–3.96x, while the unconstrained policy idles nodes that would increase latency. | Cache profiles, add deadlines/retries, and repeat on homogeneous boards. |
 | “World first” is not defensible. | Published work already covers MCU attention and distributed Transformer inference. | Position the work as an open, measured ESP32-C3 cluster study. | Narrow any novelty claim after a formal literature review. |
 
 ## Results worth showing in the pitch
@@ -39,6 +39,9 @@ problem rather than presented as an unsupported optimization claim.
   four sequential tasks.
 - An exact distributed-softmax run that passes but moves 3.43x more data than
   whole-head tasks, giving measured evidence for the chosen decomposition.
+- A physical two-board run where all outputs pass: round-robin gives 1.94–1.95x
+  over the C3 baseline and measured 1+3 assignment gives 3.93–3.96x, while also
+  showing that the fastest absolute policy should ignore this much slower node.
 
 The failed iteration is valuable: it shows why accuracy validation must guide
 optimization rather than being added after performance work.

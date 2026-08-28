@@ -146,20 +146,68 @@ def compare(expected: list[float], actual: list[float]) -> tuple[float, float, i
     return maximum_absolute, maximum_relative, failed
 
 
+def assign_heads(
+    worker_elapsed_us: list[int], require_all_workers: bool = False
+) -> list[int]:
+    """Greedily minimize the predicted makespan for equal-size head tasks."""
+    if not worker_elapsed_us or any(elapsed <= 0 for elapsed in worker_elapsed_us):
+        raise ValueError("worker calibration times must be positive")
+    if require_all_workers and len(worker_elapsed_us) > HEADS:
+        raise ValueError("cannot assign at least one head to every worker")
+
+    loads = [0] * len(worker_elapsed_us)
+    assignment = []
+    if require_all_workers:
+        for worker in range(len(worker_elapsed_us)):
+            assignment.append(worker)
+            loads[worker] += worker_elapsed_us[worker]
+    while len(assignment) < HEADS:
+        worker = min(
+            range(len(worker_elapsed_us)),
+            key=lambda candidate: (
+                loads[candidate] + worker_elapsed_us[candidate], candidate
+            ),
+        )
+        assignment.append(worker)
+        loads[worker] += worker_elapsed_us[worker]
+    return assignment
+
+
 def run_case(
     workers: list[str], causal: bool, timeout: float,
-    warmups: int, repetitions: int
+    warmups: int, repetitions: int, scheduler: str
 ) -> list[dict]:
     tasks = [build_task(head, causal) for head in range(HEADS)]
     references = [reference(query, key, value, causal)
                   for _, query, key, value in tasks]
-    tasks_by_worker = [[] for _ in workers]
-    for head, task in enumerate(tasks):
-        tasks_by_worker[head % len(workers)].append((head, task[0]))
     connections = [socket.create_connection((host, TCP_PORT), timeout)
                    for host in workers]
     for connection in connections:
         connection.settimeout(timeout)
+
+    calibration_us = []
+    if scheduler == "round-robin":
+        assignment = [head % len(workers) for head in range(HEADS)]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(workers)
+        ) as pool:
+            calibration = list(pool.map(
+                lambda worker: send(
+                    connections[worker], 0, causal, tasks[0][0], 0xF000 + worker
+                ),
+                range(len(workers)),
+            ))
+        calibration_us = [sample[1] for sample in calibration]
+        assignment = assign_heads(
+            calibration_us, require_all_workers=scheduler == "calibrated-all"
+        )
+
+    tasks_by_worker = [[] for _ in workers]
+    for head, task in enumerate(tasks):
+        tasks_by_worker[assignment[head]].append((head, task[0]))
+    assignment_text = ";".join(str(worker) for worker in assignment)
+    calibration_text = ";".join(str(elapsed) for elapsed in calibration_us)
 
     def dispatch(iteration: int):
         begin = time.perf_counter_ns()
@@ -205,6 +253,9 @@ def run_case(
                 "causal": int(causal),
                 "head": head,
                 "worker": worker,
+                "scheduler": scheduler,
+                "assignment": assignment_text,
+                "calibration_us": calibration_text,
                 "request_payload_bytes": len(tasks[head][0]),
                 "response_payload_bytes": response_bytes,
                 "elapsed_us": int(statistics.median(item[3]
@@ -225,6 +276,9 @@ def run_case(
             "causal": int(causal),
             "head": -1,
             "worker": -1,
+            "scheduler": scheduler,
+            "assignment": assignment_text,
+            "calibration_us": calibration_text,
             "request_payload_bytes": sum(len(task[0]) for task in tasks),
             "response_payload_bytes": sum(row["response_payload_bytes"]
                                           for row in rows),
@@ -251,15 +305,26 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument(
+        "--scheduler",
+        choices=("round-robin", "calibrated", "calibrated-all"),
+        default="round-robin",
+        help=(
+            "head assignment policy; calibrated minimizes predicted latency, "
+            "while calibrated-all also assigns at least one head to every worker"
+        ),
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     workers = [item.strip() for item in args.workers.split(",") if item.strip()]
     if not workers:
         parser.error("at least one worker is required")
+    if args.scheduler == "calibrated-all" and len(workers) > HEADS:
+        parser.error("calibrated-all supports at most four workers")
     rows = []
     for causal in (False, True):
         rows.extend(run_case(workers, causal, args.timeout,
-                             args.warmups, args.repetitions))
+                             args.warmups, args.repetitions, args.scheduler))
     writer = csv.DictWriter(
         sys.stdout, fieldnames=list(rows[0]), lineterminator="\n"
     )

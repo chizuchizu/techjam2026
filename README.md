@@ -10,7 +10,7 @@ all prompt logits and 48 generated tokens match an independent NumPy reference.
 - [Complete tiny Transformer firmware](esp32_tiny_transformer/)
 - [Complete-model measurements](results/TINY_TRANSFORMER_RESULTS.md)
 - [Review of the benchmark-sized teammate baseline](results/TEAMMATE_BASELINE_REVIEW.md)
-- [Official-size head-parallel transport result](results/LARGE_HEAD_PARALLEL_RESULTS.md)
+- [Physical two-board head-parallel result](results/LARGE_HEAD_PARALLEL_RESULTS.md)
 - [ESP32 attention and cluster plan](docs/PROJECT_PLAN.md)
 - [Benchmark-sized ESP32 Transformer body](esp32-baseline/)
 

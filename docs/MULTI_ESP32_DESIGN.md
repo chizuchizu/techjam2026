@@ -106,7 +106,8 @@ workers, communication time, coordinator merge time, end-to-end median/p90,
 speedup, payload bytes, packet loss/retries, and energy if instrumentation is
 available.
 
-The official-size TCP protocol passes physical one-worker validation; see
+The official-size TCP protocol passes physical one- and two-worker validation;
+the two boards are heterogeneous, so measured calibration assigns one head to
+the C3 and three to the faster dual-core ESP32 when both must participate. An
+unconstrained latency scheduler correctly idles the C3 for this batch. See
 [`results/LARGE_HEAD_PARALLEL_RESULTS.md`](../results/LARGE_HEAD_PARALLEL_RESULTS.md).
-No multi-node performance claim is made until the second board is visible to
-WSL and both workers are timed concurrently.

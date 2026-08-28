@@ -59,24 +59,30 @@ Every optimization must satisfy all of these before it is called successful:
   median complete forward is 106.614 ms with 24,800 B of model data and a
   22,688 B runtime working set.
 
-### M3 — Four-node cluster (next; additional hardware required for scaling)
+### M3 — Four-node cluster (in progress; two physical nodes complete)
 
 - TCP and UDP payload throughput and round-trip latency are measured against one
-  physical worker; ESP-NOW and concurrent-worker tests remain.
+  physical worker; concurrent TCP is measured on two boards and ESP-NOW remains.
 - Head-parallel execution is implemented: the coordinator sends four 534-byte
   tasks, reconstructs the returned heads, applies the output projection, and
   passes independent validation. It dispatches concurrently when given multiple
-  worker IPs; only the one-worker sequential path is physically measured.
+  worker IPs; both one-worker and two-worker paths are physically measured.
 - Exact key/value sharding is implemented and passes: the worker returns local
   `(max, denominator, numerator)` statistics and the coordinator merges four
   shards per head. The one-worker result moves 3.43x more payload than head
   parallelism, supporting head-first execution for the current shape.
 - Compare one versus two versus four nodes at identical shapes and accuracy.
+  One- and two-node results now pass; four comparable nodes remain.
 - The head worker and coordinator now support the official `N=128,
   d_head=32` shape over persistent TCP. All 16,384 output elements per mode
-  pass on one physical worker; two-board timing waits for WSL attachment.
+  pass on both physical workers. Concurrent round-robin and profiled scheduling
+  also pass on the heterogeneous pair.
 - Workers report chip model, cores, clock, heap, shape limits, and transport
   capabilities so heterogeneous ESP32 models can be scheduled by measurement.
+- Measured per-head compute differs by roughly 14x between the C3 and the
+  dual-core ESP32. The coordinator now supports round-robin, calibrated-all,
+  and unconstrained calibrated scheduling; the last policy may idle a node when
+  using it would increase latency.
 
 ### M4 — Ten-node study
 
@@ -89,8 +95,8 @@ Every optimization must satisfy all of these before it is called successful:
 
 1. Port the integer Q/K dot-product and compact weight storage to the official
    `S=128, D=128, L=4` teammate baseline, then remeasure on the C3.
-2. Validate the larger baseline on more physical-device seeds and commit raw
-   timing/accuracy captures alongside corrected documentation.
+2. Repeat the head-parallel test on two comparable ESP32 boards to measure
+   homogeneous scaling efficiency without the current 14x straggler gap.
 3. Test int8 Q/K + int16 V on independent adversarial inputs with wider score
    ranges.
 4. Sweep online tile sizes 4, 8, 16, and 32.
