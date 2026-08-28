@@ -27,6 +27,8 @@ material, not an implementation target.
   ESP32.
 - A working binary head-task protocol and coordinator that reassembles four
   remotely computed heads and validates the complete output.
+- Exact distributed key/value sharding using mergeable online-softmax
+  statistics, also validated over the real LAN.
 - Per-element validation using the hackathon rule: absolute error <= 0.002 or
   relative error <= 0.02.
 - Reproducible latency, workspace, working-set, and accuracy output over USB.
@@ -64,6 +66,8 @@ working set from 31,328 B to 21,600 B. See
   and TCP latency, throughput, and loss.
 - [`results/HEAD_PARALLEL_RESULTS.md`](results/HEAD_PARALLEL_RESULTS.md) — real
   one-worker head-task timings and accuracy.
+- [`results/KV_SHARDED_RESULTS.md`](results/KV_SHARDED_RESULTS.md) — exact
+  distributed-softmax validation and its communication cost.
 - [`results/`](results/) — raw board measurements and interpretation.
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — narrow milestones and gates.
 - [`docs/PROBLEMS_AND_SOLUTIONS.md`](docs/PROBLEMS_AND_SOLUTIONS.md) — pitch-ready

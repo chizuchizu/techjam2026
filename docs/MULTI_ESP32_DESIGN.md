@@ -73,6 +73,13 @@ carries float context plus decode and compute microseconds. It is deliberately
 small enough for one UDP datagram. The larger header above remains the target
 when layers, shards, node identity, and checksums are added.
 
+The same worker now implements `KV_SHARD_TASK` and `KV_SHARD_RESULT`. A four-key
+task is 250 bytes; its 660-byte result carries 16 records of `(max, sum,
+numerator[8])`. The coordinator merges four shards for each head with the exact
+equations above. Physical one-worker validation passes, but its 14,560-byte
+layer exchange is 3.43x the whole-head protocol, confirming that head
+parallelism should be scaled first.
+
 ## Network experiment order
 
 1. Measure payload throughput and RTT for 256 B through 32 KB over TCP, UDP, and

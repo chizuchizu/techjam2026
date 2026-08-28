@@ -56,7 +56,10 @@ Every optimization must satisfy all of these before it is called successful:
   tasks, reconstructs the returned heads, applies the output projection, and
   passes independent validation. It dispatches concurrently when given multiple
   worker IPs; only the one-worker sequential path is physically measured.
-- Implement exact key/value sharding with distributed online-softmax reduction.
+- Exact key/value sharding is implemented and passes: the worker returns local
+  `(max, denominator, numerator)` statistics and the coordinator merges four
+  shards per head. The one-worker result moves 3.43x more payload than head
+  parallelism, supporting head-first execution for the current shape.
 - Compare one versus two versus four nodes at identical shapes and accuracy.
 
 ### M4 — Ten-node study

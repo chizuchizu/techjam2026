@@ -16,7 +16,8 @@ problem rather than presented as an unsupported optimization claim.
 | Wireless traffic can erase parallel speedup. | Measured 1 KiB RTT is 7.1 ms UDP and 8.9 ms TCP; TCP peaks at 5.79 Mbps for 4 KiB in the current LAN test. | Implemented a versioned binary protocol and measured zero loss/corruption across 330 one-worker trials. | Add head tasks, concurrent workers, batching, and crossover measurements. |
 | Broadcast discovery may fail across WSL/AP networking. | UDP broadcast received no reply, but direct UDP/TCP to the board completed every trial. | Coordinator accepts explicit worker IPs and the device reports its address over USB serial. | Add static leases or provisioning and retry discovery on the native host. |
 | A cluster protocol diagram is not an implementation. | Real head tasks need dtype/shape/mask metadata, byte order, validation, timing, retry behavior, and reassembly. | Added a 534-byte binary `HEAD_TASK`, 528-byte `HEAD_RESULT`, stateless retries, concurrent coordinator, and independent full-output validation. | Measure four simultaneous workers and add duplicate/straggler telemetry. |
-| Distributed softmax needs global normalization. | Local softmax values cannot simply be concatenated. | Use mergeable `(max, denominator, numerator)` online-softmax statistics. | Validate bit-for-bit protocol behavior on two nodes before scaling. |
+| Distributed softmax needs global normalization. | Local softmax values cannot simply be concatenated. | Implemented mergeable `(max, denominator, numerator)` worker results; all four heads and both full outputs pass after host merging. | Validate concurrent behavior on two and four nodes. |
+| Exact sharding can still be the wrong decomposition. | Four KV shards per head move 14,560 B and take 152 ms on one worker, versus 4,248 B and 58 ms for whole heads. | Measured both protocols at identical shape, dtype, and accuracy and selected head parallelism first. | Revisit KV sharding only when a whole head exceeds node memory or compute limits. |
 | More boards introduce stragglers and failures. | End-to-end time becomes the slowest-node time plus communication. | Protocol design includes run IDs and explicit result ownership. | Add deadlines, retries, health telemetry, and profiled assignment. |
 | “World first” is not defensible. | Published work already covers MCU attention and distributed Transformer inference. | Position the work as an open, measured ESP32-C3 cluster study. | Narrow any novelty claim after a formal literature review. |
 
@@ -36,6 +37,8 @@ problem rather than presented as an unsupported optimization claim.
 - A real LAN head-task run where all individual heads and both reassembled layer
   outputs pass; the measured one-worker network remainder is about 31 ms for
   four sequential tasks.
+- An exact distributed-softmax run that passes but moves 3.43x more data than
+  whole-head tasks, giving measured evidence for the chosen decomposition.
 
 The failed iteration is valuable: it shows why accuracy validation must guide
 optimization rather than being added after performance work.

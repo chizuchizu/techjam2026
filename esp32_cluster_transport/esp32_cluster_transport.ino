@@ -16,6 +16,8 @@ constexpr uint8_t TYPE_DISCOVER_REQUEST = 3;
 constexpr uint8_t TYPE_DISCOVER_REPLY = 4;
 constexpr uint8_t TYPE_HEAD_TASK = 5;
 constexpr uint8_t TYPE_HEAD_RESULT = 6;
+constexpr uint8_t TYPE_KV_SHARD_TASK = 7;
+constexpr uint8_t TYPE_KV_SHARD_RESULT = 8;
 constexpr uint16_t UDP_PORT = 4210;
 constexpr uint16_t TCP_PORT = 4211;
 constexpr size_t HEADER_BYTES = 12;
@@ -28,6 +30,8 @@ constexpr uint16_t MAX_HEAD_ELEMENTS =
 constexpr uint16_t MAX_HEAD_TILE = 16;
 constexpr size_t HEAD_TASK_FIXED_BYTES = 20;
 constexpr size_t HEAD_RESULT_FIXED_BYTES = 16;
+constexpr size_t KV_SHARD_TASK_FIXED_BYTES = 24;
+constexpr size_t KV_SHARD_RESULT_FIXED_BYTES = 20;
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr unsigned long TCP_READ_TIMEOUT_MS = 3000;
 
@@ -44,6 +48,8 @@ float head_scratch_scores[MAX_HEAD_TILE];
 float head_scratch_value[MAX_HEAD_DIMENSION];
 uint16_t head_scratch_indices[MAX_HEAD_TILE];
 uint8_t head_valid_mask[(MAX_HEAD_SEQUENCE + 7) / 8];
+float shard_maximum[MAX_HEAD_SEQUENCE];
+float shard_sum[MAX_HEAD_SEQUENCE];
 unsigned long last_wifi_retry = 0;
 
 uint16_t readU16(const uint8_t *source) {
@@ -306,6 +312,159 @@ int handleHeadTask(int packet_bytes, uint32_t request_id) {
   return HEADER_BYTES + response_payload_bytes;
 }
 
+void computeKvShardStatistics(uint16_t sequence,
+                              uint16_t dimension,
+                              uint16_t shard_begin,
+                              uint16_t shard_end,
+                              bool causal,
+                              float query_scale,
+                              float key_scale) {
+  const float score_scale =
+      query_scale * key_scale / sqrtf(static_cast<float>(dimension));
+  const uint16_t shard_keys = shard_end - shard_begin;
+  memset(head_output, 0,
+         static_cast<size_t>(sequence) * dimension * sizeof(float));
+
+  for (uint16_t query_index = 0; query_index < sequence; ++query_index) {
+    shard_maximum[query_index] = -INFINITY;
+    shard_sum[query_index] = 0.0f;
+    if (!headTokenIsValid(query_index)) {
+      continue;
+    }
+    const int8_t *query_row =
+        head_query + static_cast<size_t>(query_index) * dimension;
+    bool has_keys = false;
+    float local_maximum = -FLT_MAX;
+    for (uint16_t local_key = 0; local_key < shard_keys; ++local_key) {
+      const uint16_t key_index = shard_begin + local_key;
+      if (!headTokenIsValid(key_index) ||
+          (causal && key_index > query_index)) {
+        continue;
+      }
+      const int8_t *key_row =
+          head_key + static_cast<size_t>(local_key) * dimension;
+      int32_t dot = 0;
+      for (uint16_t feature = 0; feature < dimension; ++feature) {
+        dot += static_cast<int32_t>(query_row[feature]) * key_row[feature];
+      }
+      local_maximum =
+          fmaxf(local_maximum, static_cast<float>(dot) * score_scale);
+      has_keys = true;
+    }
+    if (!has_keys) {
+      continue;
+    }
+
+    shard_maximum[query_index] = local_maximum;
+    float *numerator =
+        head_output + static_cast<size_t>(query_index) * dimension;
+    float local_sum = 0.0f;
+    for (uint16_t local_key = 0; local_key < shard_keys; ++local_key) {
+      const uint16_t key_index = shard_begin + local_key;
+      if (!headTokenIsValid(key_index) ||
+          (causal && key_index > query_index)) {
+        continue;
+      }
+      const int8_t *key_row =
+          head_key + static_cast<size_t>(local_key) * dimension;
+      int32_t dot = 0;
+      for (uint16_t feature = 0; feature < dimension; ++feature) {
+        dot += static_cast<int32_t>(query_row[feature]) * key_row[feature];
+      }
+      const float score = static_cast<float>(dot) * score_scale;
+      const float weight = expf(score - local_maximum);
+      local_sum += weight;
+      const int16_t *value_row =
+          head_value + static_cast<size_t>(local_key) * dimension;
+      for (uint16_t feature = 0; feature < dimension; ++feature) {
+        numerator[feature] += weight * value_row[feature];
+      }
+    }
+    shard_sum[query_index] = local_sum;
+  }
+}
+
+int handleKvShardTask(int packet_bytes, uint32_t request_id) {
+  const uint8_t *payload = udp_buffer + HEADER_BYTES;
+  const uint16_t sequence = readU16(payload);
+  const uint16_t dimension = readU16(payload + 2);
+  const bool causal = (payload[4] & 1u) != 0;
+  const uint16_t mask_bytes = readU16(payload + 6);
+  const uint16_t shard_begin = readU16(payload + 8);
+  const uint16_t shard_end = readU16(payload + 10);
+  const float query_scale = readFloat(payload + 12);
+  const float key_scale = readFloat(payload + 16);
+  const float value_scale = readFloat(payload + 20);
+
+  if (sequence == 0 || sequence > MAX_HEAD_SEQUENCE || dimension == 0 ||
+      dimension > MAX_HEAD_DIMENSION || shard_begin >= shard_end ||
+      shard_end > sequence || mask_bytes != (sequence + 7) / 8 ||
+      !isfinite(query_scale) || !isfinite(key_scale) ||
+      !isfinite(value_scale) || query_scale <= 0.0f || key_scale <= 0.0f ||
+      value_scale <= 0.0f) {
+    return 0;
+  }
+  const size_t query_elements = static_cast<size_t>(sequence) * dimension;
+  const size_t shard_elements =
+      static_cast<size_t>(shard_end - shard_begin) * dimension;
+  const size_t expected_payload =
+      KV_SHARD_TASK_FIXED_BYTES + mask_bytes + query_elements +
+      shard_elements + shard_elements * sizeof(int16_t);
+  if (packet_bytes != static_cast<int>(HEADER_BYTES + expected_payload)) {
+    return 0;
+  }
+
+  const int64_t decode_start = esp_timer_get_time();
+  const uint8_t *cursor = payload + KV_SHARD_TASK_FIXED_BYTES;
+  memcpy(head_valid_mask, cursor, mask_bytes);
+  cursor += mask_bytes;
+  memcpy(head_query, cursor, query_elements);
+  cursor += query_elements;
+  memcpy(head_key, cursor, shard_elements);
+  cursor += shard_elements;
+  for (size_t index = 0; index < shard_elements; ++index) {
+    head_value[index] = static_cast<int16_t>(readU16(cursor + index * 2));
+  }
+  const uint32_t decode_us =
+      static_cast<uint32_t>(esp_timer_get_time() - decode_start);
+
+  const int64_t compute_start = esp_timer_get_time();
+  computeKvShardStatistics(sequence, dimension, shard_begin, shard_end, causal,
+                           query_scale, key_scale);
+  const uint32_t compute_us =
+      static_cast<uint32_t>(esp_timer_get_time() - compute_start);
+
+  const size_t statistics_floats =
+      static_cast<size_t>(sequence) * (dimension + 2);
+  const uint16_t response_payload_bytes = static_cast<uint16_t>(
+      KV_SHARD_RESULT_FIXED_BYTES + statistics_floats * sizeof(float));
+  writeHeader(udp_buffer, TYPE_KV_SHARD_RESULT, response_payload_bytes,
+              request_id);
+  uint8_t *response = udp_buffer + HEADER_BYTES;
+  writeU16(response, sequence);
+  writeU16(response + 2, dimension);
+  response[4] = causal ? 1 : 0;
+  response[5] = 0;
+  writeU16(response + 6, shard_begin);
+  writeU16(response + 8, shard_end);
+  writeU16(response + 10, sequence);
+  writeU32(response + 12, decode_us);
+  writeU32(response + 16, compute_us);
+  uint8_t *statistics = response + KV_SHARD_RESULT_FIXED_BYTES;
+  for (uint16_t query_index = 0; query_index < sequence; ++query_index) {
+    writeFloat(statistics, shard_maximum[query_index]);
+    writeFloat(statistics + 4, shard_sum[query_index]);
+    statistics += 8;
+    const float *numerator =
+        head_output + static_cast<size_t>(query_index) * dimension;
+    for (uint16_t feature = 0; feature < dimension; ++feature) {
+      writeFloat(statistics, numerator[feature]);
+      statistics += 4;
+    }
+  }
+  return HEADER_BYTES + response_payload_bytes;
+}
+
 void handleUdp() {
   const int packet_bytes = udp.parsePacket();
   if (packet_bytes <= 0) {
@@ -345,6 +504,15 @@ void handleUdp() {
       return;
     }
     reply_bytes = handleHeadTask(packet_bytes, request_id);
+    if (reply_bytes == 0) {
+      return;
+    }
+  } else if (request_type == TYPE_KV_SHARD_TASK) {
+    if (!validHeader(udp_buffer, TYPE_KV_SHARD_TASK, MAX_UDP_PAYLOAD,
+                     payload_bytes, request_id)) {
+      return;
+    }
+    reply_bytes = handleKvShardTask(packet_bytes, request_id);
     if (reply_bytes == 0) {
       return;
     }
