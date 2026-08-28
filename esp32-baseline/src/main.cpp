@@ -61,6 +61,11 @@ static void read_input(void) {
 
 void setup() {
     Serial.begin(115200);
+    /* Enlarge the native-USB CDC RX queue: the default (256 B) drops any
+     * host->device burst larger than the app's drain quantum when the host
+     * pushes the 64 KB 'R' input at USB speed. 8 KB + host-side 1 KB/20 ms
+     * pacing makes full-frame delivery lossless (tools/device_test.py). */
+    Serial.setRxBufferSize(8192);
     delay(200);
     tm_set_mode(TM_MODE_DEFAULT);
     Serial.println("TM XIAO-ESP32C3 case2 baseline ready");

@@ -2,8 +2,15 @@
 """
 device_test.py - drive the ESP32-C3 firmware over serial and verify outputs.
 
-Protocol (src/main.cpp): 'M' -> mode line; 'R' -> read 65536 B input,
-one forward, stream 65536 B output + "END ..."; 'T <n>' -> timed forwards.
+Protocol (src/main.cpp): 'M' -> "TM <mode> <S> <D>"; 'S' -> "TM OK mode=<m>";
+'R' <65536 B float32 LE input> -> one forward, streams 65536 B output + "END ...";
+'T <n>' -> warmup 1 + n timed forwards, prints "TM <mode> <us> ...".
+
+Firmware handling notes this driver compensates for:
+  * native-USB CDC RX on the C3 drops host->device bursts above ~1 KB unless
+    the host paces; send_input() writes 1 KB chunks with a 20 ms gap.
+  * if a previous interrupted run left the firmware stuck in read_input(),
+    a startup "kick" sends one full zero frame so it returns to idle.
 
 Usage:
   python3 tools/device_test.py /dev/cu.usbmodem2101 [--seeds 0 1 2 3 4] \\
@@ -22,6 +29,7 @@ import serial  # pyserial
 
 N = 128 * 128
 ATOL, RTOL = 0.002, 0.02
+CHUNK, GAP = 1024, 0.02  # paced host->device delivery (see module docstring)
 
 
 def read_until(ser, token: bytes, timeout: float = 30.0) -> bytes:
@@ -36,6 +44,84 @@ def read_until(ser, token: bytes, timeout: float = 30.0) -> bytes:
     return buf
 
 
+def send_input(ser, data: bytes, chunk: int = CHUNK, gap: float = GAP) -> None:
+    """Deliver a full 65536-byte input frame without tripping the CDC RX
+    drop bug: 1 KB chunks, 20 ms apart (safe margin below the >4 KB/10 ms
+    threshold; 3/3 runs lossless at 1 KB/20 ms)."""
+    off = 0
+    while off < len(data):
+        ser.write(data[off:off + chunk])
+        off += chunk
+        if gap:
+            time.sleep(gap)
+
+
+def drain_quiet(ser, quiet_s: float = 2.0, max_wait: float = 120.0) -> None:
+    """Drain RX until no bytes arrive for quiet_s. After a kick the C3 emits
+    one 'TM unknown cmd' line per leftover byte of the interrupted frame at a
+    slow USB-CDC rate, so this needs a generous window before returning."""
+    t0 = time.time()
+    last = time.time()
+    while time.time() - t0 < max_wait:
+        if ser.in_waiting:
+            ser.read(ser.in_waiting)
+            last = time.time()
+        elif time.time() - last >= quiet_s:
+            break
+        else:
+            time.sleep(0.05)
+    ser.reset_input_buffer()
+
+
+def _kick(ser, timeout: float = 150.0) -> None:
+    """Complete a pending 'R' frame when the firmware is stuck in
+    read_input(): send zeros, then drain the 64 KB output frame and the
+    END line so the command loop returns to idle."""
+    ser.write(b"R")
+    time.sleep(0.2)
+    send_input(ser, b"\0" * (N * 4))
+    out = b""
+    t0 = time.time()
+    while len(out) < N * 4:
+        if time.time() - t0 > timeout:
+            raise RuntimeError("kick: no output frame within timeout")
+        chunk = ser.read(N * 4 - len(out))
+        if chunk:
+            out += chunk
+    tail = read_until(ser, b"\n", timeout=30.0)
+    if b"END" not in tail:
+        raise RuntimeError(f"kick did not recover firmware: {tail[-80:]!r}")
+    print(f"[device] recovered (stale frame drained): {tail.strip().decode()}")
+    drain_quiet(ser)  # clear trailing bytes left from the interrupted frame
+
+
+def wait_idle(ser, timeout: float = 12.0) -> bytes:
+    """Return the first 'TM ' console line. If the firmware is stuck in a
+    pending read_input() (interrupted previous run), feed it one full zero
+    frame so it returns to the command loop, then retry."""
+    ser.reset_input_buffer()
+    ser.write(b"M")
+    try:
+        return read_until(ser, b"\n", timeout=max(3.0, timeout - 3.0))
+    except TimeoutError:
+        # likely stuck in read_input(): complete the pending frame (zeros),
+        # let the forward finish, then ask again.
+        print("[device] no reply to M; kicking pending input frame ...")
+        _kick(ser)
+        # after the kick the firmware is idle again; a few M retries cover
+        # any last straggler bytes still draining from the interrupted frame
+        for _ in range(20):
+            ser.reset_input_buffer()
+            ser.write(b"M")
+            try:
+                line = read_until(ser, b"\n", timeout=5.0)
+                if line.strip():
+                    return line
+            except TimeoutError:
+                time.sleep(0.5)
+        raise RuntimeError("firmware unresponsive after recovery kick")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("port")
@@ -48,11 +134,17 @@ def main() -> int:
     root = pathlib.Path(args.root)
     ser = serial.Serial(args.port, args.baud, timeout=1.0)
     time.sleep(0.5)
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
+    # opportunistically capture the boot banner if the port open put the
+    # firmware in a freshly-booted state (usually missed on CDC re-enum).
+    banner = b""
+    t0 = time.time()
+    while time.time() - t0 < 1.0:
+        chunk = ser.read(ser.in_waiting or 1)
+        if chunk:
+            banner += chunk
 
-    ser.write(b"M")
-    mode_line = read_until(ser, b"\n", timeout=5.0)
+    mode_line = wait_idle(ser)
+    print(f"[device] boot: {banner.decode(errors='replace').strip()!r}")
     print(f"[device] {mode_line.strip().decode()}")
     ser.reset_input_buffer()
 
@@ -65,7 +157,8 @@ def main() -> int:
 
         ser.reset_input_buffer()
         ser.write(b"R")
-        ser.write(inp)
+        time.sleep(0.2)  # let the firmware enter read_input() first
+        send_input(ser, inp)
         out = b""
         t0 = time.time()
         while len(out) < N * 4:
@@ -95,9 +188,12 @@ def main() -> int:
 
     try:
         inp = (root / "testdata" / "input_0.bin").read_bytes()
+        ser.reset_input_buffer()
         ser.write(b"T" + bytes([args.reps]))
-        ser.write(inp)
-        tline = read_until(ser, b"\n", timeout=120.0)
+        time.sleep(0.2)
+        send_input(ser, inp)
+        # 1 + reps forwards: at ~42 s/forward on this snapshot, reps=3 -> ~170 s
+        tline = read_until(ser, b"\n", timeout=300.0)
         print(f"[device] {tline.strip().decode()}")
     except Exception as e:
         print(f"[device] timing sweep skipped: {e}")
