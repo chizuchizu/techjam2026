@@ -1,22 +1,61 @@
-We are doing tiktok techjam hackathon.
+# ESP32 current priorities
 
-you can read problem statement and sample code in this dir.
+1. Correct the benchmark-sized baseline's 2–4 second claim to the measured
+   42.152 seconds and fix its reproduction paths.
+2. Port int8/int32 Q/K dot products and compact FAST-only weight storage to the
+   `S=128, D=128, L=4` baseline.
+3. Attach the second XIAO to WSL and measure two-board head parallelism; include
+   actual Wi-Fi transfer time.
+4. Add a genuinely trained larger tokenizer/model and evaluate held-out prompts.
+5. Preserve the H200 work below as a separate, currently inactive track.
 
-We are thinking to use ESP32 for this.
+# Existing H200 priorities
 
-at first, run some benchmarks on ESP32 and come up with some ideas and optimise it.
-next stage, ill bring 4 or 10 ESP32 and parallelise computation. like hpc
+We are targetin the 1st place in this competition.
+problemstatement is defined STATEMENT.md and benchmark is placed in torch_transformer_benchmark.py
+Also we try to understand the kernel things and want to apply other competition.
 
-Can you break down what you need to do?
+1. Define a baseline
+2. keep do this
+use nsys and ncu to profild and analyze this application for 1 x h200, identify bottlenecks, and launch parallel research agents to find how existing open source or literature or competition (like gpu-mode) have tried optimising it, and whether it already exist in the current code. If not, list them out as todo, document findings in markdown. Also include in implementation difficulty and expected gain and identify if any of them may compound or conflict, or are prerequisit of others. Then it will produce the markdown Then you review and see which make most sense to you, and proriotize yourself.
+Then once you know which to do first, '/goal' make a new branch in a new git worktree and implement XXX. Make changes an opt-in via build or runtime flag/env then do A/B testing.
+Also every experiments should be simple so that i can trace later.
+You should push the performance as much as possible but the same time keep track why it worked
+Also calculate or estimate the theoretical performance and compare the performance with it and make a document.
 
-To win the this hackathon, i want to emphasize the problems and how we overcame, so 
-list up the problems here and come up with the solutions for each
+## Current prioritized work (2026-08-28)
 
-and find the limitation and i don't think you can run all benchmarks. but it's fine
+Detailed evidence, estimates, dependencies, and rejected experiments are in
+`OPTIMIZATION_REPORT.md`.
 
-our contribution is run attention on esp32, which has never been? i hope\
-second contribution is parallelise attention on esp32 which has never been also
+1. Recover the missing official Feishu test-shape/dtype/mask table.
+2. Enable Nsight Compute performance counters and collect per-kernel rooflines.
+3. Keep and expand the opt-in packed-QKV + SDPA implementation with per-shape
+   accuracy dispatch (known FP16 shape: four unmasked, three padded, two causal).
+   Prefer the implemented score-rounded Triton attention for the known default
+   FP16 shape: all six layers are bit-exact in the stronger 100-trial audit for
+   unmasked, padded, causal, and causal+padded modes.
+4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
+   official static shape and mask regimes. The FP16 best path now captures its
+   dynamic input and optional validity-mask copies inside the graph and
+   retargets their source pointers on every call; verify destination matching
+   and performance across the missing official shapes.
+5. Keep the implemented static-mask hoisting and final add/LayerNorm invalid-row
+   zeroing; the best padded path no longer launches mask-negation or final-mask
+   kernels. Verify it across the official padding-mask cases.
+6. Keep the exact Triton residual-add/LayerNorm, exact initial LayerNorm, and
+   implemented FFN input linear+exact-GELU fusion. Keep the opt-in
+   pretransposed FFN-output weights, which select a slightly faster exact NVJet
+   tactic. Generic Triton and CUTLASS visitor alternatives tested so far were
+   slower than the retained kernels.
+7. Add whole-block valid-token packing for padded cases.
+8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
+   shape table; the fixed unmasked TensorRT FP32 graph path is now implemented
+   and faster, while TensorRT FP16 fails accuracy. Treat Transformer Engine and
+   FP8 as separate accuracy-gated experiments.
+9. Later, investigate novel sensitivity-guided approximations: identify the
+   measured bottleneck, estimate layerwise error amplification, then apply
+   cheaper math/precision only where the final elementwise tolerance has margin.
 
-Everything you should narrow document and start implementation step by step.
-
-
+you can use nvhpc 26.2 from here
+source /export/home/alien/software/nvhpc/setup.sh

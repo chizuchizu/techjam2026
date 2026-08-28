@@ -1,142 +1,218 @@
-# Pocket Attention Cluster
+# TechJam 2026 Transformer Optimization
 
-Pocket Attention Cluster is a TechJam experiment in running and distributing
-Transformers across inexpensive ESP32 microcontrollers. The current milestone
-includes both measured attention kernels and a trained character Transformer
-running end to end on a Seeed Studio XIAO ESP32-C3.
+## ESP32 track
 
-The project deliberately targets ESP32 hardware only: memory-efficient attention,
-mixed-precision arithmetic, and communication-aware execution across a cluster
-of small microcontrollers. The supplied GPU benchmark remains background
-material, not an implementation target.
+The current ESP32 work runs a complete trained character Transformer on a
+Seeed XIAO ESP32-C3 and separately implements memory-efficient attention plus
+LAN distribution protocols. The physical board generates at 9.38 tokens/s;
+all prompt logits and 48 generated tokens match an independent NumPy reference.
 
-## What works now
+- [Complete tiny Transformer firmware](esp32_tiny_transformer/)
+- [Complete-model measurements](results/TINY_TRANSFORMER_RESULTS.md)
+- [Review of the benchmark-sized teammate baseline](results/TEAMMATE_BASELINE_REVIEW.md)
+- [ESP32 attention and cluster plan](docs/PROJECT_PLAN.md)
+- [Benchmark-sized ESP32 Transformer body](esp32-baseline/)
 
-- A complete trained causal language model: token and position embeddings, two
-  pre-norm Transformer blocks, four-head attention, residuals, feed-forward
-  networks, final RMSNorm, and a tied 24-token language-model head.
-- Greedy generation on the physical board at a median 106.614 ms per token;
-  all 24 validation logits and all 48 generated tokens match the independent
-  NumPy deployment reference.
-- Float32 materialized scaled dot-product attention.
-- Exact block-online softmax that never stores the `N x N` attention matrix.
-- Mixed precision with int8 Q/K and int16 V.
-- Causal and non-causal cases.
-- A complete 4-head attention layer with Q/K/V and output projections, padding
-  masks, causal masks, and timed activation quantization/dequantization.
-- Projection optimization using int16 activations, per-output-channel int8
-  weights, and native int32 dot products.
-- Independent host validation that reconstructs the fixture without calling the
-  ESP32 implementation.
-- A binary UDP/TCP cluster transport and physical LAN benchmark from WSL to the
-  ESP32.
-- A working binary head-task protocol and coordinator that reassembles four
-  remotely computed heads and validates the complete output.
-- Exact distributed key/value sharding using mergeable online-softmax
-  statistics, also validated over the real LAN.
-- Per-element validation using the hackathon rule: absolute error <= 0.002 or
-  relative error <= 0.02.
-- Reproducible latency, workspace, working-set, and accuracy output over USB.
+The trained model is a small memorization proof, while `esp32-baseline` is a
+larger random-hidden-state numerical benchmark and does not generate tokens.
 
-On the largest tested shape (`N=128`, head dimension `32`):
+## H200 Transformer Kernel Optimization
 
-| Kernel | Median | Speedup | Working set | Accuracy |
-|---|---:|---:|---:|---:|
-| Float materialized reference | 1.866 s | 1.00x | 131,072 B | reference |
-| Int8 Q/K + int16 V, materialized | 1.336 s | 1.40x | 98,304 B | pass |
-| Int8 Q/K + int16 V, tiled online | 1.483 s | 1.26x | 32,928 B | pass |
+This repository A/B tests an explicit PyTorch Transformer reference against
+opt-in optimized implementations on one NVIDIA H200 NVL. The best pure-PyTorch
+FP32/TF32 path packs Q/K/V, uses fused SDPA, and compiles into a CUDA graph; the
+optional fixed-shape TensorRT graph is faster. The best FP16 path uses custom
+exact Triton attention/normalization kernels, pretransposed FFN-output weights,
+and a CUDA graph with its dynamic input copy captured as a retargetable node.
 
-The tiled mixed-precision kernel reduces modeled working memory by 74.9% and
-attention workspace from 65,536 bytes to 160 bytes while still outperforming
-the float reference. Full results are in
-[`results/esp32c3_attention_v3.csv`](results/esp32c3_attention_v3.csv).
+## Setup
 
-The end-to-end `N=16, d_model=32, 4 heads` benchmark also passes every output
-for causal and non-causal padding-mask cases. The first float-projection version
-was only 1.015x faster non-causally and 0.999x for causal attention. Replacing
-the four float projection matrices with per-output-channel int8 weights and
-int16 activations improves that to 3.05x and 3.87x, while reducing their modeled
-working set from 31,328 B to 21,600 B. See
-[`results/esp32c3_end_to_end_v2.csv`](results/esp32c3_end_to_end_v2.csv).
-
-## Repository map
-
-- [`esp32_tiny_transformer/`](esp32_tiny_transformer/) — trained complete
-  Transformer inference and serial benchmark firmware.
-- [`tools/train_tiny_transformer.py`](tools/train_tiny_transformer.py) —
-  deterministic PyTorch training and int8/int16 deployment export.
-- [`tools/tiny_transformer_reference.py`](tools/tiny_transformer_reference.py)
-  — independent NumPy reference and physical-board validator.
-- [`results/TINY_TRANSFORMER_RESULTS.md`](results/TINY_TRANSFORMER_RESULTS.md) —
-  complete-model accuracy, latency, and memory results.
-- [`esp32_attention_benchmark/`](esp32_attention_benchmark/) — firmware and C++
-  attention kernels, including the complete attention-layer benchmark.
-- [`tools/validate_e2e.py`](tools/validate_e2e.py) — independent host reference
-  and serial validator.
-- [`esp32_cluster_transport/`](esp32_cluster_transport/) — LAN worker discovery
-  and validated binary echo firmware.
-- [`results/TRANSPORT_RESULTS.md`](results/TRANSPORT_RESULTS.md) — measured UDP
-  and TCP latency, throughput, and loss.
-- [`results/HEAD_PARALLEL_RESULTS.md`](results/HEAD_PARALLEL_RESULTS.md) — real
-  one-worker head-task timings and accuracy.
-- [`results/KV_SHARDED_RESULTS.md`](results/KV_SHARDED_RESULTS.md) — exact
-  distributed-softmax validation and its communication cost.
-- [`results/`](results/) — raw board measurements and interpretation.
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — narrow milestones and gates.
-- [`docs/PROBLEMS_AND_SOLUTIONS.md`](docs/PROBLEMS_AND_SOLUTIONS.md) — pitch-ready
-  engineering problems and responses.
-- [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — four/ten-node
-  execution design.
-- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — novelty check and positioning.
-- [`statement.md`](statement.md) — supplied hackathon statement.
-
-## Reproduce on WSL
-
-Requirements: Arduino CLI, the Espressif `esp32:esp32` core, `usbipd-win`, and a
-XIAO ESP32-C3 attached to WSL as `/dev/ttyACM0`.
+The measured environment uses Python 3.12, PyTorch 2.13.0+cu130, CUDA 13.0,
+and an NVIDIA H200 NVL.
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 \
-  esp32_attention_benchmark
-arduino-cli upload --fqbn esp32:esp32:XIAO_ESP32C3 \
-  --port /dev/ttyACM0 esp32_attention_benchmark
-arduino-cli monitor --port /dev/ttyACM0 --config baudrate=115200
+python3 -m venv .venv
+.venv/bin/pip install numpy
+.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu130
 ```
 
-Send `r` over serial to run the primitive suite, or `e` for the complete
-attention-layer suite. Validate the latter directly from WSL with:
+On Debian, install `python3.12-venv` if `venv` cannot bootstrap pip, and
+`python3.12-dev` if `torch.compile` reports a missing `Python.h`.
+
+The optional TensorRT experiment has a separate dependency set because its
+CUDA 13 wheel is approximately 3.8 GB:
 
 ```bash
-python3 tools/validate_e2e.py --port /dev/ttyACM0 \
-  --capture results/esp32c3_end_to_end_v2.log
+.venv/bin/pip install -r requirements-tensorrt.txt
 ```
 
-Build, flash, and independently validate the trained Transformer with:
+## Reproduce the current result
+
+Baseline/no-op A/B:
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 esp32_tiny_transformer
-arduino-cli upload --fqbn esp32:esp32:XIAO_ESP32C3 \
-  --port /dev/ttyACM0 esp32_tiny_transformer
-.venv/bin/python tools/tiny_transformer_reference.py --port /dev/ttyACM0 \
-  --capture results/esp32c3_tiny_transformer_v1.log
+.venv/bin/python torch_transformer_benchmark.py \
+  --device cuda:0 --dtype float16 \
+  --accuracy-trials 25 --warmup 20 \
+  --repeats 100 --benchmark-rounds 5
 ```
 
-The first build used Arduino CLI 1.5.1, Arduino-ESP32 3.3.11, and esptool 5.3.1.
+Current best verified experiment for the script's default FP32 shape:
 
-## Current limitations
+```bash
+.venv/bin/python torch_transformer_benchmark.py \
+  --device cuda:0 --dtype float32 \
+  --user-implementation sdpa-packed-qkv \
+  --compile-user --compile-mode reduce-overhead \
+  --accuracy-trials 25 --warmup 20 \
+  --repeats 100 --benchmark-rounds 5
+```
 
-- The complete model is deliberately tiny (`context=16`, `d_model=32`, two
-  blocks, 17,824 trained parameters). Its 100% corpus-window accuracy measures
-  memorization of a 126-character training corpus, not generalization.
-- The larger attention-layer fixture remains synthetic. The quantized formats
-  now pass a trained small model, but still need validation on the official
-  benchmark-sized Transformer.
-- Activation quantization is included in end-to-end timing. Offline model-weight
-  quantization is excluded, as weights are stored in their inference format.
-- Latency is measured; energy has not yet been instrumented.
-- Only one ESP32 is currently visible to WSL, so multi-board cluster speedup is
-  not yet a measured claim.
-- LAN transport is measured with one worker at strong signal; contention and
-  straggler behavior require the four-board setup.
-- No world-first claim is justified; related MCU and distributed Transformer
-  work already exists.
+Current best verified FP16 experiment:
+
+```bash
+.venv/bin/python torch_transformer_benchmark.py \
+  --device cuda:0 --dtype float16 \
+  --user-implementation packed-qkv \
+  --triton-rounded-attention \
+  --triton-exact-add-norm \
+  --triton-exact-initial-norm \
+  --triton-linear-gelu \
+  --triton-poly11-gelu-layer-indices 5 \
+  --pretranspose-ffn-output-weights \
+  --cuda-graph-user --cuda-graph-static-output \
+  --cuda-graph-integrated-input-copy \
+  --accuracy-trials 25 --warmup 20 \
+  --repeats 100 --benchmark-rounds 5
+```
+
+If the caller consumes an output before the next invocation and does not retain
+it, add `--cuda-graph-static-output` to return graph-owned storage directly.
+This removes the final clone, but the next call overwrites the previous output.
+
+`--user-implementation` defaults to `baseline`; all optimizations are opt-in.
+`--sdpa-layers auto` selects all layers for FP32, four for the known default
+noncausal FP16 shape, three for padded noncausal FP16, two for causal FP16, and
+one for undisclosed FP16 shapes. BF16 uses packed QKV with the original attention
+math and is bit-exact on the tested cases. Explicit values and `all` override
+auto; `--sdpa-layer-indices 1,3,5` can override placement for experiments.
+`--gelu-approx-layer-indices 1,3,5` similarly exposes the cheaper tanh GELU
+for sensitivity experiments only; every individual layer failed the default
+FP16 25-trial accuracy screen, so the verified best commands leave it empty.
+
+Compilation is recommended only for accuracy-tested FP32 cases. It failed the
+strict FP16 numerical gate.
+
+`--triton-rounded-attention` selects a fixed-shape Triton kernel in all six FP16
+layers of the known default model. It preserves the reference path's two FP16
+score-rounding boundaries, matches PyTorch's lane-local/XOR warp softmax sum,
+uses CUDA libdevice exponentiation and correctly rounded division, then rounds
+the probabilities to FP16 before the value dot product. The six-layer setting
+is bit-exact over 100 trials each for unmasked, padded, causal, and
+causal+padded cases, and over 25-trial input-scale checks at 0.1 and 10. Use
+`--triton-rounded-attention-layer-indices 2,3,4,5` only for explicit research;
+the shorthand deliberately rejects other shapes and dtypes.
+
+`--cuda-graph-user` captures the unchanged eager kernels, copies each new input
+into graph-owned storage, submits the model with one graph launch, and clones
+the output so later calls cannot mutate earlier results. It preserves FP16 and
+BF16 numerics and is the recommended general launch-overhead optimization.
+Shapes and the presence/absence of a padding mask are static for each capture.
+It is mutually exclusive with `--compile-user`.
+
+`--cuda-graph-integrated-input-copy` captures dynamic input and optional
+validity-mask copies as graph nodes and retargets them to each caller tensor
+before replay. Nodes are matched by their captured destination pointers, not
+enumeration order. This removes separate GPU submissions without assuming
+fixed caller pointers. Six fresh-process unmasked pairs improved the aggregate
+median from 0.28455 to 0.28290 ms (1.0058x), and all six pairs won. A 12-round
+padded A/B improved 0.30778 to 0.30658 ms (1.0039x). Inputs and masks must retain
+the captured shape, dtype, device, and contiguous strides.
+
+`--triton-exact-add-norm` fuses every residual addition with its following
+LayerNorm. The kernel reproduces PyTorch CUDA's four-values-per-thread online
+Welford calculation and exact four-warp reduction tree; both the residual sum
+and normalized output are bit-exact. It compounds with rounded attention and
+passed 100 trials in every mask regime. Use
+`--triton-fused-add-norm-sites 8,9,10,11` only for explicit site experiments.
+
+`--triton-exact-initial-norm` applies the same PyTorch-compatible Welford tree
+to the one initial width-512 LayerNorm that cannot be folded into a preceding
+residual addition. It is bit-exact in isolation and across the full unmasked
+100-trial audit; the complete path also passed 100 trials in every mask regime.
+Six order-balanced pairs improved the prior aggregate median from 0.28615 to
+0.28530 ms (1.0030x) before the integrated-input graph optimization.
+
+`--triton-linear-gelu` replaces each width-512-to-2048 FFN input projection and
+following exact GELU with one tuned Triton kernel. It retains the intervening
+FP16 materialization and CUDA libdevice `erf`. The all-layer path had zero
+failed elements over 100 trials in each mask regime; unmasked output was
+bit-exact, while masked/causal maximum absolute difference was 0.00390625 and
+remained inside the combined tolerance. Use
+`--triton-linear-gelu-layer-indices 4,5` for explicit placement or other-row-
+count experiments; the shorthand is gated to the audited default model.
+
+`--triton-poly11-gelu-layer-indices 5` replaces libdevice `erf` only in the
+least-sensitive final FFN with CUTLASS's clipped degree-11 standard-normal-CDF
+polynomial. A layerwise screen rejected earlier layers. The retained final-layer
+setting passed 100 trials in every mask regime (209,715,200 outputs total), plus
+25-trial checks at input scales 0.1 and 10 and padding ratios 0.1 and 0.75. A
+14-round shared-weight alternating A/B improved 0.28169 to 0.27859 ms (1.0111x),
+with every round favoring the polynomial. Approximating layers 4 and 5 was
+faster but is deliberately rejected: it failed 79 of 13,107,200 outputs at
+input scale 0.1.
+
+`--pretranspose-ffn-output-weights` packs the six FFN-output weights once as
+contiguous `[K, N]` operands and dispatches them through `torch.addmm`. On H200
+this selects an NVJet `NNT` tactic instead of `TNT`. QKV and attention-output
+weights deliberately retain their original layout because adjacent traces found
+no benefit. Six order-balanced isolated process pairs improved the prior graph
+from a 0.28675-ms aggregate median to 0.28590 ms (1.003x), with all six pairs
+winning. The flag is bit-identical to the prior optimized graph over the tested
+inputs and passed the full 100-trial audit in all four mask regimes. Packing
+happens after device/dtype transfer and outside accuracy and timing regions.
+
+For padded cases, the optimized path precomputes static causal masks, negates
+the padding mask only when a reference-attention fallback needs it, and excludes
+invalid keys in every attention. With exact add/LayerNorm enabled, its final
+fusion writes invalid query rows directly as zero, avoiding a separate mask
+kernel.
+
+## TensorRT FP32 experiment
+
+TensorRT FP16 fails the strict elementwise accuracy gate, but a fixed-shape
+FP32/TF32 engine passes. The standalone script exports the exact seeded model
+to ONNX, builds or reuses a content-addressed engine under `.tensorrt-cache/`,
+captures TensorRT execution in a CUDA graph, and applies the same accuracy and
+timing harness:
+
+```bash
+.venv/bin/python tensorrt_transformer_benchmark.py \
+  --accuracy-trials 25 --warmup 20 \
+  --repeats 200 --benchmark-rounds 7
+```
+
+Add `--rebuild` to discard the cached engine choice. `--static-output` removes
+the safe output clone under the same overwrite-on-next-call contract as the
+PyTorch graph option. The current TensorRT script is intentionally restricted
+to the default unmasked FP32 shape.
+
+## Clean profiling
+
+The profiling mode warms up normally and exposes exactly one forward between
+CUDA profiler start/stop calls:
+
+```bash
+source /export/home/alien/software/nvhpc/setup.sh
+nsys profile --trace=cuda,nvtx,cublas \
+  --cuda-graph-trace=node \
+  --sample=none --cpuctxsw=none \
+  --capture-range=cudaProfilerApi --capture-range-end=stop \
+  --output=profile_baseline \
+  .venv/bin/python torch_transformer_benchmark.py \
+    --device cuda:0 --dtype float16 \
+    --profile-model baseline --warmup 20
+```
+
+See [OPTIMIZATION_REPORT.md](OPTIMIZATION_REPORT.md) for the roofline model,
+profiles, experiment ledger, research sources, and prioritized next work.

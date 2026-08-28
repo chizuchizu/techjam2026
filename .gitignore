@@ -3,3 +3,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+*.nsys-rep
+*.ncu-rep
+*.sqlite
+*.swp
+.tensorrt-cache/
