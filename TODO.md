@@ -21,12 +21,14 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    accuracy dispatch (four layers currently pass the default FP16 case).
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
    official static shape and mask regimes.
-5. Prototype fused residual + LayerNorm + linear, then fused exact-GELU FFN.
-6. Add whole-block valid-token packing for padded cases.
-7. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
+5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
+   verify it across the official padding-mask cases.
+6. Prototype fused residual + LayerNorm + linear, then fused exact-GELU FFN.
+7. Add whole-block valid-token packing for padded cases.
+8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; treat Transformer Engine and FP8 as separate accuracy-gated
    experiments.
-8. Later, investigate novel sensitivity-guided approximations: identify the
+9. Later, investigate novel sensitivity-guided approximations: identify the
    measured bottleneck, estimate layerwise error amplification, then apply
    cheaper math/precision only where the final elementwise tolerance has margin.
 

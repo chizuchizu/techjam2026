@@ -192,12 +192,20 @@ class UserOptimizedTransformer(BaselineTransformer):
         self.implementation = implementation
         self.sdpa_layers = config.num_layers if sdpa_layers < 0 else sdpa_layers
         self._packed_qkv: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        self.register_buffer("_causal_mask", None, persistent=False)
         if not 0 <= self.sdpa_layers <= config.num_layers:
             raise ValueError("sdpa_layers must be between 0 and num_layers, or -1")
 
     def prepare_optimized_weights(self) -> None:
         """Pack Q/K/V parameters once, outside the measured inference path."""
         self._packed_qkv = []
+        if self.config.causal:
+            parameter = next(self.parameters())
+            self._causal_mask = torch.ones(
+                (self.config.seq_len, self.config.seq_len),
+                device=parameter.device,
+                dtype=torch.bool,
+            ).triu(diagonal=1)
         if self.implementation not in ("packed-qkv", "sdpa-packed-qkv"):
             return
         for layer in self.layers:
@@ -275,8 +283,8 @@ class UserOptimizedTransformer(BaselineTransformer):
     def _baseline_attention_packed_qkv(
         attention: BaselineSelfAttention,
         x: torch.Tensor,
-        valid_token_mask: Optional[torch.Tensor],
-        causal: bool,
+        invalid_token_mask: Optional[torch.Tensor],
+        causal_mask: Optional[torch.Tensor],
         packed_qkv: Tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
         """Keep reference attention math but replace three projections with one."""
@@ -293,13 +301,10 @@ class UserOptimizedTransformer(BaselineTransformer):
             ).unbind(dim=2)
         )
         scores = torch.matmul(q, k.transpose(-2, -1)) * attention.scale
-        if causal:
-            causal_mask = torch.ones(
-                (seq_len, seq_len), device=x.device, dtype=torch.bool
-            ).triu(diagonal=1)
+        if causal_mask is not None:
             scores = scores.masked_fill(causal_mask, float("-inf"))
-        if valid_token_mask is not None:
-            invalid_keys = ~valid_token_mask[:, None, None, :]
+        if invalid_token_mask is not None:
+            invalid_keys = invalid_token_mask[:, None, None, :]
             scores = scores.masked_fill(invalid_keys, float("-inf"))
         probs = torch.softmax(scores.float(), dim=-1).to(dtype=x.dtype)
         context = torch.matmul(probs, v)
@@ -309,8 +314,6 @@ class UserOptimizedTransformer(BaselineTransformer):
             .view(batch, seq_len, attention.d_model)
         )
         output = attention.out_proj(context)
-        if valid_token_mask is not None:
-            output = output.masked_fill(~valid_token_mask[..., None], 0)
         return output
 
     def forward(
@@ -325,6 +328,9 @@ class UserOptimizedTransformer(BaselineTransformer):
         if x.dtype == torch.bfloat16 and self.implementation == "sdpa":
             return super().forward(x, valid_token_mask)
 
+        invalid_token_mask = (
+            None if valid_token_mask is None else ~valid_token_mask
+        )
         sdpa_layers = (
             0
             if self.implementation == "packed-qkv" or x.dtype == torch.bfloat16
@@ -339,16 +345,14 @@ class UserOptimizedTransformer(BaselineTransformer):
                 attention_output = self._baseline_attention_packed_qkv(
                     layer.attention,
                     layer.norm1(x),
-                    valid_token_mask,
-                    self.config.causal,
+                    invalid_token_mask,
+                    self._causal_mask,
                     self._packed_qkv[layer_index],
                 )
                 x = x + attention_output
                 x = x + layer.ffn_out(
                     F.gelu(layer.ffn_in(layer.norm2(x)), approximate="none")
                 )
-                if valid_token_mask is not None:
-                    x = x.masked_fill(~valid_token_mask[..., None], 0)
                 continue
 
             attention_output = self._sdpa_attention(
@@ -365,14 +369,11 @@ class UserOptimizedTransformer(BaselineTransformer):
                 F.gelu(layer.ffn_in(layer.norm2(x)), approximate="none")
             )
 
-            # This also makes masking inside _sdpa_attention unnecessary for
-            # invalid query rows; FFN operations never mix tokens.
-            if valid_token_mask is not None:
-                x = x.masked_fill(~valid_token_mask[..., None], 0)
-
         x = self.final_norm(x)
-        if valid_token_mask is not None:
-            x = x.masked_fill(~valid_token_mask[..., None], 0)
+        # Invalid rows cannot affect valid rows: FFNs/LayerNorm are token-local
+        # and every attention masks invalid keys. Zero them once at the end.
+        if invalid_token_mask is not None:
+            x = x.masked_fill(invalid_token_mask[..., None], 0)
         return x
 
 

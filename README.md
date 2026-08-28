@@ -68,6 +68,10 @@ BF16 numerics and is the recommended general launch-overhead optimization.
 Shapes and the presence/absence of a padding mask are static for each capture.
 It is mutually exclusive with `--compile-user`.
 
+For padded cases, the optimized path precomputes static causal masks, negates
+the padding mask once, excludes invalid keys in every attention, and zeroes
+invalid query rows only once at final output.
+
 ## Clean profiling
 
 The profiling mode warms up normally and exposes exactly one forward between
