@@ -25,4 +25,4 @@
 - Matched two-C3 scaling at 99.17–99.99% efficiency with all outputs passing.
 - Round-robin, calibrated-all, and latency-minimizing assignment policies.
 
-The inactive NVIDIA H200 backlog is preserved in [`h200/TODO.md`](h200/TODO.md).
+The retired NVIDIA H200 backlog lives on in git history (removed with the 2026 competition split).

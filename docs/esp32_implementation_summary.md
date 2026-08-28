@@ -101,7 +101,7 @@ for full citations. Decisions:
 | `docs/esp32_implementation_summary.md` | This file |
 | `docs/esp32_fastest_kernels_research.md` | Kernel techniques research brief (C) |
 | `docs/esp32_fp32_emulation_research.md` | Paper-grounded FP32-emulation recommendation |
-| `h200/model_architecture_research.md` | Original H200 model architecture used by the exporter |
+| `torch_transformer_benchmark.py` (root) | Official benchmark architecture and seed-1234 init used by the exporter |
 | `.firecrawl/` | Raw research sources (scrapes, search JSON) |
 | `esp32-baseline/` | **Not scaffolded yet** (code) — next step |
 
@@ -113,8 +113,8 @@ on-device benchmark harness (TODO) → multi-board scaling / write-up (v2).
 
 **Done:** hardware verification, feasibility math, scope, all kernel/emulation research, acceptance criteria.
 **Next:** scaffold `esp32-baseline/`, port kernels, validate vs torch reference, wire timing.
-See `TODO.md` for the current ESP32 priorities. The inactive GPU backlog is in
-`h200/TODO.md`.
+See `TODO.md` for the current ESP32 priorities. The retired GPU backlog lives
+on in git history.
 
 ## 8. Open risks
 - Accuracy gate vs torch reference (softmax/LN/GELU ordering, `__expf` vs torch math) — mitigate

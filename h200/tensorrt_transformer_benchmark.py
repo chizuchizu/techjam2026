@@ -11,6 +11,9 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # official benchmark at repo root
+
 from torch_transformer_benchmark import (
     BaselineTransformer,
     TransformerConfig,

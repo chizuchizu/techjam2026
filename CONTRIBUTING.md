@@ -51,8 +51,8 @@ setup, calibration, communication, and warm-up are included in timing.
 
 - Do not commit `secrets.h`, credentials, MAC addresses, private IP addresses,
   build output, virtual environments, or serial-port-specific configuration.
-- Avoid mixing H200 work back into the ESP32 root. Historical GPU files belong
-  in [`h200/`](h200/).
+- Do not copy old H200 benchmark work back into the repo root. The only
+  benchmark at the root is the official `torch_transformer_benchmark.py`.
 - Do not silently rewrite another teammate's result. Add a new versioned raw
   capture and explain why the conclusion changed.
 - Prefer portable C/C++ for shared kernels and standard-library Python for
