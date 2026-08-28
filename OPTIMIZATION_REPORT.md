@@ -42,6 +42,7 @@ is the primary metric.
 | Previous row + integrated graph input-copy node | exact, 0/52,428,800 unmasked | 0.28455 ms paired prior graph | **0.28290 ms** | **1.006x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
 | Padded FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 3.325 ms | **0.3040 ms** | **10.939x** | Current padded best |
+| Padded FP16, integrated input+mask graph nodes | exact versus prior path, 0/5,242,880 | 0.30778 ms paired prior graph | **0.30658 ms** | **1.004x** | Keep |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
 | Causal FP16, previous path + fused linear/exact-GELU | pass, 0/52,428,800 | 2.968 ms | **0.2981 ms** | **9.957x** | Current causal best |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
@@ -265,9 +266,16 @@ moving the aggregate median from 0.28455 to **0.28290 ms** (**1.0058x
 incremental**). A 100-trial audit was bit-exact over 52,428,800 outputs. The
 clean trace reports 261.859 microseconds of kernels and a 3.008-microsecond
 input copy; the remaining end-to-end gap is about 18 microseconds of graph
-scheduling and measurement overhead. The implementation is opt-in and
-unmasked-only until multiple memcpy nodes can be identified and retargeted
-robustly for dynamic padding masks.
+scheduling and measurement overhead.
+
+The generalized capture inspects each memcpy node's CUDA parameters and matches
+it by captured destination pointer, allowing the validity-mask copy to be
+retargeted without relying on node enumeration order. A shared-weight,
+12-round padded A/B won every round and improved 0.30778 to 0.30658 ms
+(**1.0039x incremental**). Both padded and causal+padded modes then passed 100
+trials (104,857,600 outputs total and zero tolerance failures); their maximum
+absolute difference from the baseline remained 0.00390625. The opt-in path now
+supports both masked and unmasked contiguous inputs.
 
 The corresponding padded graph also has **49 nodes** and 281.413 microseconds
 of summed kernel time. Its extra attention cost comes from padding predicates,
@@ -494,8 +502,8 @@ all twelve model sites are bit-exact over 100 trials in all four mask regimes.
 2. With counter permissions enabled, capture one representative D×D GEMM, D×F
    GEMM, LayerNorm, exact GELU, mask kernel, and fused SDPA kernel using `ncu`'s
    roofline set.
-3. Extend the integrated input-copy graph to padded cases by robustly matching
-   and retargeting both input and validity-mask memcpy nodes.
+3. Verify integrated argument-copy node matching across every official static
+   shape once the missing matrix is recovered.
 4. Evaluate variable-length whole-block packing when padded official cases exist.
 
 ## Primary sources

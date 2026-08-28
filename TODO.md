@@ -23,9 +23,10 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    FP16 shape: all six layers are bit-exact in the stronger 100-trial audit for
    unmasked, padded, causal, and causal+padded modes.
 4. Extend raw CUDA graph replay (now verified for FP16/BF16/FP32) across the
-   official static shape and mask regimes. The unmasked FP16 best path now
-   captures its dynamic input copy inside the graph and retargets the source
-   pointer on every call; extend that exact optimization to masked inputs.
+   official static shape and mask regimes. The FP16 best path now captures its
+   dynamic input and optional validity-mask copies inside the graph and
+   retargets their source pointers on every call; verify destination matching
+   and performance across the missing official shapes.
 5. Keep the implemented static-mask hoisting and final add/LayerNorm invalid-row
    zeroing; the best padded path no longer launches mask-negation or final-mask
    kernels. Verify it across the official padding-mask cases.

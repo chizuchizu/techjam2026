@@ -761,12 +761,50 @@ class CudaGraphedTransformer(nn.Module):
         return output.clone() if self.clone_output else output
 
 
+class _CudaPos(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_size_t),
+        ("y", ctypes.c_size_t),
+        ("z", ctypes.c_size_t),
+    ]
+
+
+class _CudaPitchedPtr(ctypes.Structure):
+    _fields_ = [
+        ("ptr", ctypes.c_void_p),
+        ("pitch", ctypes.c_size_t),
+        ("xsize", ctypes.c_size_t),
+        ("ysize", ctypes.c_size_t),
+    ]
+
+
+class _CudaExtent(ctypes.Structure):
+    _fields_ = [
+        ("width", ctypes.c_size_t),
+        ("height", ctypes.c_size_t),
+        ("depth", ctypes.c_size_t),
+    ]
+
+
+class _CudaMemcpy3DParms(ctypes.Structure):
+    _fields_ = [
+        ("src_array", ctypes.c_void_p),
+        ("src_pos", _CudaPos),
+        ("src_ptr", _CudaPitchedPtr),
+        ("dst_array", ctypes.c_void_p),
+        ("dst_pos", _CudaPos),
+        ("dst_ptr", _CudaPitchedPtr),
+        ("extent", _CudaExtent),
+        ("kind", ctypes.c_int),
+    ]
+
+
 class IntegratedInputCudaGraphedTransformer(nn.Module):
     """Capture input copy and inference in one retargetable CUDA graph.
 
-    ``make_graphed_callables`` submits its static-input copy separately from
-    graph replay. This inference-only wrapper captures that copy as the first
-    graph node, then updates the node's source pointer for each caller tensor.
+    ``make_graphed_callables`` submits its static-argument copies separately
+    from graph replay. This inference-only wrapper captures those copies, then
+    updates their source pointers for each caller tensor.
     """
 
     _CUDA_MEMCPY_NODE_TYPE = 1
@@ -776,15 +814,23 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
         self,
         model: nn.Module,
         sample_x: torch.Tensor,
+        sample_mask: Optional[torch.Tensor],
         clone_output: bool,
         warmup_iterations: int,
     ) -> None:
         super().__init__()
         if not sample_x.is_cuda or not sample_x.is_contiguous():
             raise ValueError("integrated graph input must be contiguous CUDA storage")
+        if sample_mask is not None and (
+            not sample_mask.is_cuda
+            or not sample_mask.is_contiguous()
+            or sample_mask.device != sample_x.device
+        ):
+            raise ValueError("integrated graph mask must be contiguous CUDA storage")
         model.requires_grad_(False)
         self.model = model
         self.clone_output = clone_output
+        self.expects_mask = sample_mask is not None
         self.input_shape = sample_x.shape
         self.input_stride = sample_x.stride()
         self.input_dtype = sample_x.dtype
@@ -792,18 +838,36 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
         self.input_bytes = sample_x.numel() * sample_x.element_size()
         self.register_buffer("static_input", sample_x.clone())
         self.register_buffer("capture_source", sample_x.clone())
+        self.register_buffer(
+            "static_mask",
+            None if sample_mask is None else sample_mask.clone(),
+        )
+        self.register_buffer(
+            "capture_mask_source",
+            None if sample_mask is None else sample_mask.clone(),
+        )
+        self.mask_shape = None if sample_mask is None else sample_mask.shape
+        self.mask_stride = None if sample_mask is None else sample_mask.stride()
+        self.mask_dtype = None if sample_mask is None else sample_mask.dtype
+        self.mask_bytes = (
+            0
+            if sample_mask is None
+            else sample_mask.numel() * sample_mask.element_size()
+        )
 
         side_stream = torch.cuda.Stream(device=sample_x.device)
         side_stream.wait_stream(torch.cuda.current_stream(sample_x.device))
         with torch.cuda.stream(side_stream), torch.inference_mode():
             for _ in range(max(1, warmup_iterations)):
-                model(self.static_input, None)
+                model(self.static_input, self.static_mask)
         torch.cuda.current_stream(sample_x.device).wait_stream(side_stream)
 
         self.graph = torch.cuda.CUDAGraph(keep_graph=True)
         with torch.inference_mode(), torch.cuda.graph(self.graph):
             self.static_input.copy_(self.capture_source)
-            self.static_output = model(self.static_input, None)
+            if self.static_mask is not None:
+                self.static_mask.copy_(self.capture_mask_source)
+            self.static_output = model(self.static_input, self.static_mask)
         self.graph.instantiate()
 
         # Resolve the CUDA runtime already loaded by PyTorch. This avoids
@@ -821,6 +885,11 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
             ctypes.POINTER(ctypes.c_int),
         ]
         self._cudart.cudaGraphNodeGetType.restype = ctypes.c_int
+        self._cudart.cudaGraphMemcpyNodeGetParams.argtypes = [
+            pointer,
+            ctypes.POINTER(_CudaMemcpy3DParms),
+        ]
+        self._cudart.cudaGraphMemcpyNodeGetParams.restype = ctypes.c_int
         self._cudart.cudaGraphExecMemcpyNodeSetParams1D.argtypes = [
             pointer,
             pointer,
@@ -846,7 +915,7 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
             ),
             "enumerate CUDA graph nodes",
         )
-        memcpy_nodes = []
+        memcpy_nodes_by_destination = {}
         for node in nodes:
             node_type = ctypes.c_int()
             self._check_cuda(
@@ -856,13 +925,33 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
                 "query CUDA graph node type",
             )
             if node_type.value == self._CUDA_MEMCPY_NODE_TYPE:
-                memcpy_nodes.append(node)
-        if len(memcpy_nodes) != 1:
+                parameters = _CudaMemcpy3DParms()
+                self._check_cuda(
+                    self._cudart.cudaGraphMemcpyNodeGetParams(
+                        node, ctypes.byref(parameters)
+                    ),
+                    "query CUDA graph memcpy parameters",
+                )
+                memcpy_nodes_by_destination[parameters.dst_ptr.ptr] = node
+        expected_destinations = {self.static_input.data_ptr()}
+        if self.static_mask is not None:
+            expected_destinations.add(self.static_mask.data_ptr())
+        missing_destinations = (
+            expected_destinations - memcpy_nodes_by_destination.keys()
+        )
+        if missing_destinations:
             raise RuntimeError(
-                "integrated-input graph expected exactly one memcpy node, "
-                f"found {len(memcpy_nodes)}"
+                "could not identify captured CUDA graph argument-copy nodes for "
+                f"destinations {sorted(missing_destinations)}"
             )
-        self._memcpy_node = memcpy_nodes[0]
+        self._input_memcpy_node = memcpy_nodes_by_destination[
+            self.static_input.data_ptr()
+        ]
+        self._mask_memcpy_node = (
+            None
+            if self.static_mask is None
+            else memcpy_nodes_by_destination[self.static_mask.data_ptr()]
+        )
         self._graph_exec = pointer(self.graph.raw_cuda_graph_exec())
 
     @staticmethod
@@ -875,20 +964,22 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
         x: torch.Tensor,
         valid_token_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if valid_token_mask is not None:
-            raise ValueError("integrated-input CUDA graph currently requires no mask")
+        if self.expects_mask != (valid_token_mask is not None):
+            raise ValueError("mask presence differs from integrated CUDA graph capture")
         if (
             x.shape != self.input_shape
             or x.stride() != self.input_stride
             or x.dtype != self.input_dtype
             or x.device != self.input_device
         ):
-            raise ValueError("input metadata differs from integrated CUDA graph capture")
+            raise ValueError(
+                "input metadata differs from integrated CUDA graph capture"
+            )
         pointer = ctypes.c_void_p
         self._check_cuda(
             self._cudart.cudaGraphExecMemcpyNodeSetParams1D(
                 self._graph_exec,
-                self._memcpy_node,
+                self._input_memcpy_node,
                 pointer(self.static_input.data_ptr()),
                 pointer(x.data_ptr()),
                 self.input_bytes,
@@ -896,10 +987,34 @@ class IntegratedInputCudaGraphedTransformer(nn.Module):
             ),
             "retarget CUDA graph input copy",
         )
+        if valid_token_mask is not None:
+            if (
+                valid_token_mask.shape != self.mask_shape
+                or valid_token_mask.stride() != self.mask_stride
+                or valid_token_mask.dtype != self.mask_dtype
+                or valid_token_mask.device != self.input_device
+            ):
+                raise ValueError(
+                    "mask metadata differs from integrated CUDA graph capture"
+                )
+            self._check_cuda(
+                self._cudart.cudaGraphExecMemcpyNodeSetParams1D(
+                    self._graph_exec,
+                    self._mask_memcpy_node,
+                    pointer(self.static_mask.data_ptr()),
+                    pointer(valid_token_mask.data_ptr()),
+                    self.mask_bytes,
+                    self._CUDA_MEMCPY_DEVICE_TO_DEVICE,
+                ),
+                "retarget CUDA graph mask copy",
+            )
         # The raw graph API is invisible to PyTorch's caching allocator. Mark
         # the caller storage as used by this stream so an immediately dropped
         # input cannot be recycled before the captured memcpy consumes it.
-        x.record_stream(torch.cuda.current_stream(self.input_device))
+        replay_stream = torch.cuda.current_stream(self.input_device)
+        x.record_stream(replay_stream)
+        if valid_token_mask is not None:
+            valid_token_mask.record_stream(replay_stream)
         self.graph.replay()
         return self.static_output.clone() if self.clone_output else self.static_output
 
@@ -1504,7 +1619,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cuda-graph-integrated-input-copy",
         action="store_true",
-        help="capture the unmasked dynamic-input copy as a retargetable graph node",
+        help="capture dynamic input/mask copies as retargetable graph nodes",
     )
     parser.add_argument(
         "--compile-mode",
@@ -1559,10 +1674,6 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
     if args.cuda_graph_integrated_input_copy and not args.cuda_graph_user:
         raise ValueError(
             "--cuda-graph-integrated-input-copy requires --cuda-graph-user"
-        )
-    if args.cuda_graph_integrated_input_copy and args.padding_ratio > 0.0:
-        raise ValueError(
-            "integrated CUDA graph input copy is currently verified only without a mask"
         )
     if args.gelu_approx_layer_indices and args.user_implementation not in (
         "packed-qkv",
@@ -1768,6 +1879,7 @@ def main() -> int:
             optimized = IntegratedInputCudaGraphedTransformer(
                 optimized,
                 graph_x,
+                graph_mask,
                 clone_output=not args.cuda_graph_static_output,
                 warmup_iterations=graph_warmup,
             )

@@ -101,13 +101,14 @@ BF16 numerics and is the recommended general launch-overhead optimization.
 Shapes and the presence/absence of a padding mask are static for each capture.
 It is mutually exclusive with `--compile-user`.
 
-`--cuda-graph-integrated-input-copy` captures the unmasked dynamic-input copy
-as the first graph node and retargets that node to each caller tensor before
-replay. This removes a separate GPU submission without assuming a fixed input
-pointer. Six fresh-process, order-balanced pairs improved the aggregate median
-from 0.28455 to 0.28290 ms (1.0058x), and all six pairs won. The current
-implementation is deliberately restricted to unmasked contiguous inputs; the
-normal CUDA-graph wrapper remains the masked fallback.
+`--cuda-graph-integrated-input-copy` captures dynamic input and optional
+validity-mask copies as graph nodes and retargets them to each caller tensor
+before replay. Nodes are matched by their captured destination pointers, not
+enumeration order. This removes separate GPU submissions without assuming
+fixed caller pointers. Six fresh-process unmasked pairs improved the aggregate
+median from 0.28455 to 0.28290 ms (1.0058x), and all six pairs won. A 12-round
+padded A/B improved 0.30778 to 0.30658 ms (1.0039x). Inputs and masks must retain
+the captured shape, dtype, device, and contiguous strides.
 
 `--triton-exact-add-norm` fuses every residual addition with its following
 LayerNorm. The kernel reproduces PyTorch CUDA's four-values-per-thread online
