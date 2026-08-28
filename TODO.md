@@ -21,8 +21,9 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    accuracy dispatch (four layers currently pass the default FP16 case).
 4. Prototype fused residual + LayerNorm + linear, then fused exact-GELU FFN.
 5. Add whole-block valid-token packing for padded cases.
-6. Revisit `torch.compile`, CUDA graphs, Transformer Engine, and FP8 only as
-   separate accuracy-gated experiments.
+6. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
+   shape table; treat Transformer Engine and FP8 as separate accuracy-gated
+   experiments.
 
 you can use nvhpc 26.2 from here
 source /export/home/alien/software/nvhpc/setup.sh

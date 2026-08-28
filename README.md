@@ -2,8 +2,8 @@
 
 This repository A/B tests an explicit PyTorch Transformer reference against
 opt-in optimized implementations on one NVIDIA H200 NVL. The current best
-verified default-shape experiment packs Q/K/V into one projection for four
-trailing layers and dispatches their attention through fused SDPA.
+default FP32/TF32 path packs Q/K/V, uses fused SDPA in all layers, and compiles
+the model into a CUDA graph with fused pointwise/reduction kernels.
 
 ## Setup
 
@@ -30,20 +30,34 @@ Baseline/no-op A/B:
   --repeats 100 --benchmark-rounds 5
 ```
 
-Current best verified experiment for the script's default shape:
+Current best verified experiment for the script's default FP32 shape:
+
+```bash
+.venv/bin/python torch_transformer_benchmark.py \
+  --device cuda:0 --dtype float32 \
+  --user-implementation sdpa-packed-qkv \
+  --compile-user --compile-mode reduce-overhead \
+  --accuracy-trials 25 --warmup 20 \
+  --repeats 100 --benchmark-rounds 5
+```
+
+Current best verified FP16 experiment:
 
 ```bash
 .venv/bin/python torch_transformer_benchmark.py \
   --device cuda:0 --dtype float16 \
-  --user-implementation sdpa-packed-qkv --sdpa-layers 4 \
+  --user-implementation sdpa-packed-qkv \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
 ```
 
 `--user-implementation` defaults to `baseline`; all optimizations are opt-in.
-The conservative SDPA default is one trailing layer. Four layers passed the
-known default noncausal FP16 case, but must not be assumed correct for undisclosed
-competition shapes. BF16 currently falls back to the bit-identical baseline.
+`--sdpa-layers auto` selects all layers for FP32, four for the known default
+noncausal FP16 shape, and one for undisclosed FP16 cases. BF16 currently falls
+back to the bit-identical baseline. Explicit values and `all` override auto.
+
+Compilation is recommended only for accuracy-tested FP32 cases. It failed the
+strict FP16 numerical gate.
 
 ## Clean profiling
 

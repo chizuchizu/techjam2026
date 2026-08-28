@@ -31,6 +31,10 @@ is the primary metric.
 | SDPA, trailing 4 layers | pass, 0/13,107,200 | 2.561 ms | 2.160 ms | 1.186x | Keep |
 | Packed QKV + SDPA, trailing 4, no redundant mask | pass, 0/13,107,200 | 2.425 ms | 1.829 ms | **1.325x** | Current best |
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
+| FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
+| FP32 previous row + `reduce-overhead` compile | pass, 0/13,107,200 | 2.302 ms | 0.549 ms | **4.197x** | Current default-dtype best |
+| FP32 previous row + `max-autotune` | pass, 0/5,242,880 | 1.921 ms | 0.525 ms | 3.659x | Slightly faster candidate, less accuracy headroom |
+| FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
 
 The packed weights are built once after weight copying and device/dtype transfer,
 outside accuracy and timing regions. Original parameter names remain intact.
@@ -41,6 +45,15 @@ not satisfy the fixed 0.002 absolute tolerance, so BF16 dispatches to the exact
 baseline. Current PyTorch accepts `attn_mask` together with `is_causal`; this is
 version-sensitive and contradicts older/documented pseudocode, so it remains an
 explicit test dimension.
+
+Automatic dispatch now uses all layers for FP32, four layers only for the known
+default noncausal FP16 shape, one layer for other FP16 shapes, and the baseline
+for BF16/CPU. Explicit `--sdpa-layers` values override this selection.
+
+Compiled FP32 `reduce-overhead` also passed tested small, default,
+causal+padded, and long-sequence shapes. Observed speedups were respectively
+6.36x, 4.20x, 6.99x, and 1.10x, confirming that CUDA graph/launch fusion is most
+valuable for launch-bound cases and modest for large compute-bound work.
 
 ## Nsight Systems evidence
 
@@ -61,6 +74,16 @@ kernel time. In the final baseline trace the largest groups are projection/FFN
 GEMMs, dtype/layout copies, LayerNorm, GELU, and softmax. This explains why
 attention fusion helps despite attention being a small share of arithmetic: it
 removes many launch- and bandwidth-bound kernels.
+
+For default FP32, the eager baseline trace contained 115 launches and 687.6
+microseconds of summed GPU kernel time. Compiled packed-QKV/SDPA contains 50
+CUDA-graph nodes and 525.3 microseconds of GPU kernel time. The host submits the
+compiled forward with one `cudaGraphLaunch`; the eager baseline makes 115 CUDA
+kernel-launch API calls. Thus only about one quarter of the GPU work disappears,
+while most of the 4.20x latency gain comes from eliminating serial host launch
+gaps and graph-safe buffer reuse. In the compiled trace, GEMMs consume about 60%
+of GPU time, attention 21%, fused GELU 6%, and fused residual/LayerNorm kernels
+about 8%.
 
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
@@ -111,7 +134,7 @@ projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 | P0 | Recover official shapes and dtype/mask matrix | No | Enables reliable dispatch | Low/admin | Prerequisite for every specialization |
 | P0 | Accuracy/backend gate SDPA per case | Partial | 1.05–2x, sequence-dependent | Low–medium | BF16 currently conflicts with tolerance |
 | P1 | Packed QKV projection | **Implemented** | Observed incremental gain; usually 5–15% | Medium | Compounds with SDPA and BSHD layout |
-| P1 | Compile/CUDA graph mode sweep | Partial; FP16 rejected | 0–40%, greatest on small shapes | Low | Compilation changed FP16 numerics; revisit per dtype/shape |
+| P1 | Compile/CUDA graph mode sweep | **Implemented for FP32; FP16 rejected** | Observed 1.10–6.99x | Low | Static shapes; accuracy gate every case |
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P2 | Fused residual + LayerNorm + linear | No | 5–15% | Medium | Preserve FP32 normalization; compounds with QKV/FFN |
 | P2 | Fused LayerNorm + FFN and exact-GELU epilogue | No | 5–20% | Medium–high | FFN is 64% of FLOPs; tanh GELU may fail tolerance |
