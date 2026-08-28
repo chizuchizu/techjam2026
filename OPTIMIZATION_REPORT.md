@@ -31,6 +31,7 @@ is the primary metric.
 | SDPA, trailing 4 layers | pass, 0/13,107,200 | 2.561 ms | 2.160 ms | 1.186x | Keep |
 | Packed QKV + SDPA, trailing 4, no redundant mask | pass, 0/13,107,200 | 2.425 ms | 1.829 ms | **1.325x** | Best eager FP16 |
 | Compile packed-QKV/SDPA (`reduce-overhead`) | fail, 46/2,621,440 | — | — | — | Reject for FP16 |
+| Compile with eager precision casts + rounded division + CUDA libdevice | fail, 45/13,107,200 | — | — | — | Reject: same FP16 error pattern |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Current FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Current padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
@@ -65,6 +66,17 @@ Compiled FP32 `reduce-overhead` also passed tested small, default,
 causal+padded, and long-sequence shapes. Observed speedups were respectively
 6.36x, 4.20x, 6.99x, and 1.10x, confirming that CUDA graph/launch fusion is most
 valuable for launch-bound cases and modest for large compute-bound work.
+
+PyTorch 2.13's FP16 eager-numerics controls did not rescue whole-model
+compilation. `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1`, rounded division, and
+the CUDA 13.2 `libdevice.10.bc` produced the same 45 failures over 13,107,200
+outputs. Compiling the untouched baseline reproduced the same errors, proving
+that packed QKV and SDPA were not responsible. Module-boundary isolation found
+that compiling only the final LayerNorm passed five trials, while compiling all
+LayerNorms or attention modules failed; individual compiled FFN islands passed
+short screens but their accumulated six-layer result failed. Since raw CUDA
+graph replay already removes island launch overhead without changing eager
+arithmetic, the partial-compile route is not retained.
 
 Raw CUDA graph capture preserves the selected eager kernels and their numerical
 results. It passed 25 default FP16 trials, 25 causal+padded FP16 trials, 25
