@@ -33,6 +33,9 @@ static void wifi_espnow_init(uint8_t *mac_out) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     esp_wifi_set_ps(WIFI_PS_NONE);
+#ifdef LINK_RATE_54M
+    esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_54M);
+#endif
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESP_NOW_INIT_FAIL");
         for (;;) delay(10);
@@ -58,6 +61,17 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     g_rx_pkts++;
     g_rx_bytes += (uint32_t)len;
     if (len < 8) return;                       // need seq for the ACK
+    uint32_t seq;
+    memcpy(&seq, data, 4);
+    if (seq == 0xFFFFFFFFu) {                  // end-of-benchmark marker
+        Serial.printf("SERVER|rx|pkts=%lu|bytes=%lu\n",
+                      (unsigned long)g_rx_pkts, (unsigned long)g_rx_bytes);
+        return;
+    }
+    if (seq == 0xFFFFFFFEu) {                  // run-start marker: reset counters
+        g_rx_pkts = 0; g_rx_bytes = 0;
+        return;
+    }
     uint8_t ack[8];
     memcpy(ack, data, 4);                      // echo seq (u32 LE)
     uint32_t us = (uint32_t)esp_timer_get_time();
@@ -122,6 +136,13 @@ void setup() {
                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     delay(3000);                       // let both sides settle on channel 1
 
+    uint8_t marker0[240];
+    memset(marker0, 0xAB, sizeof(marker0));
+    uint32_t rseq = 0xFFFFFFFEu;
+    memcpy(marker0, &rseq, 4);
+    for (int i = 0; i < 4; i++) { esp_now_send(BROADCAST, marker0, sizeof(marker0)); delay(20); }
+    delay(100);
+
     uint8_t payload[240];
     memset(payload, 0xAB, sizeof(payload));
     for (int k = 0; k < 3; k++) {
@@ -134,8 +155,16 @@ void setup() {
             uint32_t us = (uint32_t)esp_timer_get_time();
             g_sent_us[seq] = us;
             memcpy(payload + 4, &us, 4);
-            esp_err_t e = esp_now_send(BROADCAST, payload, P);
-            if (e != ESP_OK) g_send_err++;
+            // backpressure: retry until the MAC queue accepts (sustainable
+            // rate); a rejected send means the queue is full, so the wait is
+            // real delivered-frame pacing, not an artificial app delay.
+            uint32_t wait_loops = 0;
+            while (esp_now_send(BROADCAST, payload, P) != ESP_OK) {
+                wait_loops++;
+                delayMicroseconds(200);
+                if (wait_loops > 50000) break;   // ~10 s hard cap
+            }
+            g_send_err += (wait_loops > 50000) ? 1 : 0;
         }
         int64_t elapsed = esp_timer_get_time() - t0;
         delay(900);                      // drain the ACK window
@@ -156,6 +185,17 @@ void setup() {
         Serial.flush();
     }
     Serial.println("CLIENT|DONE");
+    // end-of-benchmark marker so the server reports ground-truth rx
+    delay(200);
+    uint8_t marker[240];
+    memset(marker, 0xAB, sizeof(marker));
+    uint32_t fseq = 0xFFFFFFFFu;
+    memcpy(marker, &fseq, 4);
+    for (int i = 0; i < 8; i++) {
+        esp_now_send(BROADCAST, marker, sizeof(marker));
+        delay(50);
+    }
+    Serial.println("CLIENT|MARKER_SENT");
 }
 
 void loop() { delay(10000); }
