@@ -56,6 +56,7 @@ Current best verified FP16 experiment:
   --device cuda:0 --dtype float16 \
   --user-implementation packed-qkv \
   --triton-rounded-attention \
+  --triton-exact-add-norm \
   --cuda-graph-user \
   --accuracy-trials 25 --warmup 20 \
   --repeats 100 --benchmark-rounds 5
@@ -95,9 +96,12 @@ BF16 numerics and is the recommended general launch-overhead optimization.
 Shapes and the presence/absence of a padding mask are static for each capture.
 It is mutually exclusive with `--compile-user`.
 
-`--triton-fused-add-norm-sites` exposes a numbered, two-sites-per-layer Triton
-residual-add/LayerNorm fusion experiment. It is not enabled by default: every
-tested site eventually failed the stronger 100-trial FP16 accuracy audit.
+`--triton-exact-add-norm` fuses every residual addition with its following
+LayerNorm. The kernel reproduces PyTorch CUDA's four-values-per-thread online
+Welford calculation and exact four-warp reduction tree; both the residual sum
+and normalized output are bit-exact. It compounds with rounded attention and
+passed 100 trials in every mask regime. Use
+`--triton-fused-add-norm-sites 8,9,10,11` only for explicit site experiments.
 
 For padded cases, the optimized path precomputes static causal masks, negates
 the padding mask once, excludes invalid keys in every attention, and zeroes

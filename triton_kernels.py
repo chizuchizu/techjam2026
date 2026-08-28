@@ -5,7 +5,6 @@ from __future__ import annotations
 import torch
 import triton
 import triton.language as tl
-from torch._inductor.runtime import triton_helpers
 from triton.language.extra import libdevice
 
 
@@ -46,6 +45,92 @@ def _pytorch_softmax_128(scores, block_m: tl.constexpr):
 
 
 @triton.jit
+def _welford_online(value, mean, m2, count: tl.constexpr):
+    """Match cuWelfordOnlineSum's separately rounded reciprocal multiply."""
+    delta = value - mean
+    new_mean = mean + delta * (1.0 / count)
+    return new_mean, m2 + delta * (value - new_mean)
+
+
+@triton.jit
+def _welford_combine(
+    left_mean,
+    left_m2,
+    left_count,
+    right_mean,
+    right_m2,
+    right_count,
+):
+    """Match the CUDA LayerNorm combine order for two Welford accumulators."""
+    count = left_count + right_count
+    reciprocal = 1.0 / count
+    right_fraction = right_count * reciprocal
+    left_fraction = left_count * reciprocal
+    delta = left_mean - right_mean
+    mean = right_fraction * right_mean + left_fraction * left_mean
+    m2 = (
+        left_m2
+        + right_m2
+        + delta * delta * right_count * left_fraction
+    )
+    return mean, m2, count
+
+
+@triton.jit
+def _welford_pair_halves(
+    mean,
+    m2,
+    count,
+    groups: tl.constexpr,
+    lanes: tl.constexpr,
+):
+    """Apply one CUDA shuffle-down reduction stage to adjacent lane halves."""
+    mean = mean.reshape(groups, 2, lanes).permute(0, 2, 1)
+    m2 = m2.reshape(groups, 2, lanes).permute(0, 2, 1)
+    count = count.reshape(groups, 2, lanes).permute(0, 2, 1)
+    left_mean, right_mean = mean.split()
+    left_m2, right_m2 = m2.split()
+    left_count, right_count = count.split()
+    return _welford_combine(
+        left_mean,
+        left_m2,
+        left_count,
+        right_mean,
+        right_m2,
+        right_count,
+    )
+
+
+@triton.jit
+def _pytorch_layer_norm_stats_512(values):
+    """Reproduce vectorized_layer_norm_kernel's four-warp Welford tree."""
+    vector_values = values.reshape(128, 4)
+    even_values, odd_values = vector_values.reshape(128, 2, 2).split()
+    value_0, value_2 = even_values.split()
+    value_1, value_3 = odd_values.split()
+
+    mean = value_0
+    m2 = tl.zeros_like(mean)
+    mean, m2 = _welford_online(value_1, mean, m2, 2.0)
+    mean, m2 = _welford_online(value_2, mean, m2, 3.0)
+    mean, m2 = _welford_online(value_3, mean, m2, 4.0)
+    count = tl.full(mean.shape, 4.0, tl.float32)
+
+    mean = mean.reshape(4, 32)
+    m2 = m2.reshape(4, 32)
+    count = count.reshape(4, 32)
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 4, 16)
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 4, 8)
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 4, 4)
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 4, 2)
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 4, 1)
+
+    mean, m2, count = _welford_pair_halves(mean, m2, count, 1, 2)
+    mean, m2, _ = _welford_pair_halves(mean, m2, count, 1, 1)
+    return mean.reshape(1), m2.reshape(1) * (1.0 / 512.0)
+
+
+@triton.jit
 def _add_layer_norm_kernel(
     x_ptr,
     residual_ptr,
@@ -73,24 +158,15 @@ def _add_layer_norm_kernel(
     tl.store(sum_ptr + row_offsets, summed, mask=mask)
     summed_fp32 = summed.to(tl.float32)
 
-    initial_mean = tl.where(mask, summed_fp32, 0.0)
-    initial_m2 = tl.zeros_like(initial_mean)
-    initial_weight = tl.where(mask, 1.0, 0.0)
-    mean, m2, _ = triton_helpers.welford(
-        initial_mean,
-        initial_m2,
-        initial_weight,
-        0,
-    )
+    mean, variance = _pytorch_layer_norm_stats_512(summed_fp32)
     centered = tl.where(mask, summed_fp32 - mean, 0.0)
-    variance = m2 / width
-    normalized = centered * tl.rsqrt(variance + eps)
+    inverse_std = tl.rsqrt(variance + eps)
 
     weight = tl.load(weight_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     bias = tl.load(bias_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     tl.store(
         output_ptr + row_offsets,
-        normalized * weight + bias,
+        weight * (inverse_std * centered) + bias,
         mask=mask,
     )
 
@@ -115,6 +191,8 @@ def add_layer_norm(
     block_size = triton.next_power_of_2(width)
     if block_size > 65536:
         raise ValueError("feature dimension is too large for the fused kernel")
+    if width != 512:
+        raise ValueError("exact Triton add+LayerNorm is specialized for width 512")
 
     summed = torch.empty_like(x)
     output = torch.empty_like(x)

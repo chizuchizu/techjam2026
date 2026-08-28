@@ -26,8 +26,8 @@ Detailed evidence, estimates, dependencies, and rejected experiments are in
    official static shape and mask regimes.
 5. Keep the implemented static-mask hoisting/final-only invalid-row zeroing and
    verify it across the official padding-mask cases.
-6. Extend the rejected Triton residual-add + LayerNorm prototype toward a
-   numerically exact linear fusion; then test fused exact-GELU FFN.
+6. Keep the now-bit-exact Triton residual-add + LayerNorm fusion, which matches
+   PyTorch's Welford tree at all sites; next test linear and exact-GELU fusion.
 7. Add whole-block valid-token packing for padded cases.
 8. Extend the verified FP32 `torch.compile`/CUDA graph path across the official
    shape table; the fixed unmasked TensorRT FP32 graph path is now implemented

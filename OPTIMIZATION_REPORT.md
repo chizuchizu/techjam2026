@@ -34,13 +34,14 @@ is the primary metric.
 | Compile with eager precision casts + rounded division + CUDA libdevice | fail, 45/13,107,200 | — | — | — | Reject: same FP16 error pattern |
 | Previous FP16 path + packed prefix QKV + raw CUDA graph | pass, 0/13,107,200 | 2.389 ms | 0.391 ms | **6.116x** | Previous FP16 best |
 | Previous row + graph-owned static output | pass, 0/13,107,200 | 2.440 ms | 0.3900 ms | **6.258x** | Keep when output lifetime permits |
-| Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Current robust FP16 best |
+| Exact score-rounded Triton attention, all 6 + static graph output | exact, 0/209,715,200 across four mask regimes | 1.875 ms | **0.3237 ms** | **5.790x** | Previous robust FP16 best |
+| Previous row + exact residual-add/LayerNorm at all 12 sites | exact, 0/209,715,200 across four mask regimes | 2.468 ms | **0.2923 ms** | **8.444x** | Current robust FP16 best |
 | Padded FP16, three SDPA layers + mask cleanup + raw graph | pass, 0/13,107,200 | 2.612 ms | 0.469 ms | **5.575x** | Previous padded best |
-| Padded FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.627 ms | **0.3464 ms** | **7.583x** | New padded best |
+| Padded FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.586 ms | **0.3145 ms** | **8.223x** | New padded best |
 | Causal FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.295 ms | 0.477 ms | **4.809x** | Keep |
-| Causal FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.220 ms | **0.3767 ms** | **5.894x** | New causal best |
+| Causal FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.241 ms | **0.3024 ms** | **7.412x** | New causal best |
 | Causal+padded FP16, two SDPA layers + raw graph | pass, 0/13,107,200 | 2.879 ms | 0.528 ms | **5.451x** | Previous causal+padded best |
-| Causal+padded FP16, six exact rounded-Triton layers + static output | exact, 0/52,428,800 | 2.863 ms | **0.3878 ms** | **7.383x** | New causal+padded best |
+| Causal+padded FP16, six exact attention + 12 exact add/norm fusions | exact, 0/52,428,800 | 2.940 ms | **0.3556 ms** | **8.266x** | New causal+padded best |
 | BF16 packed QKV + reference attention + raw graph | exact, 0/13,107,200 | 2.396 ms | 0.492 ms | **4.871x** | Current BF16 best |
 | Causal+padded BF16, same path | exact, 0/5,242,880 | 3.790 ms | 0.603 ms | **6.286x** | Keep |
 | FP32 packed QKV + all-layer SDPA | pass, 0/5,242,880 | 2.296 ms | 1.185 ms | 1.938x | Keep |
@@ -53,7 +54,7 @@ is the primary metric.
 | FP32 with FP16 attention core | pass | 2.305 ms | 0.549 ms compiled | 4.200x | Reject: no compiled gain, slower eager |
 | FP16 tanh-approximate GELU | fail, 74/13,107,200 | — | — | — | Reject: exceeds elementwise tolerance |
 | FP16 tanh GELU, one layer at a time | every layer fails | — | ~0.386 ms graphed | no measurable gain | Reject; retain opt-in sensitivity control |
-| Triton residual-add + LayerNorm, all sites | fail, 36/52,428,800 | — | — | — | Reject automatic use; retain site selector |
+| Exact Triton residual-add + LayerNorm, all sites | exact, 0/209,715,200 | 0.3233 ms prior path | **0.2933 ms** | **1.102x** | Keep and compound with exact attention |
 | Force PyTorch FlashAttention instead of cuDNN SDPA | fail, 1/13,107,200 | — | — | — | Reject for default FP16 |
 
 The packed weights are built once after weight copying and device/dtype transfer,
@@ -208,6 +209,15 @@ over query tiles, warps, and pipeline stages selected 16 rows, four warps, and
 three stages for dense/causal inputs. Padded inputs retain the audited 64-row,
 four-warp, one-stage geometry because the faster tile changes eager equivalence.
 
+The compounded exact add/LayerNorm trace has **49 graph nodes and 268.039
+microseconds** of summed GPU kernel time. Twelve fused kernels take 38.593
+microseconds, replacing twelve adds plus twelve PyTorch LayerNorms that took
+about 67.7 microseconds. This removes 12 nodes and 30.428 microseconds (10.2%)
+from the exact-attention trace. A shared-weight, same-input, interleaved graph
+A/B measured 0.3233 ms before fusion and 0.2933 ms after fusion, also a
+**1.102x incremental speedup**. The normal safe-output path measures 0.2942 ms;
+graph-owned static output measures 0.2923 ms.
+
 Nsight Compute is currently blocked by `ERR_NVGPUCTRPERM`. Hardware-counter
 results require an administrator to enable non-admin profiling, commonly via
 `NVreg_RestrictProfilingToAdminUsers=0`, followed by the required driver reload.
@@ -250,10 +260,10 @@ launches; it is an optimization opportunity, not evidence that the published
 peak is attainable for this shape. Attention arithmetic becomes dominant over
 projections plus FFN only around `S > 2D + F` (3072 for default D/F).
 
-At 0.3237 ms, the current rounded-Triton FP16 path sustains an effective 124.4
-TFLOP/s on the 40.265-GFLOP logical model, about 14.9% of the estimated 835.5
-TFLOP/s dense Tensor Core roof. It is 6.72x above the compute-only floor and
-2.72x above the logical-traffic floor. The remaining gap is consistent with the
+At 0.2923 ms, the current exact-Triton FP16 path sustains an effective 137.8
+TFLOP/s on the 40.265-GFLOP logical model, about 16.5% of the estimated 835.5
+TFLOP/s dense Tensor Core roof. It is 6.06x above the compute-only floor and
+2.46x above the logical-traffic floor. The remaining gap is consistent with the
 trace: medium GEMMs, reductions, copies, GELU, and serial dependencies dominate
 rather than the 39.0-microsecond total for six exact custom attention kernels.
 TensorRT FP32 at 0.5127 ms
@@ -271,7 +281,7 @@ because its engine uses FP32/TF32 tactics and doubles weight/activation bytes.
 | P1 | Raw CUDA graph replay | **Implemented** | Observed 4.25–6.12x | Low | Static shape/mask regime; preserves eager kernels and numerics |
 | P1 | Eliminate all-true masks outside hot path | **Implemented** | Large observed absolute latency reduction | Low | Dispatch occurs in case generation; no `.all().item()` synchronization |
 | P1 | Hoist static masks / remove invalid-query dead work | **Implemented** | Causal+padded candidate 0.675→0.568 ms | Low | Safe because masks exclude invalid keys and other ops are token-local |
-| P2 | Fused residual + LayerNorm + linear | Triton add+norm tested/rejected | 5–15% | Medium | Current kernel fails stronger accuracy audit; linear fusion remains open |
+| P2 | Fused residual + LayerNorm + linear | **Exact Triton add+norm implemented** | Observed 10.2%; linear fusion may add more | Medium | Width-512 specialization; linear fusion remains open |
 | P2 | Fused LayerNorm + FFN and exact-GELU epilogue | No | 5–20% | Medium–high | FFN is 64% of FLOPs; tanh GELU may fail tolerance |
 | P2 | Pack valid tokens / variable-length execution | No | 1.2–2x with substantial padding | Medium–high | Pack whole block, not only attention; prefix-valid mask is favorable |
 | P2 | Per-shape autotuned dispatcher | Partial | 5–30% | Medium–high | Known shape has mask-aware layer counts; official matrix still required |
@@ -312,15 +322,16 @@ no measurable end-to-end gain on this shape. The opt-in
 `--gelu-approx-layer-indices` control remains only to reproduce sensitivity
 experiments on future shapes; automatic/default dispatch never enables it.
 
-An opt-in Triton kernel also tested fusing each FP16 residual addition with the
-following LayerNorm. Residual sums were bit-exact, and the isolated normalized
-result differed by at most one FP16 step. Fusing the trailing two layers passed
-the original 25 trials and reduced adjacent-run latency from 0.3910 to 0.3748
-ms (4.1%), but it failed six elements in a stronger 52,428,800-output audit.
-Switching the moment reduction to Welford and testing individual sites did not
-eliminate accumulated model error; all twelve sites failed 36 elements in that
-audit. The two-sites-per-layer `--triton-fused-add-norm-sites` control remains
-for reproducibility, but no automatic configuration enables it.
+The first Triton residual-add/LayerNorm prototype used a generic Welford
+reduction and failed 36 elements in 52,428,800 outputs. Inspecting PyTorch's
+CUDA implementation exposed the missing detail: width 512 launches four warps,
+each thread consumes four consecutive features online, then moments follow a
+specific shuffle-down and inter-warp tree. The replacement reproduces that
+tree, reciprocal-multiply order, reciprocal square root, and affine order.
+Residual sums and normalized outputs are bit-exact in isolated random tests;
+all twelve model sites are bit-exact over 100 trials in all four mask regimes.
+`--triton-exact-add-norm` enables every site, while
+`--triton-fused-add-norm-sites` retains explicit placement control.
 
 ## Next profiling and implementation steps
 
@@ -328,8 +339,8 @@ for reproducibility, but no automatic configuration enables it.
 2. With counter permissions enabled, capture one representative D×D GEMM, D×F
    GEMM, LayerNorm, exact GELU, mask kernel, and fused SDPA kernel using `ncu`'s
    roofline set.
-3. Prototype residual-add + LayerNorm fusion, because LayerNorm and add
-   launches are now a larger fraction after attention/QKV fusion.
+3. Test exact GELU/linear epilogue fusion; the six standalone exact GELU kernels
+   now account for 23.9 microseconds, while GEMMs dominate the remaining trace.
 4. Evaluate variable-length whole-block packing when padded official cases exist.
 
 ## Primary sources
@@ -344,6 +355,7 @@ for reproducibility, but no automatic configuration enables it.
 - [NVIDIA Transformer Engine fused modules](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/getting_started/index.html)
 - [cuBLASLt epilogues](https://docs.nvidia.com/cuda/cublas/index.html)
 - [Triton fused LayerNorm](https://triton-lang.org/main/getting-started/tutorials/05-layer-norm.html)
+- [PyTorch CUDA LayerNorm implementation](https://github.com/pytorch/pytorch/blob/cf30153c4c131c8164ee7798e5022d810682e2cb/aten/src/ATen/native/cuda/layer_norm_kernel.cu)
 - [Triton fused attention](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)
 - [Triton Hopper persistent matmul](https://triton-lang.org/main/getting-started/tutorials/09-persistent-matmul.html)
 - [TensorRT Python installation](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-pip.html)

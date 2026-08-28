@@ -1198,7 +1198,12 @@ def parse_args() -> argparse.Namespace:
         "--triton-fused-add-norm-sites",
         type=parse_layer_indices,
         default=(),
-        help="residual+following-LayerNorm sites to fuse (two sites per layer)",
+        help="exact residual+following-LayerNorm sites to fuse (two per layer)",
+    )
+    parser.add_argument(
+        "--triton-exact-add-norm",
+        action="store_true",
+        help="use exact fused residual+following-LayerNorm at every site",
     )
     parser.add_argument(
         "--triton-rounded-attention",
@@ -1272,16 +1277,25 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("GELU approximation requires a packed-QKV implementation")
     if args.gelu_approx_layer_indices and device.type != "cuda":
         raise ValueError("GELU approximation is currently a CUDA-only experiment")
-    if args.triton_fused_add_norm_sites and device.type != "cuda":
+    if args.triton_exact_add_norm and args.triton_fused_add_norm_sites:
+        raise ValueError(
+            "use either --triton-exact-add-norm or explicit fused site indices"
+        )
+    triton_add_norm_requested = bool(
+        args.triton_exact_add_norm or args.triton_fused_add_norm_sites
+    )
+    if triton_add_norm_requested and device.type != "cuda":
         raise ValueError("Triton add+LayerNorm requires a CUDA device")
-    if args.triton_fused_add_norm_sites and dtype != torch.float16:
+    if triton_add_norm_requested and dtype != torch.float16:
         raise ValueError("Triton add+LayerNorm is currently accuracy-gated for FP16")
-    if args.triton_fused_add_norm_sites and args.user_implementation not in (
+    if triton_add_norm_requested and args.d_model != 512:
+        raise ValueError("exact Triton add+LayerNorm requires d_model=512")
+    if triton_add_norm_requested and args.user_implementation not in (
         "packed-qkv",
         "sdpa-packed-qkv",
     ):
         raise ValueError("Triton add+LayerNorm requires a packed-QKV implementation")
-    if args.triton_fused_add_norm_sites and args.compile_user:
+    if triton_add_norm_requested and args.compile_user:
         raise ValueError("Triton add+LayerNorm is not supported with torch.compile")
     if (
         args.triton_rounded_attention
@@ -1309,11 +1323,6 @@ def validate_args(args: argparse.Namespace, device: torch.device, dtype: torch.d
         raise ValueError("Triton rounded attention requires S=128 and head_dim=64")
     if triton_attention_requested and args.compile_user:
         raise ValueError("Triton rounded attention is not supported with torch.compile")
-    if (
-        triton_attention_requested
-        and args.triton_fused_add_norm_sites
-    ):
-        raise ValueError("enable only one Triton experiment at a time")
     if args.triton_rounded_attention and (
         args.batch_size != 8
         or args.d_model != 512
@@ -1362,13 +1371,18 @@ def main() -> int:
         if args.triton_rounded_attention
         else args.triton_rounded_attention_layer_indices
     )
+    triton_fused_add_norm_sites = (
+        tuple(range(2 * config.num_layers))
+        if args.triton_exact_add_norm
+        else args.triton_fused_add_norm_sites
+    )
     optimized = UserOptimizedTransformer(
         config,
         args.user_implementation,
         sdpa_layers,
         args.sdpa_layer_indices,
         args.gelu_approx_layer_indices,
-        args.triton_fused_add_norm_sites,
+        triton_fused_add_norm_sites,
         triton_rounded_attention_layer_indices,
     )
     copy_model_weights(
@@ -1432,10 +1446,10 @@ def main() -> int:
                 "gelu_approx_layer_indices="
                 f"{sorted(args.gelu_approx_layer_indices)}"
             )
-        if args.triton_fused_add_norm_sites:
+        if triton_fused_add_norm_sites:
             print(
                 "triton_fused_add_norm_sites="
-                f"{sorted(args.triton_fused_add_norm_sites)}"
+                f"{sorted(triton_fused_add_norm_sites)}"
             )
         if selected_triton_attention_layer_indices:
             print(
