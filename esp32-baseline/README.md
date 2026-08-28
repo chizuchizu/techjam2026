@@ -159,10 +159,19 @@ Measured links (source of truth: `esp32-linkbench/` ESP-NOW benchmark +
 
 | Link | Direction | Measured | Note |
 |---|---|---|---|
-| ESP-NOW node↔node (2.4 GHz, 1 Mbps PHY) | board→board | TBD | 250 B/frame; app-ACK used; ~KB/s class expected |
+| ESP-NOW node↔node (2.4 GHz, 1 Mbps PHY) | board→board | **~60 KB/s** mean (36–38 @64 B, 60–63 @128 B, 79–80 @240 B) | measured on-device, 2 boards, 300 fwd/size, saturated send, app-ACK + server ground-truth: 82–84% delivered; median RTT ~145–170 ms |
 | USB-CDC host↔board | host→board | ~200 KB/s | reliable ceiling 200–290 KB/s (faster drops, no RX timeout) |
 | USB-CDC host↔board | board→host | ~286 KB/s | identical on both boards |
 | Driver pacing (device_test) | host→board | ~50 KB/s | 1 KB/20 ms, 7× safety margin |
+
+Validation vs scoring (this repo, measured `node_bw=61470 B/s`, `node_traf=131072 B/fwd`):
+`t_transfer = 2.13 s` = **5.1%** of `t_measured = 42.13 s` → link scale 1.000 →
+**ExScore unchanged (26.7%)**. The node link has **~20× headroom**: it would only
+become binding if per-forward node traffic grew to ≈2.4 MB (≈20× current 128 KB)
+or the forward time shrank below ≈2.1 s. The USB-CDC host link (≈0.23 s host
+share) also does not bind. Conclusion: for the current 2-board footprint the
+**compute (42 s forward) dominates; node-to-node bandwidth is not the scoring
+bottleneck**, but the model above reports the instant it becomes one.
 
 Run: `python3 tools/score.py --node-bw <B/s> --node-traf <bytes/forward>`
 (e.g. `--node-bw 200000 --node-traf 131072` = 64 KB in + 64 KB out per forward;
