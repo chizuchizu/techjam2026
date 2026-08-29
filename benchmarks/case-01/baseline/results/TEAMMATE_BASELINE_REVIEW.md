@@ -15,9 +15,10 @@ LayerNorm. FAST mode uses Q15 activations and Q12 weights for the six
 projection matrices per block.
 
 I regenerated the omitted deterministic weights/test vectors, compiled
-the C host implementation, reran the full 25-hosts x 2-mode gate and an
-independent NumPy cross-check, and built the PlatformIO firmware for
-the batch shape. The concise capture is
+the C host implementation, reran the full 25-seed x 2-mode gate,
+independently recomputed seed 0 through the vendored torch_ref, and
+built the PlatformIO firmware for the batch shape. The concise capture
+is
 [`case-01_esp32_baseline_seed0_v1.log`](case-01_esp32_baseline_seed0_v1.log).
 
 | Check | Independent result |
@@ -26,7 +27,7 @@ the batch shape. The concise capture is
 | Worst C FAST absolute error | 0.0010 |
 | C EXACT, 25 host seeds | 0 / 409,600 failed outputs |
 | Worst C EXACT absolute error | 0.0001 |
-| Independent NumPy FAST (seed 0) | 0 / 16,384 failed outputs |
+| Vendored torch_ref recompute, seed 0 vs committed ref_0.bin | 0 / 16,384 mismatched (max_abs 0.0) |
 | XIAO build RAM | 274,564 / 327,680 B (83.8%) |
 | XIAO build enlarged app partition | 2,644,470 / 3,145,728 B (84.1%) |
 | Physical XIAO seed 0 (reused from case-02, B=1) | PASS, 1.996 s |
