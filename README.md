@@ -70,17 +70,19 @@ change.
 - [x] Record a four-board attention-only result.
 - [x] Label both multiboard results as partial, not end-to-end inference.
 
-#### Complete four-board end-to-end case 2
+#### Complete two-board end-to-end case 2
 
-- [ ] Run all four layers and the final LayerNorm across four boards.
+- [ ] Run all four layers and the final LayerNorm across two boards.
 - [ ] Add the missing projections, residuals, LayerNorm, and FFN path.
 - [ ] Keep weights on the workers and return each complete layer output.
-- [ ] Validate one-, two-, and four-board outputs with five seeds.
+- [ ] Validate the two-board output with five seeds.
 - [ ] Measure full wall time and split compute from communication.
-- [ ] Save raw results and compare speedup, efficiency, median, and p90.
+- [ ] Compare it with one board and save the raw results.
 
-#### Scale from four boards to eight boards
+#### Benchmark four boards, then scale to eight
 
+- [ ] Run and validate the same end-to-end path on four boards.
+- [ ] Save the four-board speedup, efficiency, median, and p90.
 - [ ] Choose an eight-board split beyond the four available attention heads.
 - [ ] Add stable board IDs, discovery, timeouts, retries, and failure handling.
 - [ ] Validate the eight-board output against the official reference.
