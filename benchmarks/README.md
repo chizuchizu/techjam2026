@@ -18,15 +18,18 @@ Do not create speedup comparisons across cases or across different scopes. A
 case README must state whether a result covers a kernel, a partial layer, or the
 complete Transformer body.
 
+Measured cross-case run of the case-2 optimised firmware on cases 1–5:
+[`case2_code_on_cases_1_to_5.md`](case2_code_on_cases_1_to_5.md).
+
 ## Index
 
 | Case | Batch | Sequence | Model dim | Heads | FFN dim | Layers | Status |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
+| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward**, batch-64 total **127.36 s** on-device; 5/5 device PASS |
 | [02](case-02/) | 1 | 128 | 128 | 4 | 128 | 4 | Single-board verified, **1.996 s/fwd (21.1×)**; partial multiboard verified |
-| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
-| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
-| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
+| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward**, batch-4 total **7.96 s** on-device; 5/5 device PASS |
+| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward**, batch-16 total **31.84 s** on-device; 5/5 device PASS |
+| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward**, batch-128 total **254.72 s** on-device; 5/5 device PASS |
 | [06](case-06/) | 10,000 | 128 | 128 | 4 | 128 | 4 | Not implemented |
 | [07](case-07/) | 64 | 128 | 32 | 4 | 32 | 4 | Implemented, complete body: **0.491 s/forward** on-board; 5/5 device PASS |
 | [08](case-08/) | 64 | 128 | 1,024 | 4 | 1,024 | 4 | Not implemented |

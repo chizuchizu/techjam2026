@@ -23,6 +23,11 @@ ESP32-C3 at 160 MHz.
 | Initial hybrid baseline | 42.15 s | 1.00x | Pass, 5/5 device seeds |
 | Current optimised firmware | **1.996 s** | **21.1x** | Pass, 25/25 device seeds and 54/54 host checks |
 
+The case-2 optimised firmware was also run against cases 1, 3, 4, and 5
+(same S/D/H/F/L geometry, batch variants). Measured batch totals and the
+unoptimized-baseline comparison are in
+[`../case2_code_on_cases_1_to_5.md`](../case2_code_on_cases_1_to_5.md).
+
 ## Multiboard results
 
 These results use the case-2 shape but cover only the stated partial scope.

@@ -34,11 +34,11 @@ experiments that are not official cases are isolated in
 
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-64 total **127.36 s** on-device; 5/5 device PASS |
 | [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at **1.996 s (21.1×, opt23)**; host 54/54 + device 25/25; partial multiboard paths verified |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-4 total **7.96 s** on-device; 5/5 device PASS |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-16 total **31.84 s** on-device; 5/5 device PASS |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-128 total **254.72 s** on-device; 5/5 device PASS |
 | [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
 | [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device PASS |
 | [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |
@@ -48,6 +48,9 @@ experiments that are not official cases are isolated in
 | [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | **Implemented, complete body** | Measured on-board **0.493 s/forward** (board A); 5/5 device PASS |
 | [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | Not implemented | Online attention and KV sharding |
 | [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | Not implemented | Extreme sequence streaming |
+
+Measured cross-case run of the case-2 optimised firmware on cases 1–5:
+[`benchmarks/case2_code_on_cases_1_to_5.md`](benchmarks/case2_code_on_cases_1_to_5.md).
 
 The approach notes for unimplemented cases are design hypotheses, not measured
 claims. Each case README records what must be validated before its status can
