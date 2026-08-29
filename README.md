@@ -1,26 +1,155 @@
 # TechJam 2026 — ESP32 Transformer
 
-This repository now focuses on running and distributing Transformer workloads
-on ESP32 microcontrollers. The previous NVIDIA H200 experiments were retired;
-the GPU baseline is the official `torch_transformer_benchmark.py` at the repo root
-(see `COMPETITION_RULES.MD`).
+This repository explores a different ESP32 execution strategy for each of the
+14 official Transformer benchmark cases. Every case owns its documentation,
+baseline evidence, single-board optimisations, multiboard implementation, and
+results under [`benchmarks/case-NN/`](benchmarks/).
 
-## Start here
+## Case layout
 
-| Area | Purpose | Best first file |
-|---|---|---|
-| [`esp32-baseline/`](esp32-baseline/) | Official-size four-layer numerical benchmark | [`README.md`](esp32-baseline/README.md) |
-| [`esp32_cluster_transport/`](esp32_cluster_transport/) | Wi-Fi worker for multi-ESP32 attention | [`README.md`](esp32_cluster_transport/README.md) |
-| [`tools/`](tools/) | Host coordinators, validation, training, and discovery | [`run_large_head_parallel.py`](tools/run_large_head_parallel.py) |
-| [`esp32_attention_benchmark/`](esp32_attention_benchmark/) | Single-board attention kernels | [`README.md`](esp32_attention_benchmark/README.md) |
-| [`esp32_tiny_transformer/`](esp32_tiny_transformer/) | Complete small trained character Transformer | [`README.md`](esp32_tiny_transformer/README.md) |
-| [`results/`](results/) | Raw measurements and short reports | [`FOUR_C3_PARALLEL_RESULTS.md`](results/FOUR_C3_PARALLEL_RESULTS.md) |
-| [`docs/`](docs/) | Design decisions, plans, and prior art | [`PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) |
+[`benchmarks/README.md`](benchmarks/README.md) is the full case index. The
+current implementation is concentrated in
+[`case-02/`](benchmarks/case-02/):
 
-The benchmark-sized baseline does not generate text; it validates Transformer
-body calculations on random hidden states. The tiny model generates character
-tokens, but is intentionally small. The cluster work currently distributes
-independent attention heads, not the complete four-layer model.
+```text
+benchmarks/case-02/
+├── README.md
+├── baseline/
+│   └── results/
+├── optimisation/
+│   └── esp32-baseline/
+└── multiboard/
+    ├── esp32_cluster_transport/
+    ├── esp32-linkbench/
+    ├── tools/
+    └── results/
+```
+
+The competition problem statement and official executable reference remain at
+the repository root: [`COMPETITION_RULES.MD`](COMPETITION_RULES.MD) and
+[`torch_transformer_benchmark.py`](torch_transformer_benchmark.py). Smaller
+experiments that are not official cases are isolated in
+[`benchmarks/experiments/`](benchmarks/experiments/).
+
+## Official case status
+
+| Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
+|---:|---|---|---|
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | Not implemented | Batch-parallel candidate |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at 5.27 s; partial multiboard paths verified |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | Not implemented | Small-batch scheduling |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | Not implemented | Batch tiling and dispatch |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | Not implemented | Throughput-oriented batch sharding |
+| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
+| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | Not implemented | Narrow-kernel overhead and fusion |
+| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |
+| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | Not implemented | Sequence/model sharding; no head parallelism |
+| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | Not implemented | Two head shards plus batch parallelism |
+| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | Not implemented | Fine-grained head parallelism |
+| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | Not implemented | Short-sequence launch overhead |
+| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | Not implemented | Online attention and KV sharding |
+| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | Not implemented | Extreme sequence streaming |
+
+The approach notes for unimplemented cases are design hypotheses, not measured
+claims. Each case README records what must be validated before its status can
+change.
+
+## Hackathon submission TODO
+
+### Benchmark evidence
+
+#### Completed foundation
+
+- [x] Add the official case-2 baseline implementation.
+- [x] Validate the case-2 baseline against the required accuracy gate.
+- [x] Record the physical single-board baseline timing.
+- [x] Add the optimised case-2 single-board implementation.
+- [x] Validate the optimised implementation on host and physical hardware.
+- [x] Record the baseline-to-optimised single-board speedup.
+- [x] Record a two-board partial-layer result.
+- [x] Record a four-board attention-only result.
+- [x] Label both multiboard results as partial, not end-to-end inference.
+
+#### Complete two-board end-to-end case 2
+
+- [ ] Run all four layers and the final LayerNorm across two boards.
+- [ ] Add the missing projections, residuals, LayerNorm, and FFN path.
+- [ ] Keep weights on the workers and return each complete layer output.
+- [ ] Validate the two-board output with five seeds.
+- [ ] Measure full wall time and split compute from communication.
+- [ ] Compare it with one board and save the raw results.
+
+#### Benchmark four boards, then scale to eight
+
+- [ ] Run and validate the same end-to-end path on four boards.
+- [ ] Save the four-board speedup, efficiency, median, and p90.
+- [ ] Choose an eight-board split beyond the four available attention heads.
+- [ ] Add stable board IDs, discovery, timeouts, retries, and failure handling.
+- [ ] Validate the eight-board output against the official reference.
+- [ ] Benchmark one, two, four, and eight boards under the same conditions.
+- [ ] Measure speedup, efficiency, communication, retries, and slowest-worker time.
+- [ ] Save raw results and explain where scaling improves or stops.
+
+#### Support additional official benchmark cases
+
+- [ ] Move case shapes out of case-2-specific code and into configuration.
+- [ ] Add case selection, memory checks, and shared validated kernels.
+- [ ] Support cases 3, 7, 9, 11, 12, and 13 first.
+- [ ] Validate every case against its official reference.
+- [ ] Keep each case's code, raw results, and report in its own directory.
+- [ ] Add other cases after checking memory and runtime needs.
+
+#### Final evidence pack
+
+- [ ] Run the final case-2 commands from a fresh checkout.
+- [ ] Record hardware, clocks, software versions, and timing rules.
+- [ ] Check that every result passes accuracy and uses the same scope.
+- [ ] Publish raw captures with median, p90, warm-ups, and run counts.
+- [ ] Summarise what scaled, what did not, and why.
+
+### Repository and README
+
+- [x] Organise official work into one directory per benchmark case.
+- [x] Keep case-2 baseline, optimisation, multiboard code, and results together.
+- [x] Keep the competition problem statement at the repository root.
+- [x] Document setup and reproduction commands.
+- [ ] Add a short project overview for non-technical judges.
+- [ ] Add a limitations and future-improvements section.
+- [ ] Add a team-contributions section with one line per person.
+- [ ] Document the AI tools, libraries, frameworks, and development tools used.
+- [ ] Explain that the official benchmark uses seeded random weights and no dataset.
+- [ ] Check the public repository for credentials, private addresses, and build files.
+- [ ] Merge the final pull request and verify all README links on GitHub.
+
+### Demo video
+
+- [ ] Write a short problem → approach → result demo script.
+- [ ] Record the ESP32 setup and identify the boards on camera.
+- [ ] Record one reproducible inference or benchmark run.
+- [ ] Show the accuracy result before showing the speedup.
+- [ ] Explain the boundary between the full single-board result and partial multiboard results.
+- [ ] Add captions or readable terminal zoom for timings and validation output.
+- [ ] Upload the video publicly to YouTube.
+- [ ] Add the public video link to the Devpost submission.
+
+### Devpost submission
+
+- [ ] Write the project description and problem statement.
+- [ ] Describe the single-board and multiboard approaches.
+- [ ] List development tools, APIs, libraries, frameworks, and assets.
+- [ ] Add the GitHub repository link.
+- [ ] Add the demo video link.
+- [ ] Add limitations, future work, and practical impact.
+- [ ] Add all team members and their contributions.
+- [ ] Preview the complete submission while logged out.
+- [ ] Submit before the deadline and save the confirmation.
+
+### Optional technical stretch goals
+
+- [ ] Complete output projection, residuals, second LayerNorm, and FFN for one distributed layer.
+- [ ] Run all four case-2 layers across multiple boards.
+- [ ] Add worker heartbeats, retry handling, and cached performance profiles.
+- [ ] Implement and validate another official benchmark case in its own directory.
 
 ## Quick setup
 
@@ -30,92 +159,33 @@ python3 -m venv .venv
 make check
 ```
 
-Arduino sketches use the Espressif Arduino core. The benchmark-sized baseline
-uses PlatformIO. PyTorch is optional and only needed to regenerate reference
-artifacts or retrain the tiny model.
+Build the current case-2 single-board implementation:
 
-To configure a Wi-Fi worker, copy the ignored secrets template and edit the
-local copy:
+The exporter also requires PyTorch in the selected Python environment.
 
 ```bash
-cp esp32_cluster_transport/secrets.example.h \
-   esp32_cluster_transport/secrets.h
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 \
-   esp32_cluster_transport
+cd benchmarks/case-02/optimisation/esp32-baseline
+python3 tools/export_case2.py --outdir . --seeds 25
+pio run -e esp32-baseline
 ```
 
-Never commit `secrets.h`, Wi-Fi credentials, private IP addresses, or generated
+Configure a local, Git-ignored Wi-Fi secrets file before compiling the case-2
+cluster worker:
+
+```bash
+cp benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.example.h \
+   benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.h
+arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 \
+  benchmarks/case-02/multiboard/esp32_cluster_transport
+```
+
+Never commit credentials, private addresses, generated model artifacts, or
 build directories.
 
-## Current verified results
+## Project documentation
 
-- The complete tiny model matches an independent NumPy implementation and
-  generates at 9.38 tokens/s on a physical XIAO ESP32-C3.
-- The official-size baseline passes 25 host seeds and five device seeds.
-- Four matched XIAO ESP32-C3 boards achieve 3.92–3.98x attention-head speedup,
-  or 98.0–99.4% four-node efficiency including Wi-Fi communication.
-- The integrated official-weight path now runs layer-0 LayerNorm, Q/K/V
-  projections, and attention on physical C3s. Two boards reduce this partial
-  layer path from 9.693 s to 4.850 s, with all five device seeds passing.
-- The earlier matched two-C3 experiment achieves about 2x speedup.
-- A separate heterogeneous C3 plus dual-core ESP32 experiment demonstrates why
-  unequal boards require measured assignment. All returned elements pass the
-  accuracy gate in both experiments.
-
-## Official test-case coverage on ESP32
-
-All official cases are causal and contain four Transformer layers except case
-14, which contains two. A running time is shown only when the complete official
-Transformer body has run and passed on physical ESP32 hardware; attention-only
-experiments are not counted as implemented cases.
-
-| Case | Batch | Sequence | Model dim | Heads | FFN dim | ESP32 status | Physical running time |
-|---:|---:|---:|---:|---:|---:|---|---:|
-| 1 | 64 | 128 | 128 | 4 | 128 | Not implemented | — |
-| 2 | 1 | 128 | 128 | 4 | 128 | **Implemented and verified** | **42.09 s** on one C3 |
-| 3 | 4 | 128 | 128 | 4 | 128 | Not implemented | — |
-| 4 | 16 | 128 | 128 | 4 | 128 | Not implemented | — |
-| 5 | 128 | 128 | 128 | 4 | 128 | Not implemented | — |
-| 6 | 10,000 | 128 | 128 | 4 | 128 | Not implemented | — |
-| 7 | 64 | 128 | 32 | 4 | 32 | Not implemented | — |
-| 8 | 64 | 128 | 1,024 | 4 | 1,024 | Not implemented | — |
-| 9 | 64 | 128 | 128 | 1 | 128 | Not implemented | — |
-| 10 | 64 | 128 | 128 | 2 | 128 | Not implemented | — |
-| 11 | 64 | 128 | 128 | 16 | 128 | Not implemented | — |
-| 12 | 64 | 32 | 128 | 4 | 128 | Not implemented | — |
-| 13 | 64 | 1,024 | 128 | 4 | 128 | Not implemented | — |
-| 14 | 32 | 100,000 | 1,024 | 16 | 1,024 | Not implemented | — |
-
-### What was parallelized across four C3s?
-
-The four-board experiment parallelizes the four attention heads from the shape
-used by official case 2. Each C3 calculates one independent head, and the host
-combines the four returned contexts.
-
-| Property | Four-C3 experiment |
-|---|---|
-| Related official case | Case 2 |
-| Shape | `B=1, S=128, D=128, H=4, d_head=32`, causal |
-| Parallel assignment | Head 0→C3 1, head 1→C3 2, head 2→C3 3, head 3→C3 4 |
-| Computation | One `softmax(QK^T / sqrt(32))V` attention operation |
-| Single-C3 attention time | 3.000 s average |
-| Four-C3 attention time | **0.766 s** |
-| Speedup | **3.92x** |
-| Accuracy | PASS, zero failed elements |
-| Not included in this original result | LayerNorm, Q/K/V projections, output projection, residuals, FFN, and the other three layers |
-
-Therefore, **case 2 is implemented end to end only on one C3**, where it takes
-42.09 s. The 0.766 s result is a case-2-shaped attention microbenchmark, not a
-four-C3 end-to-end case-2 time. The complete single-board measurement is
-documented in [`esp32-baseline/README.md`](esp32-baseline/README.md), and the
-parallel measurement is in
-[`results/FOUR_C3_PARALLEL_RESULTS.md`](results/FOUR_C3_PARALLEL_RESULTS.md).
-
-A newer integrated path now includes the first LayerNorm and official layer-0
-Q/K/V projections before attention. Its measured two-C3 time is 4.850 s versus
-9.693 s on one C3, and all five physical accuracy seeds pass. It still excludes
-the output projection, residual, second LayerNorm, FFN, and later layers. See
-[`results/CASE2_NORM_HEAD_RESULTS.md`](results/CASE2_NORM_HEAD_RESULTS.md).
-
-See [`TODO.md`](TODO.md) for the shared priorities and
-[`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.
+- [`TODO.md`](TODO.md) — shared priorities.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — validation and result conventions.
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — milestones and acceptance gates.
+- [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — cluster decomposition and protocol design.
+- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — prior-art review and positioning.

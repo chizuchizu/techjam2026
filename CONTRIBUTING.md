@@ -12,7 +12,8 @@ reproduce and review them without access to your board.
 3. Keep firmware, host validation, and measurement changes in the same pull
    request when they implement one experiment.
 4. Run `make check` and the component-specific validation.
-5. Commit raw measurements under `results/` and explain what hardware produced
+5. Commit raw measurements under the owning case and approach, for example
+   `benchmarks/case-02/multiboard/results/`, and explain what hardware produced
    them. Open the pull request against `main`.
 
 ## Validation expected by area
@@ -40,8 +41,8 @@ Use lowercase descriptive names containing the hardware and version, for
 example:
 
 ```text
-results/esp32c3_attention_v4.csv
-results/four_c3_head_parallel_v1.csv
+benchmarks/experiments/attention-layer/results/esp32c3_attention_v4.csv
+benchmarks/case-02/multiboard/results/four_c3_head_parallel_v1.csv
 ```
 
 Reports should distinguish measured results from projections and state whether
@@ -51,8 +52,12 @@ setup, calibration, communication, and warm-up are included in timing.
 
 - Do not commit `secrets.h`, credentials, MAC addresses, private IP addresses,
   build output, virtual environments, or serial-port-specific configuration.
-- Do not copy old H200 benchmark work back into the repo root. The only
-  benchmark at the root is the official `torch_transformer_benchmark.py`.
+- Do not copy old H200 benchmark work back into the active case directories.
+  The official problem statement and PyTorch reference stay at the repository
+  root; retired GPU work stays under `archive/`.
+- Put case-specific firmware, tools, and results under the matching
+  `benchmarks/case-NN/` directory. Do not mix results from different official
+  shapes.
 - Do not silently rewrite another teammate's result. Add a new versioned raw
   capture and explain why the conclusion changed.
 - Prefer portable C/C++ for shared kernels and standard-library Python for
