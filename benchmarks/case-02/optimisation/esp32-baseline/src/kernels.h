@@ -51,6 +51,9 @@ void tm_add_inplace(const float* x, float* y, int n);
  * exp2-style split: e^y = 2^(f + n); f in [0,1) via 5-term Taylor poly.
  */
 float tm_exp_fast(float y);
+
+/* attention softmax exp LUT (see kernels.c) */
+extern const int16_t tm_attn_exp_lut[513];
 #define TM_EXP_FAST_MIN -40.0f   /* below this -> 0 (exp(-40)~4e-18) */
 
 /* fp32 expf for the exact path (libgcc soft-float on the C3). */
@@ -65,6 +68,9 @@ int16_t* tm_gemm_a16(void);
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K);
+float tm_gemm_head_q15_m(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias,
+                         int32_t* acc, int16_t* dst, int M, int K);
 
 void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias, float* C,
