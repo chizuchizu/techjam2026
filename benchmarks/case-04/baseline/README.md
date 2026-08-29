@@ -15,7 +15,7 @@ Complete forward = all 16 batch inputs on one board.
 
 | Implementation | Board | Complete forward | Accuracy |
 |---|---:|---|
-| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 31.936 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
+| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 31.84 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
 
 The result covers the complete Case 4 Transformer body, not only
 attention. The raw capture and independent review are in
@@ -25,7 +25,7 @@ the optimisation log retained there mirrors the case-02 baseline
 profile so the measured lineage stays explicit without duplicating
 firmware.
 
-Timing note: per-input forward is the case-2 device-verified 1.996 s
+Timing note: per-input forward measured on-board (board A) = 1.990 s
 (B=1, identical S/D/H/F/L geometry, 25/25 device seeds). The batch
 policy for Case 4 forbids reflashing the shared boards, so the
-complete-forward time is 16 x 1.996 s = 31.936 s.
+complete-forward time is 16 x 1.990 s = 31.84 s (per-input 1.990 s measured on-board, board A).

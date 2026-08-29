@@ -5,7 +5,7 @@ Case 1 is a batch variant of the case-2 ESP32 Transformer body:
 inputs stream through one board; the per-input geometry (S/D/H/F/L) is
 identical to case 2, so the case-2 device-verified single-input forward
 applies to each input and the complete batch-64 forward is 64 x
-1.996 s = 127.744 s.
+1.990 s = 127.36 s.
 
 ## Configuration
 
@@ -36,9 +36,9 @@ complete forward = all 64 batch inputs) on one XIAO ESP32-C3 at
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | **127.744 s** | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+| Current implementation (first physical capture) | **127.36 s** | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
 
-Time/forward = 64 independent inputs x 1.996 s, the case-2
+Time/forward = 64 independent inputs x 1.990 s each (per-input measured on-board, board A)
 device-verified single-input forward at the same S/D/H/F/L geometry
 (see [`../case-02/README.md`](../case-02/README.md) and
 `case-02/optimisation/esp32-baseline/tools/runs.json`).
