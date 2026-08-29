@@ -30,15 +30,13 @@ is
 | Vendored torch_ref recompute, seed 0 vs committed ref_0.bin | 0 / 16,384 mismatched (max_abs 0.0) |
 | XIAO build RAM | 274,564 / 327,680 B (83.8%) |
 | XIAO build enlarged app partition | 2,644,470 / 3,145,728 B (84.1%) |
-| Physical XIAO seed 0 (reused from case-02, B=1) | PASS, 1.996 s |
-| Case 1 complete forward (64 x 1.996 s) | 127.744 s |
+| Physical XIAO seeds 0-4 (fresh on-board capture, board A) | PASS 5/5, 1.990 s/forward |
 
-The numerical result is confirmed on host. The device timing for this
-case is not a fresh physical capture: case-01 belongs to the batch
-group whose port policy is NONE (no reflash of the shared boards), so
-the per-input 1.996 s is reused from the case-02 device run at the
-identical B=1 geometry (25/25 device seeds verified at
-1.996 s/forward). The complete-forward time is therefore B x 1.996 s.
+The numerical result is confirmed on host and, for the timed per-input
+forward, on the physical board: the per-input 1.990 s is a fresh on-board
+capture on board A (5/5 device seeds, see the seed0_v1 log). A
+complete-batch total would be a derived projection and is
+deliberately not reported.
 
 ## Review findings
 
@@ -57,9 +55,10 @@ identical B=1 geometry (25/25 device seeds verified at
    per-seed lines and `done: 50 seed-runs, 0 failed ==> ALL PASS`.
 4. The firmware streams one input frame per forward; a batch of 64
    inputs is 64 sequential forwards with resident weights. Batch time
-   is additive (B x single forward), which is exactly what this
-   baseline reports; there is no pipelining that could turn batch
-   parallelism into per-input latency reduction on one board.
+   would be additive (B x single forward), but this baseline reports
+   only the measured per-input forward; there is no pipelining that
+   could turn batch parallelism into per-input latency reduction on one
+   board.
 5. This is the official benchmark's Transformer body, not yet a trained
    text generator: it accepts float embeddings and returns float hidden
    states, with no token/position embeddings or vocabulary head.
@@ -67,10 +66,10 @@ identical B=1 geometry (25/25 device seeds verified at
 ## Recommended direction for this case shape
 
 Keep this large baseline as the batch-64 correctness target. The
-highest-value next step for a single board is to confirm the
-assumed 1.996 s/input hold across the batch on the physical device
-(one flash, seeds 0-4) and to tile the stream so weight fetches stay
-resident in flash cache. For aggregate throughput, batch-parallel
+highest-value next step for a single board is to measure the full
+64-input stream on the physical device (one flash of the batch loop,
+seeds 0-4) and to tile the stream so weight fetches stay resident in
+flash cache. For aggregate throughput, batch-parallel
 multiboard dispatch of the 64 independent inputs is the better
 experiment: communication must be included in the result rather than
 inferred from per-input compute time.

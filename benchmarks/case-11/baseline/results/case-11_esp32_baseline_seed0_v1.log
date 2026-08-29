@@ -1,9 +1,8 @@
 # case-11 esp32-baseline seed0 v1 — baseline capture log
 # Heads group, PORT B (/dev/cu.usbmodem1101) — fresh physical capture.
 # Geometry B=64 S=128 D=128 H=16 F=128 L=4, causal. Firmware streams one
-# input frame (S*D floats) per forward; complete batch-64 forward = 64 x
-# single-forward. Raw device_test.py output below (5 device seeds, reps=2
-# timing sweep), exact as printed on the board.
+# input frame (S*D floats) per forward. Raw device_test.py output below
+# (5 device seeds, reps=2 timing sweep), exact as printed on the board.
 [device] frame = 16384 floats (65536 bytes) -> TM_S*TM_D from input file
 [device] boot: ''
 [device] TM 1 128 128
@@ -13,5 +12,5 @@ seed 2: fails=    0 max_abs=9.6452e-04 2.462s fwd PASS
 seed 3: fails=    0 max_abs=1.0893e-03 2.462s fwd PASS
 seed 4: fails=    0 max_abs=9.6893e-04 2.462s fwd PASS
 [device] TM 1 2459752 2460104          # warmup 1 + 2 timed forwards: 2.459752 s / 2.460104 s
-[derive] complete forward B=64: 64 x 2.460 s = 157.44 s
+# complete-batch total would be a derived projection and is not reported
 ALL PASS

@@ -33,16 +33,16 @@ head-width-32 while the full `D=128` projection work is unchanged.
 Each row executes the same complete four-layer Transformer body once on
 one XIAO ESP32-C3 at 160 MHz. The firmware streams one input frame
 (`S*D` floats) per forward; the single-input forward is the measured
-physical capture, and the complete batch-64 forward is 64 x that
-single-forward.
+physical capture; a complete batch-64 total would be a derived
+projection and is not reported.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | **2.460 s** single-input / **157.44 s** batch-64 | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+| Current implementation (first physical capture) | **2.460 s** | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
 
 Single-input forward 2.460 s is the fresh physical capture on PORT B
 (`/dev/cu.usbmodem1101`; warmup 1 + reps 2 timing sweep: 2.459752 s /
-2.460104 s). Batch-64 = 64 x 2.460 s = 157.44 s. The 16 tiny heads add
+2.460104 s). The 16 tiny heads add
 per-head loop/setup overhead in the hybrid attention path yet the
 projection-dominated forward stays close to the case-2 geometry's
 single-input time.

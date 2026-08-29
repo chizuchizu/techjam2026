@@ -1,8 +1,8 @@
 # Case 12 — short-sequence ESP32 Transformer
 
 Case 12 is `B=64, S=32, D=128, H=4, F=128, L=4`, causal. The board streams the
-official batch of 64 inputs and performs one complete forward per input frame,
-so a batch of 64 costs 64 × the single-forward time.
+official batch of 64 inputs and performs one complete forward per input frame.
+No complete-batch total is stated here because it would be a derived projection.
 
 ## Configuration
 
@@ -29,13 +29,14 @@ ESP32-C3 at 160 MHz, one forward per input frame.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | **0.492 s** (batch 64 → 31.5 s) | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+| Current implementation (first physical capture) | **0.493 s** | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
 
-The 0.492 s/forward was measured on board A (`/dev/cu.usbmodem101`): 5/5 device
-seeds pass the benchmark gate and the timed sweep reported 492,020 us and
-492,259 us per forward. The host gate passes all 25 seeds in both FAST and
-EXACT modes (50/50 seed-runs, 0 failed). Batch time is the streamed cost:
-64 inputs × 0.492 s = 31.5 s on one board.
+The 0.493 s/forward (per-seed host-measured time) was measured on board A
+(`/dev/cu.usbmodem101`): 5/5 device seeds pass the benchmark gate and the
+firmware's own counter reported 492,020 us and 492,259 us per forward. The host gate passes all 25 seeds in both FAST and
+EXACT modes (50/50 seed-runs, 0 failed). A complete-batch total would
+be a derived projection and is not reported; only real on-board
+measurements appear here.
 
 ## Likely next step
 

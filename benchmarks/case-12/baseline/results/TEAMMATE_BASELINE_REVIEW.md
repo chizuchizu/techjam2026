@@ -27,10 +27,10 @@ physical-device capture is
 | XIAO build RAM | 81,028 / 327,680 B (24.7%) |
 | XIAO build enlarged app partition | 2,644,516 / 3,145,728 B (84.1%) |
 | Physical XIAO seeds (board A) | 5/5 PASS |
-| Physical XIAO FAST forward | 0.492 s (492,020 / 492,259 us) |
+| Physical XIAO FAST forward | 0.493 s |
 
 The numerical result is confirmed on the host for all 25 seeds in both modes
-and on the board for seeds 0–4. The measured 0.492 s/forward matches the
+and on the board for seeds 0–4. The measured 0.493 s/forward matches the
 pre-measured case-07 value on the same board (0.491 s at D=32/F=32), so the
 short-sequence/projection overheads dominate at these shapes.
 
@@ -59,7 +59,7 @@ short-sequence/projection overheads dominate at these shapes.
 Short sequences make attention cheap, so the GEMM-heavy projections and FFN
 plus their dispatch/loop overhead dominate. Kernel fusion of the projection
 GEMMs (K==128 asm path is active at this shape) and the normalization is the
-first lever. Then compare single-board batch streaming (64 inputs × 0.492 s =
-31.5 s) against head or batch parallelism. At ~0.49 s per forward, any
+first lever. Then compare single-board batch streaming of the 64 inputs
+against head or batch parallelism. At ~0.49 s per forward, any
 distributed latency claim must include measured communication time, not just
 compute.

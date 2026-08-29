@@ -17,13 +17,13 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: ~1.996 s/forward**
-  (opt23; down from the 42.15 s starting implementation).
+  and biases are pre-quantized offline. **Measured on device: 0.493 s/forward**
+  (FAST, 5/5 device seeds; board A).
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): host **54/54 seed-runs pass** (FAST worst 1.03e-3,
-EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
-1.996 s/forward.
+|a-b| <= 0.02*|b|): host 25/25 seeds pass in both FAST and EXACT modes
+(FAST worst 1.0319e-03; EXACT worst 7.59e-05). On-device: **5/5 seeds pass**,
+worst max_abs 1.0332e-03, 0.493 s/forward.
 
 Scores: see scores.json (recomputed for this case's own measured on-board run; this case's only score artifact).
 
@@ -69,17 +69,16 @@ n timed forwards and prints `TM <mode> <us>...`.
 
 ## Numbers
 
-Param count 398,592 = 1.59 MB fp32. Live SRAM ~272 KB (fits 400 KB).
-Flash for weights ~2.38 MB (fits 4 MB). Host-validated accuracy: FAST
-0/25 seed failures (worst max_abs 9.6e-4); EXACT 0/25 (worst 3.6e-5).
+Param count 398,592 = 1.59 MB fp32. XIAO build RAM 81,028 B (fits 400 KB).
+App partition 2,644,516 B (fits 4 MB). Host-validated accuracy: FAST
+0/25 seed failures (worst max_abs 1.0319e-03); EXACT 0/25 (worst 7.59e-05).
 
 ## Current measured execution (on-device, FAST mode)
 
-Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs 9.6e-4..1.1e-3.
-Median forward time on-device is **~2.45 s** (opt18), a **17x speedup** over
-the 42.15 s measured starting point; measured via repeated forwards on the
-C3 (wall-clock, same weights/input). Fine-grained per-phase and per-version
-profiles are in [`optimisations/README.md`](optimisations/README.md).
+Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs up to 1.0332e-03.
+On-device forward time is **0.493 s/forward** (measured on board A).
+Fine-grained per-phase and per-version profiles are in
+[`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)
 
@@ -89,10 +88,10 @@ board's memory bandwidth (roofline). Numbers below are primary-source backed
 (Espressif datasheet + TRM; firecrawl-verified) and reproduced by
 `python3 tools/score.py`.
 
-Model work per forward (2 FLOP/MAC), **122.57 MFLOP**:
-- **100.66 M** int16 GEMMs (q,k,v,o,f1,f2 projections), FAST path;
-- **16.91 M** fp32 causal attention (QK^T + PV, dequant-on-read);
-- **~5.0 M** fp32 LayerNorm (x17) + deg-11 polynomial GELU + residuals.
+Model work per forward (2 FLOP/MAC), **27.50 MFLOP**:
+- **25.17 M** int16 GEMMs (q,k,v,o,f1,f2 projections), FAST path;
+- **1.08 M** fp32 causal attention (QK^T + PV, dequant-on-read);
+- **1.25 M** fp32 LayerNorm (x17) + deg-11 polynomial GELU + residuals.
 
 Board peaks (no FPU; all fp32 is libgcc soft-float):
 - **P_INT = 320 MFLOP/s** = 160 MMAC/s int16 ceiling (RV32IMC scalar,

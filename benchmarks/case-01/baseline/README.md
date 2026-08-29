@@ -11,11 +11,13 @@ Case 1 single-board batch speedup.
 
 ## Physical starting result
 
-Complete forward = all 64 batch inputs on one board.
+The batch of 64 inputs streams as 64 single-input forwards; only
+the per-input forward is measured on-board (a complete-batch total
+would be a derived projection and is not reported).
 
-| Implementation | Board | Complete forward | Accuracy |
+| Implementation | Board | Per-input forward (measured on-board) | Accuracy |
 |---|---:|---|---|
-| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 127.36 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
+| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 1.990 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
 
 The result covers the complete Case 1 Transformer body, not only
 attention. The raw capture and independent review are in
@@ -26,6 +28,6 @@ profile so the measured lineage stays explicit without duplicating
 firmware.
 
 Timing note: per-input forward measured on-board (board A) = 1.990 s
-(B=1, identical S/D/H/F/L geometry, 25/25 device seeds). The batch
-policy for Case 1 forbids reflashing the shared boards, so the
-complete-forward time is 64 x 1.990 s = 127.36 s (per-input 1.990 s measured on-board, board A).
+(single-input, identical S/D/H/F/L geometry, 5/5 device seeds). Only
+real on-board measurements are reported; a complete-batch total
+would be a derived projection and is therefore omitted.

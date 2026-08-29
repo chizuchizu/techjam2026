@@ -17,13 +17,13 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: ~1.996 s/forward**
-  (opt23; down from the 42.15 s starting implementation).
+  and biases are pre-quantized offline. **Measured on device: 1.990 s/forward**
+  (FAST, 5/5 device seeds; board A). A complete batch total is a derived projection and is not reported here.
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): host **54/54 seed-runs pass** (FAST worst 1.03e-3,
-EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
-1.996 s/forward.
+|a-b| <= 0.02*|b|): host 25/25 seeds pass in both FAST and EXACT modes
+(FAST worst 1.0320e-03; EXACT worst 7.82e-05). On-device: **5/5 seeds pass**,
+worst max_abs 1.0333e-03, 1.990 s/forward.
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
@@ -68,17 +68,16 @@ n timed forwards and prints `TM <mode> <us>...`.
 
 ## Numbers
 
-Param count 398,592 = 1.59 MB fp32. Live SRAM ~272 KB (fits 400 KB).
-Flash for weights ~2.38 MB (fits 4 MB). Host-validated accuracy: FAST
-0/25 seed failures (worst max_abs 9.6e-4); EXACT 0/25 (worst 3.6e-5).
+Param count 398,592 = 1.59 MB fp32. XIAO build RAM 274,564 B (fits 400 KB).
+App partition 2,644,470 B (fits 4 MB). Host-validated accuracy: FAST
+0/25 seed failures (worst max_abs 1.0320e-03); EXACT 0/25 (worst 7.82e-05).
 
 ## Current measured execution (on-device, FAST mode)
 
-Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs 9.6e-4..1.1e-3.
-Median forward time on-device is **~2.45 s** (opt18), a **17x speedup** over
-the 42.15 s measured starting point; measured via repeated forwards on the
-C3 (wall-clock, same weights/input). Fine-grained per-phase and per-version
-profiles are in [`optimisations/README.md`](optimisations/README.md).
+Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs up to 1.0333e-03.
+On-device forward time is **1.990 s/forward** (measured on board A).
+Fine-grained per-phase and per-version profiles are in
+[`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)
 

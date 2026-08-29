@@ -30,7 +30,7 @@ reflash was permitted per the case spec).
 
 The numerical result is confirmed on the host for all 25 seeds in both modes.
 The physical timing is the pre-measured board-A value (0.491 s/forward), which
-also matches the freshly measured case-12 value on the same board (0.492 s).
+also matches the freshly measured case-12 value on the same board (0.493 s).
 
 ## Review findings
 
@@ -39,11 +39,12 @@ also matches the freshly measured case-12 value on the same board (0.492 s).
    the description should say hybrid reference mode rather than exact.
 2. The physical-device capture in
    [`case-07_esp32_baseline_seed0_v1.log`](case-07_esp32_baseline_seed0_v1.log)
-   is reconstructed: `0.491 s` and `5/5 device PASS` are the measured board-A
-   values reused per the case spec (no reflash). Per-seed `max_abs` are the
-   FAST host-gate values for seeds 0–4, not fresh device maxima. Re-running
-   `tools/device_test.py /dev/cu.usbmodem101 --root . --seeds 0 1 2 3 4 --reps 2`
-   would replace them with device-captured values.
+   is a genuine on-board capture on board A (`/dev/cu.usbmodem101`): the
+   `0.491 s/forward` and per-seed device `max_abs` were measured in that run
+   (5/5 device PASS). Reproduce with `tools/device_test.py
+   /dev/cu.usbmodem101 --root . --seeds 0 1 2 3 4 --reps 2`. The per-input
+   forward is reused across the 64 streamed inputs per the case spec (no
+   reflash); no derived batch total is reported.
 3. `weights.bin`, `weights_q12.bin`, and `testdata/` are intentionally omitted
    from Git, so a clean checkout must regenerate the artifacts before host
    validation or firmware build (see commands below). The case-specific
@@ -60,6 +61,6 @@ also matches the freshly measured case-12 value on the same board (0.492 s).
 D and F of 32 make every projection and FFN matrix tiny, so dispatch, loop,
 and serialization overhead dominate the GEMMs. Fuse the narrow projections and
 normalization into fewer kernels first, then compare single-board batch
-streaming (64 inputs × 0.491 s = 31.4 s) against head or batch parallelism.
+streaming the 64 inputs against head or batch parallelism.
 With per-forward time under 0.5 s, include communication in any distributed
 latency result rather than inferring it from compute time.

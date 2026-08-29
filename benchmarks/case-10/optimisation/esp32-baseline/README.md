@@ -17,13 +17,15 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: ~1.996 s/forward**
-  (opt23; down from the 42.15 s starting implementation).
+  and biases are pre-quantized offline. **Not measurable on a single XIAO
+  ESP32-C3:** the firmware fails to link — `dram0_0_seg` overflows by
+  23,920 B (needs 345,272 B, have 321,296 B), so no on-device timing
+  is claimed.
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): host **54/54 seed-runs pass** (FAST worst 1.03e-3,
-EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
-1.996 s/forward.
+|a-b| <= 0.02*|b|): host 25/25 seeds pass in both FAST and EXACT modes
+(FAST worst 0.001089; EXACT worst 0.000091). On-device: **not run** — no
+firmware image links (see above).
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
@@ -68,17 +70,17 @@ n timed forwards and prints `TM <mode> <us>...`.
 
 ## Numbers
 
-Param count 398,592 = 1.59 MB fp32. Live SRAM ~272 KB (fits 400 KB).
-Flash for weights ~2.38 MB (fits 4 MB). Host-validated accuracy: FAST
-0/25 seed failures (worst max_abs 9.6e-4); EXACT 0/25 (worst 3.6e-5).
+Param count 398,592 = 1.59 MB fp32. XIAO build: **FAIL** —
+`dram0_0_seg` overflowed by 23,920 B (no firmware image).
+Host-validated accuracy: FAST 0/25 seed failures (worst max_abs 0.001089);
+EXACT 0/25 (worst 0.000091).
 
 ## Current measured execution (on-device, FAST mode)
 
-Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs 9.6e-4..1.1e-3.
-Median forward time on-device is **~2.45 s** (opt18), a **17x speedup** over
-the 42.15 s measured starting point; measured via repeated forwards on the
-C3 (wall-clock, same weights/input). Fine-grained per-phase and per-version
-profiles are in [`optimisations/README.md`](optimisations/README.md).
+Device gate (FAST, 5 seeds): **not run** — no firmware image links
+(`dram0_0_seg` overflow, see above). Host gate 25/25 seeds in both modes.
+Fine-grained per-phase and per-version profiles are in
+[`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)
 

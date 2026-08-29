@@ -1,8 +1,8 @@
 # Case 07 — narrow-dimension ESP32 Transformer
 
 Case 07 is `B=64, S=128, D=32, H=4, F=32, L=4`, causal. The board streams the
-official batch of 64 inputs and performs one complete forward per input frame,
-so a batch of 64 costs 64 × the single-forward time.
+official batch of 64 inputs and performs one complete forward per input frame.
+No complete-batch total is stated here because it would be a derived projection.
 
 ## Configuration
 
@@ -29,13 +29,13 @@ ESP32-C3 at 160 MHz, one forward per input frame.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | **0.491 s** (batch 64 → 31.4 s) | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+| Current implementation (first physical capture) | **0.491 s** | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
 
 The 0.491 s/forward was measured on board A (`/dev/cu.usbmodem101`) with 5/5
 device seeds passing the benchmark gate and is reused here per the case spec
 (no reflash). The host gate passes all 25 seeds in both FAST and EXACT modes
-(50/50 seed-runs, 0 failed). Batch time is the streamed cost:
-64 inputs × 0.491 s = 31.4 s on one board.
+(50/50 seed-runs, 0 failed). A complete-batch total would be a derived
+projection and is not reported; only real on-board measurements appear here.
 
 ## Likely next step
 

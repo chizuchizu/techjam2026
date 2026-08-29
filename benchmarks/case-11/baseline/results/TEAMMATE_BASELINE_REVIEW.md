@@ -31,12 +31,11 @@ The concise physical-device capture is
 | XIAO build enlarged app partition | 2,646,542 / 3,145,728 B (84.1%) |
 | Physical XIAO seeds 0-4 | PASS, 5/5 seeds, worst max_abs 1.0893e-03 |
 | Physical XIAO FAST single-input forward | 2.459752 s / 2.460104 s (reps-2 sweep) |
-| Case 11 complete forward (64 x 2.460 s) | 157.44 s |
 
 The numerical result is confirmed on host and on the physical board.
-The single-input forward 2.460 s is a fresh physical capture, and the
-complete batch-64 forward is 64 x that (the firmware streams one
-`S*D` input frame per forward).
+The single-input forward 2.460 s is a fresh physical capture (the
+firmware streams one `S*D` input frame per forward); a complete batch-64
+total would be a derived projection and is not reported.
 
 ## Review findings
 
@@ -56,7 +55,8 @@ complete batch-64 forward is 64 x that (the firmware streams one
    (The mechanical sweep adds `--quiet`; rc=0 confirms ALL PASS.)
 4. The firmware streams one input frame per forward; a batch of 64
    inputs is 64 sequential forwards with resident weights. Batch time
-   is additive (B x single forward); there is no pipelining that turns
+   would be additive (B x single forward), but only the measured
+   single-input forward is reported; there is no pipelining that turns
    batch parallelism into per-input latency reduction on one board.
 5. At `H=16` head width is 8, so per-head QK/PV rows are tiny (128x8)
    and the attention loop is index/setup-bound rather than

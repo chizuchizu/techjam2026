@@ -16,7 +16,7 @@ Complete forward = all 64 batch inputs on one board (each input is one
 
 | Implementation | Board | Complete forward (single-input) | Accuracy |
 |---|---:|---|---|
-| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 2.460 s (157.44 s batch-64) | Pass, worst max absolute error 1.0893e-03 (FAST, physical seed 3) |
+| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 2.460 s | Pass, worst max absolute error 1.0893e-03 (FAST, physical seed 3) |
 
 The result covers the complete Case 11 Transformer body, not only
 attention. Its raw physical capture and independent review are in
@@ -27,6 +27,6 @@ profile so the measured lineage stays explicit without duplicating
 firmware.
 
 Timing note: single-input forward 2.460 s is a fresh physical capture
-on PORT B (`/dev/cu.usbmodem1101`, heads group). Complete batch-64
-forward = 64 x 2.460 s = 157.44 s (firmware streams one frame per
-forward).
+on PORT B (`/dev/cu.usbmodem1101`, heads group). A complete batch-64
+total would be a derived projection and is not reported — only real
+on-board measurements are listed.
