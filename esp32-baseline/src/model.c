@@ -282,30 +282,57 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
             g_p15[j] = p15;
             lsum15 += p15;
         }
-        float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;
         PE(P_ATTN_EXP);
-        /* PV: j-outer with 4 parallel int64 accumulators in registers
-         * (d-block of 4 -> contiguous vj loads, no acc-array SRAM spill). */
         float* o = ctx + (size_t)i * TM_D + head * TM_HD;
         PB(P_ATTN_PV);
-        for (int db = 0; db < TM_HD; db += 4) {
-            int64_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
-            for (int j = 0; j <= i; j++) {
-                const int16_t* vj = vh + (size_t)j * TM_HD;
-                int32_t p = g_p15[j];
-                a0 += (int64_t)p * (int32_t)vj[db];
-                a1 += (int64_t)p * (int32_t)vj[db+1];
-                a2 += (int64_t)p * (int32_t)vj[db+2];
-                a3 += (int64_t)p * (int32_t)vj[db+3];
-            }
-                        if (fast) {
-                float rot = inv * g_sctx;
+        if (fast) {
+            /* int32 PV via per-row weight rescale to sum 32767:
+             * ctx is a weighted average, so c = sum_j p'_j*v_j with p' scaled so
+             * sum(p') ~= 32767 fits |c| <= 32767^2 in int32 -> a single 16x16 mul
+             * per MAC, no 64-bit accum, no mulh.  ctx_q = round(c * sv*g_sctx/32767),
+             * one fp32 mul + ftrunc per output, same as before. */
+            const int32_t QM = (int32_t)TM_QACT_MAX;
+            int32_t f15 = (int32_t)((int64_t)QM * QM /
+                                    (lsum15 > 0 ? (int64_t)lsum15 : 1));
+            for (int j = 0; j <= i; j++)
+                g_p15[j] = ((int64_t)g_p15[j] * f15 + 0x4000) >> 15;
+            /* integer ctx epilogue: ctx_q = round(c0 * rot) with rot = m/2^sh,
+             * m in [2^28, 2^30) -> exact int64 product, no fp32 per element.
+             * |real_ctx| <= ctxmax => |ctx_q| <= QACT, so sh >= 1 in practice. */
+            float t = sv * g_sctx / TM_QACT_MAX;
+            int sh = 0;
+            while (t < 268435456.0f && sh < 63) { t += t; sh++; }
+            while (t >= 1073741824.0f && sh > 1) { t *= 0.5f; sh--; }
+            int32_t m = (int32_t)t;
+            if (sh < 1) { m = (int32_t)(t * 0.5f); sh = 1; }
+            for (int db = 0; db < TM_HD; db += 4) {
+                int32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+                for (int j = 0; j <= i; j++) {
+                    const int16_t* vj = vh + (size_t)j * TM_HD;
+                    int32_t p = g_p15[j];
+                    c0 += p * (int32_t)vj[db];
+                    c1 += p * (int32_t)vj[db+1];
+                    c2 += p * (int32_t)vj[db+2];
+                    c3 += p * (int32_t)vj[db+3];
+                }
                 int16_t* oq = g_ctxq + (size_t)i * TM_D + head * TM_HD + db;
-                oq[0] = (int16_t)(int32_t)((float)a0 * rot);
-                oq[1] = (int16_t)(int32_t)((float)a1 * rot);
-                oq[2] = (int16_t)(int32_t)((float)a2 * rot);
-                oq[3] = (int16_t)(int32_t)((float)a3 * rot);
-            } else {
+                oq[0] = (int16_t)(((int64_t)c0 * m + (1LL << (sh - 1))) >> sh);
+                oq[1] = (int16_t)(((int64_t)c1 * m + (1LL << (sh - 1))) >> sh);
+                oq[2] = (int16_t)(((int64_t)c2 * m + (1LL << (sh - 1))) >> sh);
+                oq[3] = (int16_t)(((int64_t)c3 * m + (1LL << (sh - 1))) >> sh);
+            }
+        } else {
+            float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;
+            for (int db = 0; db < TM_HD; db += 4) {
+                int64_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+                for (int j = 0; j <= i; j++) {
+                    const int16_t* vj = vh + (size_t)j * TM_HD;
+                    int32_t p = g_p15[j];
+                    a0 += (int64_t)p * (int32_t)vj[db];
+                    a1 += (int64_t)p * (int32_t)vj[db+1];
+                    a2 += (int64_t)p * (int32_t)vj[db+2];
+                    a3 += (int64_t)p * (int32_t)vj[db+3];
+                }
                 o[db]   = (float)a0 * inv;
                 o[db+1] = (float)a1 * inv;
                 o[db+2] = (float)a2 * inv;
@@ -439,7 +466,7 @@ void tm_forward(const float* xin, float* yout,
                 PB(P_OPROJ);
         if (fast) {
             /* ctx already Q15 (global scale) in g_ctxq == g_buf2 -> raw core4 */
-            tm_gemm_core4(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
+            tm_gemm_core4_v2(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
                           W + woff(l, TM_W_BLK_OB), g_buf1,
                           TM_S, TM_D, TM_D, TM_D);
         } else {
@@ -471,7 +498,7 @@ void tm_forward(const float* xin, float* yout,
         /* ---- FFN ---- */
         PB(P_F1);
         if (fast) {
-            tm_gemm_core4(tm_gemm_a16(), 1.0f / sa_ffn, q12->q[l][4], q12->ws[l][4],
+            tm_gemm_core4_v2(tm_gemm_a16(), 1.0f / sa_ffn, q12->q[l][4], q12->ws[l][4],
                           W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
         } else {
             tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_F1W),
@@ -490,7 +517,7 @@ void tm_forward(const float* xin, float* yout,
             tm_gemm_quantA_into(g_buf2, TM_S * TM_F, a2, sa2);
             tm_gelu_q15_lut(a2, TM_S * TM_F, TM_QACT_MAX / sa2);
             PE(P_GELU);
-            tm_gemm_core4(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+            tm_gemm_core4_v2(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
                          W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gelu_inplace(g_buf2, TM_S * TM_F);
