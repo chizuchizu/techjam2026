@@ -1,11 +1,46 @@
-# Case 07
+# Case 07 — narrow-dimension ESP32 Transformer
 
-Configuration: `B=64, S=128, D=32, H=4, F=32, L=4`, causal.
+Case 07 is `B=64, S=128, D=32, H=4, F=32, L=4`, causal. The board streams the
+official batch of 64 inputs and performs one complete forward per input frame,
+so a batch of 64 costs 64 × the single-forward time.
 
-Status: **not implemented on ESP32**. No physical timing or accuracy result is
-claimed.
+## Configuration
 
-Likely focus: fuse narrow projections and normalization because dispatch and
-loop overhead may dominate the small matrices. Compare that single-board path
-with batch parallelism; do not assume head distribution will amortise network
-cost.
+| Dim | Value | Meaning |
+|---|---:|---|
+| B | 64 | batch size (streamed; one forward per input frame) |
+| S | 128 | sequence length |
+| D | 32 | model dimension |
+| H | 4 | attention heads (head dim 8) |
+| F | 32 | FFN hidden dimension |
+| L | 4 | transformer layers |
+
+## Directory ownership
+
+| Directory | Contents |
+|---|---|
+| [`baseline/`](baseline/) | First physical C3 capture and independent review |
+| [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+
+## Comparable complete-forward result
+
+These rows execute the same complete four-layer Transformer body on one XIAO
+ESP32-C3 at 160 MHz, one forward per input frame.
+
+| Build | Time/forward | Speedup | Validation |
+|---|---:|---:|---|
+| Current implementation (first physical capture) | **0.491 s** (batch 64 → 31.4 s) | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+
+The 0.491 s/forward was measured on board A (`/dev/cu.usbmodem101`) with 5/5
+device seeds passing the benchmark gate and is reused here per the case spec
+(no reflash). The host gate passes all 25 seeds in both FAST and EXACT modes
+(50/50 seed-runs, 0 failed). Batch time is the streamed cost:
+64 inputs × 0.491 s = 31.4 s on one board.
+
+## Likely next step
+
+D and F of 32 make the projection and FFN matrices tiny, so dispatch, loop,
+and serialization overhead dominate the small GEMMs. Fuse the narrow
+projections and normalization, then compare that single-board path with batch
+parallelism. Do not assume head distribution amortises network cost when each
+forward is under 0.5 s.

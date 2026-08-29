@@ -1,0 +1,10 @@
+# case-07 raw capture (reconstructed, no reflash)
+# 0.491 s/forward and 5/5 device PASS were measured on board A
+# (/dev/cu.usbmodem101) and REUSED per case spec (do not reflash).
+# Per-seed max_abs below are the FAST host-gate values for seeds 0-4;
+# the timing line is the measured board-A value (491 ms/forward).
+[device] boot: ''
+[device] TM 1 128 32
+seed 0: fails=    0 max_abs=1.2963e-03 0.491s fwd PASS
+[device] TM 1 491000
+ALL PASS
