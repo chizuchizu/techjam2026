@@ -76,6 +76,7 @@ void setup() {
     delay(200);
     tm_set_mode(TM_MODE_DEFAULT);
     Serial.println("TM XIAO-ESP32C3 case2 baseline ready");
+    Serial.printf("TM cpu=%u MHz xtal=%u\n", (unsigned)getCpuFrequencyMhz(), (unsigned)getXtalFrequencyMhz());
     Serial.printf("TM weights f32=%u bytes q12=%u bytes\n",
                   (unsigned)(_binary_weights_bin_end - _binary_weights_bin_start),
                   (unsigned)(_binary_weights_q12_bin_end - _binary_weights_q12_bin_start));
@@ -134,6 +135,11 @@ void loop() {
         }
         case 'Q': {
             char line[220]; tm_kbench2(line, sizeof line);
+            Serial.print(line);
+            break;
+        }
+        case 'W': {
+            char line[220]; tm_kbench3(line, sizeof line);
             Serial.print(line);
             break;
         }

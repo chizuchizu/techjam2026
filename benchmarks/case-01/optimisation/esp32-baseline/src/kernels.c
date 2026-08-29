@@ -2150,3 +2150,94 @@ void tm_dbg_c5acc(char* out, size_t outsz) {
     snprintf(out, outsz, "C5P host\n");
 #endif
 }
+
+
+
+extern const uint8_t _binary_weights_q12_bin_start[];
+
+void tm_kbench3(char* out, size_t outsz) {
+#if defined(__riscv)
+    enum { M=128, K=128, N=128, HD=32 };
+    int16_t* A  = tm_gemm_a16();
+    int16_t* Ws = A + M*K;
+    const int16_t* Wf = (const int16_t*)(const void*)_binary_weights_q12_bin_start;
+    uint32_t st = 909;
+    for (int i=0;i<M*K;i++){ st=st*1664525u+1013904223u; A[i]=(int16_t)(st>>16); }
+    memcpy(Ws, Wf, (size_t)M*K*2u);
+    volatile int32_t sink=0;
+    uint32_t t0,t1;
+    /* E: verbatim kbench2 Cinner (sink +=), SRAM */
+    t0=tm_cyc_now();
+    for (int rep=0;rep<4;rep++){
+        for (int j=0;j+1<N;j+=2){
+          const int16_t* w0=Ws+(size_t)j*K; const int16_t* w1=Ws+(size_t)(j+1)*K;
+          for (int it=0;it<M;it+=4){
+            const int16_t* a0=A+(size_t)it*K;
+            int32_t c00=0,c10=0,c20=0,c30=0,c01=0,c11=0,c21=0,c31=0;
+            int k=0;
+            for (;k+1<K;k+=2){
+              int32_t b0=w0[k],b1=w1[k],b0n=w0[k+1],b1n=w1[k+1];
+              int32_t v00=a0[k],v10=a0[K+k],v20=a0[2*K+k],v30=a0[3*K+k];
+              int32_t v01=a0[k+1],v11=a0[K+k+1],v21=a0[2*K+k+1],v31=a0[3*K+k+1];
+              c00+=v00*b0;c10+=v10*b0;c20+=v20*b0;c30+=v30*b0;
+              c01+=v00*b1;c11+=v11*b1;c21+=v21*b1;c31+=v31*b1;
+              c00+=v01*b0n;c10+=v11*b0n;c20+=v21*b0n;c30+=v31*b0n;
+              c01+=v01*b1n;c11+=v11*b1n;c21+=v21*b1n;c31+=v31*b1n;
+            }
+            sink += c00+c10+c20+c30+c01+c11+c21+c31;
+          }
+        }
+    }
+    t1=tm_cyc_now();
+    double e = (double)(t1-t0)/4.0/(double)((uint64_t)M*K*N) * 8.0;
+    /* F: same verbatim inner (sink +=) but W from FLASH */
+    t0=tm_cyc_now();
+    for (int rep=0;rep<4;rep++){
+        for (int j=0;j+1<N;j+=2){
+          const int16_t* w0=Wf+(size_t)j*K; const int16_t* w1=Wf+(size_t)(j+1)*K;
+          for (int it=0;it<M;it+=4){
+            const int16_t* a0=A+(size_t)it*K;
+            int32_t c00=0,c10=0,c20=0,c30=0,c01=0,c11=0,c21=0,c31=0;
+            int k=0;
+            for (;k+1<K;k+=2){
+              int32_t b0=w0[k],b1=w1[k],b0n=w0[k+1],b1n=w1[k+1];
+              int32_t v00=a0[k],v10=a0[K+k],v20=a0[2*K+k],v30=a0[3*K+k];
+              int32_t v01=a0[k+1],v11=a0[K+k+1],v21=a0[2*K+k+1],v31=a0[3*K+k+1];
+              c00+=v00*b0;c10+=v10*b0;c20+=v20*b0;c30+=v30*b0;
+              c01+=v00*b1;c11+=v11*b1;c21+=v21*b1;c31+=v31*b1;
+              c00+=v01*b0n;c10+=v11*b0n;c20+=v21*b0n;c30+=v31*b0n;
+              c01+=v01*b1n;c11+=v11*b1n;c21+=v21*b1n;c31+=v31*b1n;
+            }
+            sink += c00+c10+c20+c30+c01+c11+c21+c31;
+          }
+        }
+    }
+    t1=tm_cyc_now();
+    double f = (double)(t1-t0)/4.0/(double)((uint64_t)M*K*N) * 8.0;
+    /* G: verbatim inner SRAM but with the 8 accs OR'd into a dummy that is
+     * then added once -- same as Cinner -- but reading a0 via 4 pointers */
+    t0=tm_cyc_now();
+    for (int rep=0;rep<4;rep++){
+        for (int j=0;j+1<N;j+=2){
+          const int16_t* w0=Ws+(size_t)j*K; const int16_t* w1=Ws+(size_t)(j+1)*K;
+          for (int it=0;it<M;it+=4){
+            const int16_t* a0=A+(size_t)(it+0)*K; const int16_t* a1=A+(size_t)(it+1)*K;
+            const int16_t* a2=A+(size_t)(it+2)*K; const int16_t* a3=A+(size_t)(it+3)*K;
+            int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
+            for (int k=0;k<K;k++){ int32_t b=w0[k];
+              c0+=(int32_t)a0[k]*b; c1+=(int32_t)a1[k]*b; c2+=(int32_t)a2[k]*b; c3+=(int32_t)a3[k]*b; }
+            for (int k=0;k<K;k++){ int32_t b=w1[k];
+              c4+=(int32_t)a0[k]*b; c5+=(int32_t)a1[k]*b; c6+=(int32_t)a2[k]*b; c7+=(int32_t)a3[k]*b; }
+            sink += c0+c1+c2+c3+c4+c5+c6+c7;
+          }
+        }
+    }
+    t1=tm_cyc_now();
+    double gg = (double)(t1-t0)/4.0/(double)((uint64_t)M*K*N) * 8.0;
+    snprintf(out,outsz,
+      "K3b verbCinner_SRAM=%.2f verbCinner_FLASH=%.2f j1k128_SRAM=%.2f (cyc/8MAC) sink=%d\n",
+      e,f,gg,(int)sink);
+#else
+    snprintf(out,outsz,"K3 host\n");
+#endif
+}

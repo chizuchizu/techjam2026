@@ -102,6 +102,7 @@ void tm_microbench(char* out, size_t outsz);
 void tm_dbg_c5acc(char* out, size_t outsz);
 
 void tm_kbench2(char* out, size_t outsz);
+void tm_kbench3(char* out, size_t outsz);
 #ifdef __cplusplus
 }
 #endif
