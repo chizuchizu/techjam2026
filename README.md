@@ -58,18 +58,52 @@ change.
 
 ### Benchmark evidence
 
+#### Completed foundation
+
 - [x] Add the official case-2 baseline implementation.
 - [x] Validate the case-2 baseline against the required accuracy gate.
 - [x] Record the physical single-board baseline timing.
 - [x] Add the optimised case-2 single-board implementation.
 - [x] Validate the optimised implementation on host and physical hardware.
 - [x] Record the baseline-to-optimised single-board speedup.
-- [x] Record the two-board partial-layer result.
-- [x] Record the four-board attention result.
+- [x] Record a two-board partial-layer result.
+- [x] Record a four-board attention-only result.
+- [x] Label both multiboard results as partial, not end-to-end inference.
+
+#### Complete four-board end-to-end case 2
+
+- [ ] Run all four layers and the final LayerNorm across four boards.
+- [ ] Add the missing projections, residuals, LayerNorm, and FFN path.
+- [ ] Keep weights on the workers and return each complete layer output.
+- [ ] Validate one-, two-, and four-board outputs with five seeds.
+- [ ] Measure full wall time and split compute from communication.
+- [ ] Save raw results and compare speedup, efficiency, median, and p90.
+
+#### Scale from four boards to eight boards
+
+- [ ] Choose an eight-board split beyond the four available attention heads.
+- [ ] Add stable board IDs, discovery, timeouts, retries, and failure handling.
+- [ ] Validate the eight-board output against the official reference.
+- [ ] Benchmark one, two, four, and eight boards under the same conditions.
+- [ ] Measure speedup, efficiency, communication, retries, and slowest-worker time.
+- [ ] Save raw results and explain where scaling improves or stops.
+
+#### Support additional official benchmark cases
+
+- [ ] Move case shapes out of case-2-specific code and into configuration.
+- [ ] Add case selection, memory checks, and shared validated kernels.
+- [ ] Support cases 3, 7, 9, 11, 12, and 13 first.
+- [ ] Validate every case against its official reference.
+- [ ] Keep each case's code, raw results, and report in its own directory.
+- [ ] Add other cases after checking memory and runtime needs.
+
+#### Final evidence pack
+
 - [ ] Run the final case-2 commands from a fresh checkout.
-- [ ] Record the exact board, clock, framework, compiler, and library versions.
-- [ ] Choose the final raw captures that will be cited in the submission.
-- [ ] Check that every cited speedup compares the same shape and scope.
+- [ ] Record hardware, clocks, software versions, and timing rules.
+- [ ] Check that every result passes accuracy and uses the same scope.
+- [ ] Publish raw captures with median, p90, warm-ups, and run counts.
+- [ ] Summarise what scaled, what did not, and why.
 
 ### Repository and README
 
