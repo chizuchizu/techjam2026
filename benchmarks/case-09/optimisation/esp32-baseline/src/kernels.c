@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <string.h>
+#include "gelu_tab_2049.h"
 
 /* ================= fp32 GEMM =================
  * C[M,N] = A[M,K]*W[N,K]^T + bias. Row-major A, W stored as N*K rows
@@ -38,8 +39,23 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
  */
 /* Shared Q15 activation scratch (32 KB).  Used by the FAST projection
  * GEMMs.  Sequential use: the QKV path quantizes g_buf1 ONCE per layer and
- * reuses this buffer across all heads; oproj/f1/f2 re-use it after. */
-static int16_t a16[TM_S * TM_D];
+ * reuses this buffer across all heads; oproj/f1/f2 re-use it after.
+ * The activation buffer a16 ALIASES model.c's g_qh (EXACT qh) - the two modes
+ * never co-live (FAST uses a16, EXACT uses qh) -> -32 KB SRAM. */
+extern int16_t g_qh[TM_S * TM_HD];
+#define a16 g_qh
+
+/* Fused-LayerNorm scratch overlays the head of model.c's g_buf2, which is
+ * provably free during every norm call (bn/layernorm run between the GEMM
+ * phases that own g_buf2).  Kernels keep their own .bss otherwise. */
+extern float g_buf2[TM_S * TM_D];
+#define s1_   ((int32_t *)(g_buf2))
+#define s2_   ((int64_t *)((int32_t *)(g_buf2) + TM_S))
+#define mx_   ((int16_t *)((int32_t *)(g_buf2) + 3 * TM_S))
+#define mx15_ ((int32_t *)((int32_t *)(g_buf2) + 4 * TM_S))
+#define sh_   ((int32_t *)((int32_t *)(g_buf2) + 5 * TM_S))
+#define Fk_   ((int32_t *)((int32_t *)(g_buf2) + 6 * TM_S + TM_D))
+#define Bk_   ((int32_t *)((int32_t *)(g_buf2) + 6 * TM_S + 2 * TM_D))
 
 /* Accessor so model.c can share the same scratch (no duplicate 32 KB). */
 int16_t* tm_gemm_a16(void) { return a16; }
@@ -1136,8 +1152,7 @@ float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
     const float sxi2 = sxi * sxi;
     /* pass 1: quantize x once (integer bit-trick conversion), accumulate
      * integer row stats. */
-    static int32_t s1_[TM_S]; static int64_t s2_[TM_S]; static int16_t mx_[TM_S];
-    float bmax = 0.0f;
+        float bmax = 0.0f;
     for (int32_t i = 0; i < S; i++) {
         int32_t s1 = 0; int64_t s2 = 0; int32_t mx = 0;
         const uint32_t* rowbits = srci + (size_t)i * D;
@@ -1193,7 +1208,6 @@ float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
     }
     if (!(amb > 0.0f)) amb = 1.0f;
     float sa = TM_QACT_MAX / amb * 0.9999f;
-    static int32_t Fk_[TM_D]; static int32_t Bk_[TM_D];
     for (int32_t k = 0; k < D; k++) {
         float F = sa * gamma[k] * sxi;
         Fk_[k] = (int32_t)(F * 32768.0f + (F < 0.0f ? -0.5f : 0.5f));
@@ -1510,9 +1524,7 @@ void tm_gemm_core5_resid(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_bn_q15_res(const int32_t* in_q, float sx, const float* gamma,
                     const float* beta, int16_t* out_q, int S, int D) {
     const int32_t Q = 32767;
-    static int32_t s1_[TM_S]; static int64_t s2_[TM_S];
-    static int32_t mx15_[TM_S]; static int32_t sh_[TM_S];
-    float bmax = 0.0f;
+        float bmax = 0.0f;
     for (int32_t i = 0; i < S; i++) {
         const int32_t* src = in_q + (size_t)i * D;
         int16_t* dst = out_q + (size_t)i * D;
@@ -1569,7 +1581,6 @@ float tm_bn_q15_res(const int32_t* in_q, float sx, const float* gamma,
     }
     if (!(amb > 0.0f)) amb = 1.0f;
     float sa = TM_QACT_MAX / amb * 0.9999f;
-    static int32_t Fk_[TM_D]; static int32_t Bk_[TM_D];
     for (int32_t k = 0; k < D; k++) {
         float F = sa * gamma[k];                     /* per-LSB factor (sxi applied later per row) */
         Fk_[k] = (int32_t)(F * 32768.0f + (F < 0.0f ? -0.5f : 0.5f));
@@ -1650,22 +1661,46 @@ void tm_gelu_inplace(float* x, int n) {
  * for the actual scale; applies in pure integer (7-bit linear interp, max
  * err <0.1 Q15 units).  Output stays on the input Q15 grid (|gelu|<=|x|).
  */
-static int16_t g_gelu_lut[513];
+/* ================= GELU (fixed-table, ROCK 20) =================
+ * out = 0.5*x*(1+erf(x/(sa2*sqrt2))),  sa2 = TM_QACT_MAX/amax.
+ * erf via FIXED 2049-entry table over the argument z>=0 (gelu_tab_2049.h)
+ * + per-layer integer index scale.  index(x)=|x|/sqrt2/sa2/ZSTEP;
+ * q = round(csc*2^S).  Replaces the per-layer soft-float LUT rebuild
+ * (~40-55 ms/fwd) with ~7 integer ops/element (4 KB flash .rodata, 0 RAM).
+ */
 void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
     const float inv_sqrt2 = 0.70710677f;
-    float amr2 = amax * inv_sqrt2;
-    for (int k = 0; k <= 512; k++) {
-        float u = -1.0f + 2.0f * (float)k * (1.0f / 512.0f);
-        float p = tm_erf_poly(u * amr2);
-        float g = 0.5f * u * (1.0f + p);          /* gelu / amax */
-        g_gelu_lut[k] = (int16_t)(g * 32767.0f + (g >= 0.0f ? 0.5f : -0.5f));
+    const float ZSTEP = 3.2f / 2048.0f;
+    const float csc = (amax / (32767.0f * inv_sqrt2)) / ZSTEP;
+    int S = 0;
+    int32_t q = 1;
+    if (csc < 2048.0f) {
+        while (S < 20) {
+            int32_t qtry = (int32_t)(csc * (float)(1 << S) + 0.5f);
+            if ((int64_t)32767 * (int64_t)qtry < ((int64_t)1 << 30)) { q = qtry; S++; }
+            else break;
+        }
     }
+    if (csc >= 2048.0f) {
+        for (int i = 0; i < n; i++) x[i] = x[i] > 0 ? x[i] : (int16_t)0;
+        return;
+    }
+    const int32_t half = 1 << (S - 1);
+    const int32_t mask = (1 << S) - 1;
     for (int i = 0; i < n; i++) {
-        int32_t p = (int32_t)x[i] + 32768;        /* 0..65535 */
-        int32_t idx = p >> 7;                     /* 0..511 */
-        int32_t off = p & 127;
-        x[i] = (int16_t)((int32_t)g_gelu_lut[idx] +
-                         ((((int32_t)g_gelu_lut[idx+1] - (int32_t)g_gelu_lut[idx]) * off + 64) >> 7));
+        int32_t v = x[i];
+        if (v == 0) continue;
+        int32_t ax = v < 0 ? -v : v;
+        int64_t avq = (int64_t)ax * q;
+        int32_t idx = (int32_t)(avq >> S);
+        if (idx >= 2048) { x[i] = v > 0 ? v : (int16_t)0; continue; }
+        int32_t e0 = g_erf_tab[idx], e1 = g_erf_tab[idx + 1];
+        int32_t off = (int32_t)(avq & mask);
+        int32_t ev = e0 + (((e1 - e0) * off + half) >> S);
+        float g;
+        if (v > 0) g = 0.5f * (float)ax * (32767.0f + (float)ev) / 32767.0f;
+        else       g = 0.5f * (float)ax * ((float)ev - 32767.0f) / 32767.0f;
+        x[i] = (int16_t)(g + (g >= 0.0f ? 0.5f : -0.5f));
     }
 }
 
