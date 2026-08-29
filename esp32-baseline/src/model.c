@@ -466,7 +466,7 @@ void tm_forward(const float* xin, float* yout,
                 PB(P_OPROJ);
         if (fast) {
             /* ctx already Q15 (global scale) in g_ctxq == g_buf2 -> raw core4 */
-            tm_gemm_core4_v2(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
+            tm_gemm_core5(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
                           W + woff(l, TM_W_BLK_OB), g_buf1,
                           TM_S, TM_D, TM_D, TM_D);
         } else {
@@ -498,7 +498,7 @@ void tm_forward(const float* xin, float* yout,
         /* ---- FFN ---- */
         PB(P_F1);
         if (fast) {
-            tm_gemm_core4_v2(tm_gemm_a16(), 1.0f / sa_ffn, q12->q[l][4], q12->ws[l][4],
+            tm_gemm_core5(tm_gemm_a16(), 1.0f / sa_ffn, q12->q[l][4], q12->ws[l][4],
                           W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
         } else {
             tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_F1W),
@@ -517,7 +517,7 @@ void tm_forward(const float* xin, float* yout,
             tm_gemm_quantA_into(g_buf2, TM_S * TM_F, a2, sa2);
             tm_gelu_q15_lut(a2, TM_S * TM_F, TM_QACT_MAX / sa2);
             PE(P_GELU);
-            tm_gemm_core4_v2(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+            tm_gemm_core5(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
                          W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gelu_inplace(g_buf2, TM_S * TM_F);

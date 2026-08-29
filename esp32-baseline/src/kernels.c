@@ -62,6 +62,7 @@ void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
 #include <stdio.h>
 #if defined(__riscv)
 #include "esp_timer.h"
+#include "esp_cpu.h"
 #define KB_NOW() ((uint32_t)esp_timer_get_time())
 #else
 #include <time.h>
@@ -71,13 +72,25 @@ static __inline__ uint32_t tm_kb_now_host(void) {
 }
 #define KB_NOW() tm_kb_now_host()
 #endif
+
+/* RISC-V cycle counter to separate CPU-bound vs flash-XIP stalls
+ * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
+static __inline__ uint64_t tm_cyc_now(void) {
+#if defined(__riscv)
+    return (uint64_t)esp_cpu_get_ccount();
+#else
+    return 0;
+#endif
+}
+static uint64_t g_c4_cyc = 0; static uint32_t g_c4_n = 0;
+static uint64_t g_c5_cyc = 0; static uint32_t g_c5_n = 0;
 /* kernels-internal microsecond instrumentation (independent of model.c slots) */
 static uint32_t k_t0[4];
 static uint64_t k_acc[4]; static uint32_t k_n[4];
 #define KPB(i) do { k_t0[(i)] = KB_NOW(); } while (0)
 #define KPE(i) do { uint32_t d = KB_NOW() - k_t0[(i)]; \
                     k_acc[(i)] += d; k_n[(i)]++; } while (0)
-void tm_kbench_clear(void) { for (int i=0;i<4;i++){k_acc[i]=0;k_n[i]=0;} }
+void tm_kbench_clear(void) { for (int i=0;i<4;i++){k_acc[i]=0;k_n[i]=0;} g_c4_cyc=0; g_c4_n=0; g_c5_cyc=0; g_c5_n=0; }
 void tm_kbench_dump(void) {
     extern void tm_prof_emit(const char* s);
     char line[128];
@@ -85,6 +98,18 @@ void tm_kbench_dump(void) {
         (void)snprintf(line,sizeof line,"KB%d n=%u avg_us=%.1f tot_ms=%.1f\n",
             i, k_n[i], (double)k_acc[i]/(double)k_n[i],
             (double)k_acc[i]/1000.0);
+        tm_prof_emit(line);
+    }
+    if (g_c4_n) {
+        (void)snprintf(line,sizeof line,"C4CYC n=%u avg_cyc=%.1f avg_us=%.1f\n",
+            g_c4_n, (double)g_c4_cyc/(double)g_c4_n,
+            (double)g_c4_cyc/(double)g_c4_n/160.0);
+        tm_prof_emit(line);
+    }
+    if (g_c5_n) {
+        (void)snprintf(line,sizeof line,"C5CYC n=%u avg_cyc=%.1f avg_us=%.1f\n",
+            g_c5_n, (double)g_c5_cyc/(double)g_c5_n,
+            (double)g_c5_cyc/(double)g_c5_n/160.0);
         tm_prof_emit(line);
     }
 }
@@ -95,32 +120,50 @@ void tm_kbench_dump(void) {
 
 
 /* Quantize A into a caller buffer (Q15 fast-round, no libm). sa precomputed. */
-void tm_gemm_quantA_into(const float* A, int n, int16_t* out, float sa) {
-    for (int i = 0; i < n; i++) {
-        float v = A[i] * sa;
-        int q;
-        if (v >= 0.0f) {
-            q = (int)(v + 0.5f);
-            if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX;
-        } else {
-            q = (int)(v - 0.5f);
-            if (q < -TM_QACT_MAX) q = -(int)TM_QACT_MAX;
-        }
-        out[i] = (int16_t)q;
-    }
-}
-
 /* Amax scan of A; returns the Q15 scale sa = TM_QACT_MAX/amax. */
-float tm_gemm_amax(const float* A, int n) {
-    float amax = 0.0f;
-    for (int i = 0; i < n; i++) {
-        float av = A[i] < 0.0f ? -A[i] : A[i];
-        if (av > amax) amax = av;
-    }
-    if (amax == 0.0f) amax = 1.0f;
-    return TM_QACT_MAX / amax;
+/* integer f32 -> q15 with runtime scale sa = sc_m * 2^sc_e (exact 48-bit
+ * product, single rounding at the shift): no soft-float per element. */
+static inline int32_t tm_f2q15(uint32_t b, int32_t sc_m, int sc_e, int32_t Q) {
+    if ((b & 0x7f800000u) == 0) return 0;                 /* zero / subnormal */
+    if ((b & 0x7f800000u) == 0x7f800000u)                 /* inf/nan guard */
+        return (b >> 31) ? -Q : Q;
+    int sh = (int)((b >> 23) & 0xffu) - 150 + sc_e;
+    uint64_t P = (uint64_t)((b & 0x7fffffu) | 0x800000u) * (uint64_t)(uint32_t)sc_m;
+    int64_t pr;
+    if (sh >= 0) { pr = (int64_t)(P << sh); }
+    else { int rs = -sh; pr = (int64_t)((P + (1ULL << (rs - 1))) >> rs); }
+    if (pr > Q) pr = Q;
+    int32_t q = (int32_t)pr;
+    return (b >> 31) ? -q : q;
+}
+/* split float scale sa into (sc_m, sc_e) with sc = sc_m * 2^sc_e, sc_m in [2^23,2^24) */
+static inline void tm_split_scale(float sa, int32_t* sc_m, int* sc_e) {
+    uint32_t sbb; memcpy(&sbb, &sa, 4);
+    int e = (int)((sbb >> 23) & 0xffu);
+    *sc_e = e - 150;
+    *sc_m = (int32_t)((sbb & 0x7fffffu) | 0x800000u);
+    if (e == 0) { *sc_m = 0; *sc_e = 0; }
 }
 
+float tm_gemm_amax(const float* A, int n) {
+    const uint32_t* ai = (const uint32_t *)(const void *)A;
+    uint32_t am = 0;
+    for (int i = 0; i < n; i++) {
+        uint32_t u = ai[i] & 0x7fffffffu;
+        if (u > am) am = u;
+    }
+    if (am == 0) am = 0x3f800000u;               /* amax = 1.0f */
+    return (TM_QACT_MAX / *((const float*)&am));
+}
+
+void tm_gemm_quantA_into(const float* A, int n, int16_t* out, float sa) {
+    int32_t sc_m; int sc_e;
+    tm_split_scale(sa, &sc_m, &sc_e);
+    const uint32_t* ai = (const uint32_t *)(const void *)A;
+    for (int i = 0; i < n; i++) {
+        out[i] = (int16_t)tm_f2q15(ai[i], sc_m, sc_e, (int32_t)TM_QACT_MAX);
+    }
+}
 /* Quant-accumulate core (CMSIS arm_mat_mult_fast_q15 style): 4-way unrolled
  * inner loop with 4 independent int32 accumulators.  int16*int16 exact in
  * int32; each accumulator sees K/4 terms so far below saturation here. */
@@ -335,14 +378,17 @@ KPB(2);
     KPE(2);
 }
 
+
 void tm_gemm_core4_v2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                      float w_scale, const float* bias, float* C,
                      int M, int K, int N, int rowStride) {
+    uint64_t _c4s = tm_cyc_now();
     /* j-tile-2 (2 output cols) x 8-row x K-pair: 16 int32 accs.  Each A q15
      * load is reused across 2 weight cols (halves A-side lhu per MAC) and the
      * 32 independent mul/add chains with all 20 loads hoisted ahead of the
      * muls hide load->use latency on the 4-stage in-order RV32 core. */
     const float g = sa_inv * w_scale;
+
     for (int j = 0; j + 1 < N; j += 2) {
         const int16_t* w0 = Wq + (size_t)j * K;
         const int16_t* w1 = Wq + (size_t)(j + 1) * K;
@@ -434,10 +480,81 @@ void tm_gemm_core4_v2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             c0r[7*rowStride] = (float)c7 * g + bj;
         }
     }
+    g_c4_cyc += (uint64_t)(tm_cyc_now() - _c4s); g_c4_n++;
 }
 
-/* accumulate variant: C += Aq*Wq*g (+bias when bias!=NULL). Used by the
- * per-head oproj split so attention can emit Q15 ctx without a requant pass. */
+
+/* core5: oproj/FFN1/FFN2 GEMM - j-tile-2 x IBLK=4 x K-pair, 8 int32 accs and
+ * ~20 live registers (vs core4_v2's 36+ which spill on the in-order RV32I).
+ * Bit-exact vs core4_v2 (identical product order); fp32 epilogue. */
+void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                   float w_scale, const float* bias, float* C,
+                   int M, int K, int N, int rowStride) {
+    uint64_t _c5s = tm_cyc_now();
+    const float g = sa_inv * w_scale;
+    for (int j = 0; j + 1 < N; j += 2) {
+        const int16_t* w0 = Wq + (size_t)j * K;
+        const int16_t* w1 = Wq + (size_t)(j + 1) * K;
+        const float bj  = bias ? bias[j]   : 0.0f;
+        const float bj1 = bias ? bias[j+1] : 0.0f;
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it + 0) * K;
+            const int16_t* a1 = Aq + (size_t)(it + 1) * K;
+            const int16_t* a2 = Aq + (size_t)(it + 2) * K;
+            const int16_t* a3 = Aq + (size_t)(it + 3) * K;
+            int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
+            int k = 0;
+            for (; k + 1 < K; k += 2) {
+                int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
+                int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
+                int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+                c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+            }
+            for (; k < K; k++) {
+                int32_t b0 = w0[k], b1 = w1[k];
+                int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+            }
+            float* c0r = C + (size_t)it * rowStride + j;
+            c0r[0]              = (float)c00 * g + bj;
+            c0r[1]              = (float)c01 * g + bj1;
+            c0r[rowStride]      = (float)c10 * g + bj;
+            c0r[rowStride+1]    = (float)c11 * g + bj1;
+            c0r[2*rowStride]    = (float)c20 * g + bj;
+            c0r[2*rowStride+1]  = (float)c21 * g + bj1;
+            c0r[3*rowStride]    = (float)c30 * g + bj;
+            c0r[3*rowStride+1]  = (float)c31 * g + bj1;
+        }
+    }
+    if (N & 1) {
+        int j = N - 1;
+        const int16_t* wr = Wq + (size_t)j * K;
+        const float bj = bias ? bias[j] : 0.0f;
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0;
+            for (int k = 0; k < K; k++) {
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k]*b; c1 += (int32_t)a1[k]*b;
+                c2 += (int32_t)a2[k]*b; c3 += (int32_t)a3[k]*b;
+            }
+            float* c0r = C + (size_t)it * rowStride + j;
+            c0r[0] = (float)c0 * g + bj;
+            c0r[rowStride]   = (float)c1 * g + bj;
+            c0r[2*rowStride] = (float)c2 * g + bj;
+            c0r[3*rowStride] = (float)c3 * g + bj;
+        }
+    }
+    g_c5_cyc += (uint64_t)(tm_cyc_now() - _c5s); g_c5_n++;
+}
+
 void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias, float* C,
                        int M, int K, int N, int rowStride, int wStride,
@@ -626,28 +743,59 @@ float tm_bn_q15(const float* in, const float* gamma, const float* beta,
 float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
                     int16_t* out_q, int S, int D) {
     const int32_t Q = 32767;
-    /* input scale (exact amax -> Q15) */
-    float amax = 0.0f;
+    /* ---- integer amax scan: for non-negative finite floats the IEEE bit
+     * pattern lexicographic order == float order, so |x| via one AND and an
+     * integer compare; exact float amax is decoded from the max bits. ---- */
+    const uint32_t* srci = (const uint32_t *)(const void *)in;
     const int32_t N = S * D;
+    uint32_t am = 0;
     for (int32_t i = 0; i < N; i++) {
-        float t = in[i]; t = t < 0.0f ? -t : t;
-        if (t > amax) amax = t;
+        uint32_t u = srci[i] & 0x7fffffffu;
+        if (u > am) am = u;
     }
-    if (!(amax > 0.0f)) amax = 1.0f;
-    const float sxi = 1.0f / ((float)Q / amax);   /* = 1/sx */
+    if (am == 0) am = 0x3f800000u;               /* amax = 1.0f */
+    float amax;
+    { uint32_t a32 = am; memcpy(&amax, &a32, 4); }
+    /* split sc = Q/amax into exact 24-bit mantissa * 2^exp  (sc_m, sc_e):
+     * x*sc = (x_mant * sc_m) * 2^(x_exp-150+sc_e), a 48-bit exact product,
+     * rounded once at the shift -- no soft-float muls/fcvt per element. */
+    float sc = ((float)Q) / amax;
+    uint32_t sbb; memcpy(&sbb, &sc, 4);
+    int sc_e = (int)((sbb >> 23) & 0xffu) - 150;      /* sc = sc_m * 2^sc_e, sc_m in [2^23,2^24) */
+    int32_t sc_m = (int32_t)((sbb & 0x7fffffu) | 0x800000u);
+    if (((sbb >> 23) & 0xffu) == 0) { sc_m = 0; sc_e = 0; }  /* subnormal sc: x*sc rounds to 0 */
+
+    const float sxi = 1.0f / sc;
     const float sxi2 = sxi * sxi;
-    /* pass 1: quantize x once, accumulate integer row stats */
-    int32_t row = 0;
+    /* pass 1: quantize x once (integer bit-trick conversion), accumulate
+     * integer row stats. */
     static int32_t s1_[TM_S]; static int64_t s2_[TM_S]; static int16_t mx_[TM_S];
     float bmax = 0.0f;
     for (int32_t i = 0; i < S; i++) {
         int32_t s1 = 0; int64_t s2 = 0; int32_t mx = 0;
-        const float* src = in + (size_t)i * D;
+        const uint32_t* rowbits = srci + (size_t)i * D;
         int16_t* dst = out_q + (size_t)i * D;
         for (int32_t k = 0; k < D; k++) {
-            float qf = src[k] * ((float)Q / amax);
-            int32_t q = (qf >= 0.0f) ? (int32_t)(qf + 0.5f) : (int32_t)(qf - 0.5f);
-            if (q > Q) q = Q; else if (q < -Q) q = -Q;
+            uint32_t b = rowbits[k];
+            int32_t q;
+            if ((b & 0x7f800000u) == 0) {            /* zero / subnormal */
+                q = 0;
+            } else if ((b & 0x7f800000u) == 0x7f800000u) { /* inf/nan guard */
+                q = (b >> 31) ? -Q : Q;
+            } else {
+                int sh = (int)((b >> 23) & 0xffu) - 150 + sc_e;
+                uint64_t P = (uint64_t)((b & 0x7fffffu) | 0x800000u) * (uint64_t)(uint32_t)sc_m;
+                int64_t pr;
+                if (sh >= 0) {
+                    pr = (int64_t)(P << sh);
+                } else {
+                    int rs = -sh;
+                    pr = (int64_t)((P + (1ULL << (rs - 1))) >> rs);
+                }
+                if (pr > Q) pr = Q;
+                q = ((int32_t)pr);
+                if (b >> 31) q = -q;
+            }
             int32_t a = q < 0 ? -q : q;
             if (a > mx) mx = a;
             s1 += q;
@@ -655,9 +803,7 @@ float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
             dst[k] = (int16_t)q;
         }
         s1_[i] = s1; s2_[i] = s2; mx_[i] = (int16_t)mx;
-        row++;
-    }
-    /* per row: mean/var/rstd (fp32, S rows only) + amax bound */
+    }    /* per row: mean/var/rstd (fp32, S rows only) + amax bound */
     float mean_r[TM_S], rstd_r[TM_S]; int32_t meanq_[TM_S]; int32_t rstd15_[TM_S];
     for (int32_t i = 0; i < S; i++) {
         int32_t mq = s1_[i] / D;                       /* D=128 -> exact-ish */

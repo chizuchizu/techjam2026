@@ -21,6 +21,8 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ oproj Q15-ctx fusion: two-phase V proj + one K=128 core4 (opt 10)** | **4.160 → 3.969** | **10.62×** | host 50/50 FAST+EXACT, worst 1.12e-3; device 5/5, worst 1.14e-3 |
 | + integer-only attention PV + integer ctx epilogue (opt 11) | 3.969 → **3.688/3.706** | ~10.7× | host 50/50, worst 1.20e-3; device 5/5, worst 1.11e-3 |
 | + core4_v2 GEMM j-tile-2 + K-pair prefetch (opt 12) | 3.706 → **3.664** | ~11.5× | host 50/50, worst 1.20e-3; device 5/5 |
+| + integer LN pass, int amax+quant (opts 13–14) | 3.664 → **3.205** | ~13.1× | host 50/50, worst 1.27e-3; device 5/5, worst 1.088e-3 |
+| **+ core5 GEMM: j-tile-2×IBLK=4 (opt 15)** | **3.205 → 2.982** | **14.1×** | host 50/50, worst 1.277e-3; device 5/5, worst 1.088e-3 |
 
 ## Files
 | file | contents |
