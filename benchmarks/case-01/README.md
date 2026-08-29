@@ -52,3 +52,14 @@ Tile the batch-64 input stream so resident weights stay in SRAM and
 compare single-board streaming with batch-parallel multiboard dispatch.
 Record per-batch latency and steady-state throughput; do not present
 pipeline fill time as single-sample latency.
+
+## Multiboard result
+
+Data parallel across two physical XIAO ESP32-C3 boards: the 64 inputs are independent forwards over the same weights, so input `i` runs on board `i % N` and the boards exchange nothing.
+
+| Boards | Batch time | Speedup | Gate |
+|---:|---:|---:|---|
+| 1 | 127.4 s | 1.00x | Pass |
+| 2 | **63.7 s** | **2.00x** | Pass, 0 failing elements |
+
+Implementation and method: [`../batch-dp/`](../batch-dp/); results: [`../batch-dp/RESULTS_TWO_C3.md`](../batch-dp/RESULTS_TWO_C3.md).

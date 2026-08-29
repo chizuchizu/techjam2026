@@ -34,11 +34,11 @@ experiments that are not official cases are isolated in
 
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Single- and two-board verified** | 1.990 s/forward; batch of 64 data-parallel 127.4 s -> 63.7 s on two boards (2.00x) |
 | [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at **1.996 s (21.1×, opt23)**; host 54/54 + device 25/25; partial multiboard paths verified |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Single- and two-board verified** | 1.990 s/forward; batch of 4 data-parallel 8.0 s -> 4.0 s on two boards (2.00x) |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Single- and two-board verified** | 1.990 s/forward; batch of 16 data-parallel 31.8 s -> 15.9 s on two boards (2.00x) |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Single- and two-board verified** | 1.990 s/forward; batch of 128 data-parallel 254.8 s -> 127.4 s on two boards (2.00x) |
 | [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
 | [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device PASS |
 | [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |

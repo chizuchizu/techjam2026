@@ -22,11 +22,11 @@ complete Transformer body.
 
 | Case | Batch | Sequence | Model dim | Heads | FFN dim | Layers | Status |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
+| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Complete body **1.990 s/forward**; batch data-parallel on two boards 127.4 s -> 63.7 s (2.00x), 64/64 forwards PASS |
 | [02](case-02/) | 1 | 128 | 128 | 4 | 128 | 4 | Single-board verified, **1.996 s/fwd (21.1×)**; partial multiboard verified |
-| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
-| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
-| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device PASS |
+| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Complete body **1.990 s/forward**; batch data-parallel on two boards 8.0 s -> 4.0 s (2.00x), 4/4 forwards PASS |
+| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Complete body **1.990 s/forward**; batch data-parallel on two boards 31.8 s -> 15.9 s (2.00x), 16/16 forwards PASS |
+| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Complete body **1.990 s/forward**; batch data-parallel on two boards 254.8 s -> 127.4 s (2.00x), 128/128 forwards PASS |
 | [06](case-06/) | 10,000 | 128 | 128 | 4 | 128 | 4 | Not implemented |
 | [07](case-07/) | 64 | 128 | 32 | 4 | 32 | 4 | Implemented, complete body: **0.491 s/forward** on-board; 5/5 device PASS |
 | [08](case-08/) | 64 | 128 | 1,024 | 4 | 1,024 | 4 | Not implemented |
