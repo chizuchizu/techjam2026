@@ -1,6 +1,6 @@
 # Review of `techjam2026/esp32-baseline` — case 12
 
-Reviewed commit: `__CASE12_HEAD__` from `chizuchizu/techjam2026`, on 2026-08-29.
+Reviewed commit: `e53e82a858` from `chizuchizu/techjam2026`, on 2026-08-29.
 
 ## What is confirmed
 
