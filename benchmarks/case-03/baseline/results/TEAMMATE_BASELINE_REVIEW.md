@@ -24,9 +24,9 @@ is
 | Check | Independent result |
 |---|---:|
 | C FAST, 25 host seeds | 0 / 409,600 failed outputs |
-| Worst C FAST absolute error | 0.0010 |
+| Worst C FAST absolute error | 1.0320e-03 |
 | C EXACT, 25 host seeds | 0 / 409,600 failed outputs |
-| Worst C EXACT absolute error | 0.0001 |
+| Worst C EXACT absolute error | 7.8201e-05 |
 | Vendored torch_ref recompute, seed 0 vs committed ref_0.bin | 0 / 16,384 mismatched (max_abs 0.0) |
 | XIAO build RAM | 274,564 / 327,680 B (83.8%) |
 | XIAO build enlarged app partition | 2,644,470 / 3,145,728 B (84.1%) |
