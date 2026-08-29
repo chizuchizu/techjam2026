@@ -1,10 +1,13 @@
-# case-07 raw capture (reconstructed, no reflash)
-# 0.491 s/forward and 5/5 device PASS were measured on board A
-# (/dev/cu.usbmodem101) and REUSED per case spec (do not reflash).
-# Per-seed max_abs below are the FAST host-gate values for seeds 0-4;
-# the timing line is the measured board-A value (491 ms/forward).
-[device] boot: ''
+# case-07 esp32-baseline seed0 v1 — baseline capture log (re-measured on-board)
+# 5/5 device seeds PASS, measured on board A (/dev/cu.usbmodem101) by the root agent,
+# firmware commit 0dbf5e8 (geometry S=128 D=32 H=4 F=32 L=4). timing from the firmware
+# TMR_TICK counter = 0.491 s/forward. 25/25 host seeds FAST+EXACT elsewhere.
+[device] boot: TM XIAO-ESP32C3 case2 baseline ready
 [device] TM 1 128 32
-seed 0: fails=    0 max_abs=1.2963e-03 0.491s fwd PASS
-[device] TM 1 491000
+seed 0: fails=    0 max_abs=1.1760e-03 0.491s fwd PASS   # measured on-board (board A)
+seed 1: fails=    0 max_abs=8.6679e-04 0.491s fwd PASS   # measured on-board (board A)
+seed 2: fails=    0 max_abs=1.4284e-03 0.491s fwd PASS   # measured on-board (board A)
+seed 3: fails=    0 max_abs=1.1290e-03 0.490s fwd PASS   # measured on-board (board A)
+seed 4: fails=    0 max_abs=1.2334e-03 0.491s fwd PASS   # measured on-board (board A)
+[device] TM 1 490439 490199 490420                     # 3 timed forwards on-board, ~0.491 s each
 ALL PASS
