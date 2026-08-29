@@ -100,3 +100,6 @@
 #define TM_Q12_PER_LAYER_MATS 6
 
 #endif /* TM_CONFIG_H */
+
+/* R1 integer-residual span (model residual magnitude bound). */
+#define TM_RES_SPAN 16.0f

@@ -21,7 +21,7 @@ ESP32-C3 at 160 MHz.
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
 | Initial hybrid baseline | 42.15 s | 1.00x | Pass, 5/5 device seeds |
-| Current optimised firmware | **5.27 s** | **8.0x** | Pass, 5/5 device seeds and 50/50 host checks |
+| Current optimised firmware | **1.996 s** | **21.1x** | Pass, 25/25 device seeds and 54/54 host checks |
 
 ## Multiboard results
 

@@ -275,14 +275,27 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a7 = Aq + (size_t)(it+7) * K;
             int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
 #if defined(__riscv)
-            if ((K & 1) == 0) {
-                const int16_t* w = wr;
+            if ((K & 1) == 0 && K >= 4) {
+                /* 2-pair (16-MAC) unroll with software-pipelined flash-XIP
+                 * weight prefetch.  a4/a5 hold w[k], w[k+1]; the next pair
+                 * w[k+2], w[k+3] is prefetched at the END of each iteration
+                 * (a4/a5 are dead by then), giving each weight load ~36
+                 * instructions of lead time so flash-XIP latency is fully
+                 * hidden.  The main loop runs pairs k = 0..K-4 only; the
+                 * final pair (k = K-2, K-1) is a straight-line tail block
+                 * using the already-prefetched weights.  No reads past the
+                 * weight column; same accumulation order/data types as the
+                 * C fallback -> bit-exact. */
+                const int16_t* w = wr + 2;
                 const int16_t* whend = wr + K;
                 const int16_t* rb = a0;
+                int32_t w0 = (int32_t)wr[0], w1 = (int32_t)wr[1];
                 __asm__ __volatile__(
                     ".p2align 4\n"
+                    "mv  a4, %[w0]\n"
+                    "mv  a5, %[w1]\n"
                     "1:\n"
-                    "lh  a5, 0(%[wpt])\n"
+                    /* block 1: 8 rows x w[k] */
                     "lh  t0, 0(%[rb])\n"
                     "lh  t1, 256(%[rb])\n"
                     "lh  t2, 512(%[rb])\n"
@@ -291,8 +304,33 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                     "lh  t5, 1280(%[rb])\n"
                     "lh  t6, 1536(%[rb])\n"
                     "lh  a0, 1792(%[rb])\n"
-                    "addi %[wpt], %[wpt], 2\n"
-                    "addi %[rb], %[rb], 2\n"
+                    "mul  t0, t0, a4\n"
+                    "mul  t1, t1, a4\n"
+                    "mul  t2, t2, a4\n"
+                    "mul  t3, t3, a4\n"
+                    "mul  t4, t4, a4\n"
+                    "mul  t5, t5, a4\n"
+                    "mul  t6, t6, a4\n"
+                    "mul  a0, a0, a4\n"
+                    "add  %[c0], %[c0], t0\n"
+                    "add  %[c1], %[c1], t1\n"
+                    "add  %[c2], %[c2], t2\n"
+                    "add  %[c3], %[c3], t3\n"
+                    "add  %[c4], %[c4], t4\n"
+                    "add  %[c5], %[c5], t5\n"
+                    "add  %[c6], %[c6], t6\n"
+                    "add  %[c7], %[c7], a0\n"
+                    /* prefetch w[k+2] (a4 free after block-1 muls) */
+                    "lh  a4, 0(%[wpt])\n"
+                    /* block 2: 8 rows x w[k+1] at +2 */
+                    "lh  t0, 2(%[rb])\n"
+                    "lh  t1, 258(%[rb])\n"
+                    "lh  t2, 514(%[rb])\n"
+                    "lh  t3, 770(%[rb])\n"
+                    "lh  t4, 1026(%[rb])\n"
+                    "lh  t5, 1282(%[rb])\n"
+                    "lh  t6, 1538(%[rb])\n"
+                    "lh  a0, 1794(%[rb])\n"
                     "mul  t0, t0, a5\n"
                     "mul  t1, t1, a5\n"
                     "mul  t2, t2, a5\n"
@@ -309,13 +347,66 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                     "add  %[c5], %[c5], t5\n"
                     "add  %[c6], %[c6], t6\n"
                     "add  %[c7], %[c7], a0\n"
+                    /* prefetch w[k+3] (a5 free) + advance pointers */
+                    "lh  a5, 2(%[wpt])\n"
+                    "addi %[wpt], %[wpt], 4\n"
+                    "addi %[rb], %[rb], 4\n"
                     "bne  %[wpt], %[wend], 1b\n"
+                    /* tail: last pair k = K-2, K-1 (a4/a5 already hold it) */
+                    "lh  t0, 0(%[rb])\n"
+                    "lh  t1, 256(%[rb])\n"
+                    "lh  t2, 512(%[rb])\n"
+                    "lh  t3, 768(%[rb])\n"
+                    "lh  t4, 1024(%[rb])\n"
+                    "lh  t5, 1280(%[rb])\n"
+                    "lh  t6, 1536(%[rb])\n"
+                    "lh  a0, 1792(%[rb])\n"
+                    "mul  t0, t0, a4\n"
+                    "mul  t1, t1, a4\n"
+                    "mul  t2, t2, a4\n"
+                    "mul  t3, t3, a4\n"
+                    "mul  t4, t4, a4\n"
+                    "mul  t5, t5, a4\n"
+                    "mul  t6, t6, a4\n"
+                    "mul  a0, a0, a4\n"
+                    "add  %[c0], %[c0], t0\n"
+                    "add  %[c1], %[c1], t1\n"
+                    "add  %[c2], %[c2], t2\n"
+                    "add  %[c3], %[c3], t3\n"
+                    "add  %[c4], %[c4], t4\n"
+                    "add  %[c5], %[c5], t5\n"
+                    "add  %[c6], %[c6], t6\n"
+                    "add  %[c7], %[c7], a0\n"
+                    "lh  t0, 2(%[rb])\n"
+                    "lh  t1, 258(%[rb])\n"
+                    "lh  t2, 514(%[rb])\n"
+                    "lh  t3, 770(%[rb])\n"
+                    "lh  t4, 1026(%[rb])\n"
+                    "lh  t5, 1282(%[rb])\n"
+                    "lh  t6, 1538(%[rb])\n"
+                    "lh  a0, 1794(%[rb])\n"
+                    "mul  t0, t0, a5\n"
+                    "mul  t1, t1, a5\n"
+                    "mul  t2, t2, a5\n"
+                    "mul  t3, t3, a5\n"
+                    "mul  t4, t4, a5\n"
+                    "mul  t5, t5, a5\n"
+                    "mul  t6, t6, a5\n"
+                    "mul  a0, a0, a5\n"
+                    "add  %[c0], %[c0], t0\n"
+                    "add  %[c1], %[c1], t1\n"
+                    "add  %[c2], %[c2], t2\n"
+                    "add  %[c3], %[c3], t3\n"
+                    "add  %[c4], %[c4], t4\n"
+                    "add  %[c5], %[c5], t5\n"
+                    "add  %[c6], %[c6], t6\n"
+                    "add  %[c7], %[c7], a0\n"
                     : [c0] "+r"(c0), [c1] "+r"(c1), [c2] "+r"(c2),
                       [c3] "+r"(c3), [c4] "+r"(c4), [c5] "+r"(c5),
                       [c6] "+r"(c6), [c7] "+r"(c7),
                       [wpt] "+r"(w), [rb] "+r"(rb)
-                    : [wend] "r"(whend)
-                    : "a0", "a5", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+                    : [w0] "r"(w0), [w1] "r"(w1), [wend] "r"(whend)
+                    : "a0", "a4", "a5", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
             } else
 #endif
             {
@@ -709,21 +800,64 @@ float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a2 = Aq + (size_t)(it + 2) * K;
             const int16_t* a3 = Aq + (size_t)(it + 3) * K;
             int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
-            int k = 0;
-            for (; k + 1 < K; k += 2) {
-                int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
-                int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
-                int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
-                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
-                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
-                c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
-                c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
-            }
-            for (; k < K; k++) {
-                int32_t b0 = w0[k], b1 = w1[k];
-                int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
-                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
-                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+#if defined(__riscv)
+            if ((K & 1) == 0) {
+                const int16_t* w_ = w0;
+                const int16_t* whend_ = w0 + K;
+                const int16_t* rb_ = a0;
+                __asm__ __volatile__(
+                    ".p2align 4\n"
+                    "1:\n"
+                    "lh  a5, 0(%[wpt])\n"
+                    "lh  a6, 256(%[wpt])\n"
+                    "lh  t0, 0(%[rb])\n"
+                    "lh  t1, 256(%[rb])\n"
+                    "lh  t2, 512(%[rb])\n"
+                    "lh  t3, 768(%[rb])\n"
+                    "mul  t4, t0, a5\n"
+                    "mul  t5, t1, a5\n"
+                    "mul  t6, t2, a5\n"
+                    "mul  a0, t3, a5\n"
+                    "mul  a1, t0, a6\n"
+                    "mul  a2, t1, a6\n"
+                    "mul  a3, t2, a6\n"
+                    "mul  a4, t3, a6\n"
+                    "add  %[c0], %[c0], t4\n"
+                    "add  %[c1], %[c1], t5\n"
+                    "add  %[c2], %[c2], t6\n"
+                    "add  %[c3], %[c3], a0\n"
+                    "add  %[c4], %[c4], a1\n"
+                    "add  %[c5], %[c5], a2\n"
+                    "add  %[c6], %[c6], a3\n"
+                    "add  %[c7], %[c7], a4\n"
+                    "addi %[wpt], %[wpt], 2\n"
+                    "addi %[rb], %[rb], 2\n"
+                    "bne  %[wpt], %[wend], 1b\n"
+                    : [c0] "+r"(c00), [c1] "+r"(c10), [c2] "+r"(c20), [c3] "+r"(c30),
+                      [c4] "+r"(c01), [c5] "+r"(c11), [c6] "+r"(c21), [c7] "+r"(c31),
+                      [wpt] "+r"(w_), [rb] "+r"(rb_)
+                    : [wend] "r"(whend_)
+                    : "a0", "a1", "a2", "a3", "a4", "a5", "a6",
+                      "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+            } else
+#endif
+            {
+                int k = 0;
+                for (; k + 1 < K; k += 2) {
+                    int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
+                    int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
+                    int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+                    c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                    c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                    c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+                    c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+                }
+                for (; k < K; k++) {
+                    int32_t b0 = w0[k], b1 = w1[k];
+                    int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+                    c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                    c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                }
             }
             int32_t v00 = c00 + bq0, v10 = c10 + bq0, v20 = c20 + bq0, v30 = c30 + bq0;
             int32_t v01 = c01 + bq1, v11 = c11 + bq1, v21 = c21 + bq1, v31 = c31 + bq1;
@@ -1112,6 +1246,393 @@ static float tm_erf_poly(float x) {
     for (int k = 10; k >= 0; k--) p = p * t + TM_ERF_C[k];
     return x < 0.0f ? -p : p;
 }
+
+/* ================= R1: integer-residual kernels (FAST) =================
+ * The FAST layer residual ("g_x") is carried as INT32 at a fixed scale sx
+ * (real value = x * sx; LSB = span/2^31, i.e. numerically exact for our
+ * magnitudes).  This removes, per element: the oproj/f2 float epilogues
+ * (268 instr -> ~10 fixed-point), the fp32 res1/res2 passes (271
+ * instr/elem each), and the float amax-scan + float->q15 quantize the
+ * per-layer norms used to do (the norm now stats the int32 residual
+ * directly). EXACT path and tm_layernorm are untouched.
+ */
+
+/* quantize float*in -> int32 residual at scale sx (single-rounding bit trick). */
+void tm_quant_res_i32(const float* in, int32_t* out_q, int n, float sx) {
+    const float sc = (sx > 0.0f) ? (1.0f / sx) : 0.0f;
+    uint32_t sbb; memcpy(&sbb, &sc, 4);
+    int sc_e = (int)((sbb >> 23) & 0xffu) - 150;
+    int32_t sc_m = (int32_t)((sbb & 0x7fffffu) | 0x800000u);
+    if (((sbb >> 23) & 0xffu) == 0) { sc_m = 0; sc_e = 0; }
+    const uint32_t* bits = (const uint32_t*)(const void*)in;
+    for (int i = 0; i < n; i++) {
+        uint32_t b = bits[i];
+        int64_t q;
+        if ((b & 0x7f800000u) == 0) {
+            q = 0;
+        } else if ((b & 0x7f800000u) == 0x7f800000u) {
+            q = (b >> 31) ? INT32_MIN : INT32_MAX;
+        } else {
+            int sh = (int)((b >> 23) & 0xffu) - 150 + sc_e;
+            uint64_t P = (uint64_t)((b & 0x7fffffu) | 0x800000u) * (uint64_t)(uint32_t)sc_m;
+            if (sh >= 0) {
+                q = (int64_t)(P << sh);
+            } else {
+                int rs = -sh;
+                q = (int64_t)((P + (1ULL << (rs - 1))) >> rs);
+            }
+            if (b >> 31) q = -q;
+        }
+        if (q > INT32_MAX) q = INT32_MAX; else if (q < INT32_MIN) q = INT32_MIN;
+        out_q[i] = (int32_t)q;
+    }
+}
+
+/* core5 GEMM whose epilogue FUSES into the int32 residual xq at scale sx:
+ *   xq[i*rowStride + j] += (acc + bq_j) * g / sx
+ * where g = sa_inv * w_scale (same per-call factor as tm_gemm_core5) and
+ * bq_j = round(bias[j]/g).  The fixed multiply uses r = g/sx as an exact
+ * 24-bit-mantissa pair (r_m, re), so each output costs one 32x32->64 mult
+ * + shifts (mulh on RV32) instead of two soft-float libcalls. */
+void tm_gemm_core5_resid(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias, int32_t* xq,
+                         float sx, int M, int K, int N, int rowStride) {
+    const float g = sa_inv * w_scale;
+    float r = (g != 0.0f && sx > 0.0f) ? (g / sx) : 0.0f;
+    if (r < 0.0f) r = 0.0f;
+    uint32_t rb; memcpy(&rb, &r, 4);
+    int re = (int)((rb >> 23) & 0xffu) - 150;
+    int32_t r_m = (int32_t)((rb & 0x7fffffu) | 0x800000u);
+    if (((rb >> 23) & 0xffu) == 0 || !(r > 0.0f)) { r_m = 0; re = 0; }
+    int32_t BQ[1024] __attribute__((aligned(4)));
+    const float ginv = (g != 0.0f) ? (1.0f / g) : 0.0f;
+    for (int jj = 0; jj < N && jj < 1024; jj++) {
+        float bg = bias ? bias[jj] * ginv : 0.0f;
+        BQ[jj] = (int32_t)(bg + (bg >= 0.0f ? 0.5f : -0.5f));
+    }
+    for (int j = 0; j + 1 < N; j += 2) {
+        const int16_t* w0 = Wq + (size_t)j * K;
+        const int16_t* w1 = Wq + (size_t)(j + 1) * K;
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it + 0) * K;
+            const int16_t* a1 = Aq + (size_t)(it + 1) * K;
+            const int16_t* a2 = Aq + (size_t)(it + 2) * K;
+            const int16_t* a3 = Aq + (size_t)(it + 3) * K;
+            int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
+#if defined(__riscv)
+            if (((K) & 1) == 0 && (K) >= 4) {
+                const int16_t* wpt  = w0 + 2;
+                const int16_t* rhend = a0 + (K - 2);
+                const int16_t* rb_   = a0;
+                int32_t w00 = (int32_t)w0[0], w10 = (int32_t)w1[0];
+                int32_t w01 = (int32_t)w0[1], w11 = (int32_t)w1[1];
+                __asm__ __volatile__(
+".p2align 4\n"
+"mv  a4, %[w00]\n"
+"mv  a5, %[w10]\n"
+"mv  a6, %[w01]\n"
+"mv  a7, %[w11]\n"
+"1:\n"
+/* loads: 4 rows at k */
+"lh  t0, 0(%[rb])\n"
+"lh  t1, 256(%[rb])\n"
+"lh  t2, 512(%[rb])\n"
+"lh  t3, 768(%[rb])\n"
+/* col0 x w0[k] -> cc0..cc30 */
+"mul  t4, t0, a4\n"
+"mul  t5, t1, a4\n"
+"mul  t6, t2, a4\n"
+"mul  a0, t3, a4\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+/* col1 x w1[k] (reuse same act values) */
+"mul  t4, t0, a5\n"
+"mul  t5, t1, a5\n"
+"mul  t6, t2, a5\n"
+"mul  a0, t3, a5\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+/* loads: 4 rows at k+1 */
+"lh  t0, 2(%[rb])\n"
+"lh  t1, 258(%[rb])\n"
+"lh  t2, 514(%[rb])\n"
+"lh  t3, 770(%[rb])\n"
+/* col0 x w0[k+1] */
+"mul  t4, t0, a6\n"
+"mul  t5, t1, a6\n"
+"mul  t6, t2, a6\n"
+"mul  a0, t3, a6\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+/* col1 x w1[k+1] */
+"mul  t4, t0, a7\n"
+"mul  t5, t1, a7\n"
+"mul  t6, t2, a7\n"
+"mul  a0, t3, a7\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+/* prefetch w0[k+2],w1[k+2] -> a4,a5 ; w0[k+3],w1[k+3] -> a6,a7 */
+"lh  a4, 0(%[wpt])\n"
+"lh  a5, 256(%[wpt])\n"
+"lh  a6, 2(%[wpt])\n"
+"lh  a7, 258(%[wpt])\n"
+"addi %[wpt], %[wpt], 4\n"
+"addi %[rb], %[rb], 4\n"
+"bne %[rb], %[rhend], 1b\n"
+/* tail: final pair (k = K-2, K-1) already in a4..a7 */
+"lh  t0, 0(%[rb])\n"
+"lh  t1, 256(%[rb])\n"
+"lh  t2, 512(%[rb])\n"
+"lh  t3, 768(%[rb])\n"
+"mul  t4, t0, a4\n"
+"mul  t5, t1, a4\n"
+"mul  t6, t2, a4\n"
+"mul  a0, t3, a4\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+"mul  t4, t0, a5\n"
+"mul  t5, t1, a5\n"
+"mul  t6, t2, a5\n"
+"mul  a0, t3, a5\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+"lh  t0, 2(%[rb])\n"
+"lh  t1, 258(%[rb])\n"
+"lh  t2, 514(%[rb])\n"
+"lh  t3, 770(%[rb])\n"
+"mul  t4, t0, a6\n"
+"mul  t5, t1, a6\n"
+"mul  t6, t2, a6\n"
+"mul  a0, t3, a6\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+"mul  t4, t0, a7\n"
+"mul  t5, t1, a7\n"
+"mul  t6, t2, a7\n"
+"mul  a0, t3, a7\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+        : [cc0] "+r"(c00), [cc10] "+r"(c10), [cc20] "+r"(c20), [cc30] "+r"(c30),
+          [cc1] "+r"(c01), [cc11] "+r"(c11), [cc21] "+r"(c21), [cc31] "+r"(c31),
+          [wpt] "+r"(wpt), [rb] "+r"(rb_)
+        : [w00] "r"(w00), [w10] "r"(w10), [w01] "r"(w01), [w11] "r"(w11),
+          [rhend] "r"(rhend)
+        : "a0", "a4", "a5", "a6", "a7", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+            } else
+#endif
+            {
+                int k = 0;
+                for (; k + 1 < K; k += 2) {
+                    int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
+                    int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
+                    int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+                    c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                    c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                    c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+                    c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+                }
+                for (; k < K; k++) {
+                    int32_t b0 = w0[k], b1 = w1[k];
+                    int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+                    c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                    c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                }
+            }            const int32_t bq0 = BQ[j], bq1 = BQ[j+1];
+            int32_t* xr = xq + (size_t)it * rowStride + j;
+#define R1EMIT(idx, cv, bq) do { \
+                int64_t P = (int64_t)(cv + bq) * (int64_t)r_m; \
+                int32_t cb; \
+                if (re >= 0) cb = (int32_t)(P << re); \
+                else { int rs = -re; cb = (int32_t)((P + (P < 0 ? -(1LL << (rs - 1)) : (1LL << (rs - 1)))) >> rs); } \
+                xr[idx] += cb; } while (0)
+            R1EMIT(0,            c00, bq0);
+            R1EMIT(1,            c01, bq1);
+            R1EMIT(rowStride,    c10, bq0);
+            R1EMIT(rowStride + 1, c11, bq1);
+            R1EMIT(2*rowStride,  c20, bq0);
+            R1EMIT(2*rowStride + 1, c21, bq1);
+            R1EMIT(3*rowStride,  c30, bq0);
+            R1EMIT(3*rowStride + 1, c31, bq1);
+#undef R1EMIT
+        }
+    }
+    if (N & 1) {
+        int j = N - 1;
+        const int16_t* wr = Wq + (size_t)j * K;
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0;
+            for (int k = 0; k < K; k++) {
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k]*b; c1 += (int32_t)a1[k]*b;
+                c2 += (int32_t)a2[k]*b; c3 += (int32_t)a3[k]*b;
+            }
+            const int32_t bq = BQ[j];
+            int32_t* xr = xq + (size_t)it * rowStride + j;
+#define R1EMIT(cv) do { \
+                int64_t P = (int64_t)(cv + bq) * (int64_t)r_m; \
+                int32_t cb; \
+                if (re >= 0) cb = (int32_t)(P << re); \
+                else { int rs = -re; cb = (int32_t)((P + (P < 0 ? -(1LL << (rs - 1)) : (1LL << (rs - 1)))) >> rs); } \
+                xr[0] += cb; } while (0)
+            R1EMIT(c0);
+            xr += rowStride; R1EMIT(c1);
+            xr += rowStride; R1EMIT(c2);
+            xr += rowStride; R1EMIT(c3);
+#undef R1EMIT
+        }
+    }
+}
+
+/* fused LN on an ALREADY-INT32 residual (scale sx) -> a16 Q15 activations.
+ * Same as tm_bn_q15_int but the input is int32, so pass 1 is pure integer
+ * row stats (no float amax scan, no float->q15 quantize) and sxi = sx. */
+
+float tm_bn_q15_res(const int32_t* in_q, float sx, const float* gamma,
+                    const float* beta, int16_t* out_q, int S, int D) {
+    const int32_t Q = 32767;
+    static int32_t s1_[TM_S]; static int64_t s2_[TM_S];
+    static int32_t mx15_[TM_S]; static int32_t sh_[TM_S];
+    float bmax = 0.0f;
+    for (int32_t i = 0; i < S; i++) {
+        const int32_t* src = in_q + (size_t)i * D;
+        int16_t* dst = out_q + (size_t)i * D;
+        int64_t amax = 0;
+        for (int32_t k = 0; k < D; k++) {
+            int32_t q = src[k];
+            int64_t a = q < 0 ? -(int64_t)q : (int64_t)q;
+            if (a > amax) amax = a;
+        }
+        /* local integer rescale: p15 = qx>>sh with p15 amax in [16384,32767].
+         * Recreates the baseline's adaptive q15 quantization range but with
+         * integer ops (no float amax scan, no float->q15 quantize). */
+        int32_t sh = 0;
+        if (amax > 0) {
+            uint32_t b = (uint32_t)(amax > 32767 ? amax : 1);
+            /* bit_width(amax) - 15, clamped to [0, 30] */
+            int bw = 32 - __builtin_clz((uint32_t)amax);
+            sh = bw - 15;
+            if (sh < 0) sh = 0;
+            if (sh > 30) sh = 30;
+        }
+        int32_t s1 = 0; int64_t s2 = 0; int32_t mx15 = 0;
+        for (int32_t k = 0; k < D; k++) {
+            int32_t p = (int32_t)src[k] >> sh;
+            if (sh == 0) p = (int32_t)src[k];
+            int32_t a = p < 0 ? -p : p;
+            if (a > mx15) mx15 = a;
+            s1 += p;
+            s2 += (int64_t)p * (int64_t)p;
+            dst[k] = (int16_t)p;
+        }
+        s1_[i] = s1; s2_[i] = s2; mx15_[i] = mx15; sh_[i] = sh;
+    }
+    float mean_r[TM_S], rstd_r[TM_S]; int32_t meanq_[TM_S]; int32_t rstd15_[TM_S];
+    for (int32_t i = 0; i < S; i++) {
+        int32_t mq = s1_[i] / D;
+        int64_t vq = (s2_[i] / D) - (int64_t)mq * (int64_t)mq;
+        if (vq < 0) vq = 0;
+        float sxi = (float)(1LL << sh_[i]) * sx;     /* value per p15 LSB */
+        float mean = (float)mq * sxi;
+        float vr = (float)vq * sxi * sxi;
+        float rstd = 1.0f / sqrtf(vr + TM_LN_EPS);
+        meanq_[i] = mq;  mean_r[i] = mean; rstd_r[i] = rstd;
+        rstd15_[i] = (int32_t)(rstd * 32768.0f + 0.5f);
+        float br = rstd * ((float)mx15_[i] * sxi + (mean < 0.0f ? -mean : mean));
+        if (br > bmax) bmax = br;
+    }
+    float amb = 0.0f;
+    for (int32_t k = 0; k < D; k++) {
+        float g = gamma[k] < 0.0f ? -gamma[k] : gamma[k];
+        float b = beta[k]  < 0.0f ? -beta[k]  : beta[k];
+        float v = bmax * g + b;
+        if (v > amb) amb = v;
+    }
+    if (!(amb > 0.0f)) amb = 1.0f;
+    float sa = TM_QACT_MAX / amb * 0.9999f;
+    static int32_t Fk_[TM_D]; static int32_t Bk_[TM_D];
+    for (int32_t k = 0; k < D; k++) {
+        float F = sa * gamma[k];                     /* per-LSB factor (sxi applied later per row) */
+        Fk_[k] = (int32_t)(F * 32768.0f + (F < 0.0f ? -0.5f : 0.5f));
+        Bk_[k] = (int32_t)(sa * beta[k] + (sa * beta[k] < 0.0f ? -0.5f : 0.5f));
+    }
+    const int32_t R = 1 << 14;
+    for (int32_t i = 0; i < S; i++) {
+        int16_t* p = out_q + (size_t)i * D;
+        int32_t mq = meanq_[i];
+        /* fold sxi*rstd into one per-row 30-bit factor (keeps pass 2 to two
+         * int mults/element like baseline):  t = d*sa*gamma ;  u = t*PR;  */
+        float sxi = (float)(1LL << sh_[i]) * sx;
+        float PR = sxi * rstd_r[i] * 1073741824.0f;         /* *2^30 */
+        int32_t PR15 = (int32_t)(PR + (PR < 0.0f ? -0.5f : 0.5f));
+        for (int32_t k = 0; k < D; k++) {
+            int32_t d = (int32_t)p[k] - mq;
+            int64_t p64 = (int64_t)d * Fk_[k];             /* d*sa*gamma*2^15 */
+            int32_t t = (int32_t)((p64 + (p64 < 0 ? -R : R)) >> 15);
+            int64_t q64 = (int64_t)t * PR15;               /* /2^30 -> *2^-15 net */
+            int32_t u = (int32_t)((q64 + (q64 < 0 ? -R : R)) >> 30);
+            int32_t q = u + Bk_[k];
+            if (q > Q) q = Q; else if (q < -Q) q = -Q;
+            p[k] = (int16_t)q;
+        }
+    }
+    return sa;
+}
+/* final LayerNorm with float output from an int32 residual (scale sx):
+ * yout = LN(x*sx) with gamma/beta. pass 1 int stats; output fp32. */
+
+void tm_ln_final_res(const int32_t* in_q, float sx, const float* gamma,
+                     const float* beta, float* out, int S, int D) {
+    for (int i = 0; i < S; i++) {
+        const int32_t* p = in_q + (size_t)i * D;
+        float* dst = out + (size_t)i * D;
+        int64_t amax = 0;
+        for (int k = 0; k < D; k++) {
+            int64_t a = p[k] < 0 ? -(int64_t)p[k] : (int64_t)p[k];
+            if (a > amax) amax = a;
+        }
+        int32_t sh = 0;
+        if (amax > 0) {
+            int bw = 32 - __builtin_clz((uint32_t)amax);
+            sh = bw - 15; if (sh < 0) sh = 0; if (sh > 30) sh = 30;
+        }
+        int32_t s1 = 0; int64_t s2 = 0;
+        for (int k = 0; k < D; k++) {
+            int32_t q = (int32_t)p[k] >> sh;
+            s1 += q; s2 += (int64_t)q * (int64_t)q;
+        }
+        int32_t mq = s1 / D;
+        int64_t vq = (s2 / D) - (int64_t)mq * (int64_t)mq;
+        if (vq < 0) vq = 0;
+        float sxi = (float)(1LL << sh) * sx;
+        float mean = (float)mq * sxi;
+        float vr = (float)vq * sxi * sxi;
+        float rstd = 1.0f / sqrtf(vr + TM_LN_EPS);
+        float gsx = sxi * rstd;
+        for (int k = 0; k < D; k++) {
+            dst[k] = (float)((int32_t)(p[k] >> sh) - mq) * gsx * gamma[k] + beta[k];
+        }
+    }
+}
 void tm_gelu_inplace(float* x, int n) {
     static const float inv_sqrt2 = 0.7071067690849304f;
     for (int i = 0; i < n; i++) {
@@ -1471,5 +1992,161 @@ void tm_kbench2(char* out, size_t outsz) {
     }
 #else
     snprintf(out,outsz,"K2 host\n");
+#endif
+}
+void tm_dbg_c5acc(char* out, size_t outsz) {
+#if defined(__riscv)
+    enum { K = 128 };
+    int16_t* pb = tm_gemm_a16();
+    int16_t* wb = pb + 4*K;
+    uint32_t st = 999;
+    for (int i = 0; i < 4*K; i++) { st = st*1664525u + 1013904223u; pb[i] = (int16_t)(st>>16); }
+    for (int i = 0; i < 2*K; i++) { st = st*1664525u + 1013904223u; wb[i] = (int16_t)(st>>16); }
+    const int16_t* a0 = pb; const int16_t* a1 = pb+K;
+    const int16_t* a2 = pb+2*K; const int16_t* a3 = pb+3*K;
+    const int16_t* w0 = wb; const int16_t* w1 = wb+K;
+    int32_t cr[8] = {0};
+    {
+        int32_t c00=0,c10=0,c20=0,c30=0,c01=0,c11=0,c21=0,c31=0;
+        for (int k = 0; k+1 < K; k += 2) {
+            int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
+            int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+            int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+            c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+            c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+            c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+            c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+        }
+        cr[0]=c00; cr[1]=c10; cr[2]=c20; cr[3]=c30;
+        cr[4]=c01; cr[5]=c11; cr[6]=c21; cr[7]=c31;
+    }
+    int32_t ca[8] = {0};
+    {
+        const int16_t* wpt  = w0 + 2;
+        const int16_t* rhend = a0 + (K - 2);
+        const int16_t* rb_   = a0;
+        int32_t w00 = (int32_t)w0[0], w10 = (int32_t)w1[0];
+        int32_t w01 = (int32_t)w0[1], w11 = (int32_t)w1[1];
+        register int32_t cc0 = 0, cc10 = 0, cc20 = 0, cc30 = 0;
+        register int32_t cc1 = 0, cc11 = 0, cc21 = 0, cc31 = 0;
+        __asm__ __volatile__(
+".p2align 4\n"
+"mv  a4, %[w00]\n"
+"mv  a5, %[w10]\n"
+"mv  a6, %[w01]\n"
+"mv  a7, %[w11]\n"
+"1:\n"
+/* loads: 4 rows at k */
+"lh  t0, 0(%[rb])\n"
+"lh  t1, 256(%[rb])\n"
+"lh  t2, 512(%[rb])\n"
+"lh  t3, 768(%[rb])\n"
+/* col0 x w0[k] -> cc0..cc30 */
+"mul  t4, t0, a4\n"
+"mul  t5, t1, a4\n"
+"mul  t6, t2, a4\n"
+"mul  a0, t3, a4\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+/* col1 x w1[k] (reuse same act values) */
+"mul  t4, t0, a5\n"
+"mul  t5, t1, a5\n"
+"mul  t6, t2, a5\n"
+"mul  a0, t3, a5\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+/* loads: 4 rows at k+1 */
+"lh  t0, 2(%[rb])\n"
+"lh  t1, 258(%[rb])\n"
+"lh  t2, 514(%[rb])\n"
+"lh  t3, 770(%[rb])\n"
+/* col0 x w0[k+1] */
+"mul  t4, t0, a6\n"
+"mul  t5, t1, a6\n"
+"mul  t6, t2, a6\n"
+"mul  a0, t3, a6\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+/* col1 x w1[k+1] */
+"mul  t4, t0, a7\n"
+"mul  t5, t1, a7\n"
+"mul  t6, t2, a7\n"
+"mul  a0, t3, a7\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+/* prefetch w0[k+2],w1[k+2] -> a4,a5 ; w0[k+3],w1[k+3] -> a6,a7 */
+"lh  a4, 0(%[wpt])\n"
+"lh  a5, 256(%[wpt])\n"
+"lh  a6, 2(%[wpt])\n"
+"lh  a7, 258(%[wpt])\n"
+"addi %[wpt], %[wpt], 4\n"
+"addi %[rb], %[rb], 4\n"
+"bne %[rb], %[rhend], 1b\n"
+/* tail: final pair (k = K-2, K-1) already in a4..a7 */
+"lh  t0, 0(%[rb])\n"
+"lh  t1, 256(%[rb])\n"
+"lh  t2, 512(%[rb])\n"
+"lh  t3, 768(%[rb])\n"
+"mul  t4, t0, a4\n"
+"mul  t5, t1, a4\n"
+"mul  t6, t2, a4\n"
+"mul  a0, t3, a4\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+"mul  t4, t0, a5\n"
+"mul  t5, t1, a5\n"
+"mul  t6, t2, a5\n"
+"mul  a0, t3, a5\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+"lh  t0, 2(%[rb])\n"
+"lh  t1, 258(%[rb])\n"
+"lh  t2, 514(%[rb])\n"
+"lh  t3, 770(%[rb])\n"
+"mul  t4, t0, a6\n"
+"mul  t5, t1, a6\n"
+"mul  t6, t2, a6\n"
+"mul  a0, t3, a6\n"
+"add  %[cc0], %[cc0], t4\n"
+"add  %[cc10], %[cc10], t5\n"
+"add  %[cc20], %[cc20], t6\n"
+"add  %[cc30], %[cc30], a0\n"
+"mul  t4, t0, a7\n"
+"mul  t5, t1, a7\n"
+"mul  t6, t2, a7\n"
+"mul  a0, t3, a7\n"
+"add  %[cc1], %[cc1], t4\n"
+"add  %[cc11], %[cc11], t5\n"
+"add  %[cc21], %[cc21], t6\n"
+"add  %[cc31], %[cc31], a0\n"
+        : [cc0] "+r"(cc0), [cc10] "+r"(cc10), [cc20] "+r"(cc20), [cc30] "+r"(cc30),
+          [cc1] "+r"(cc1), [cc11] "+r"(cc11), [cc21] "+r"(cc21), [cc31] "+r"(cc31),
+          [wpt] "+r"(wpt), [rb] "+r"(rb_)
+        : [w00] "r"(w00), [w10] "r"(w10), [w01] "r"(w01), [w11] "r"(w11),
+          [rhend] "r"(rhend)
+        : "a0", "a4", "a5", "a6", "a7", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+        ca[0]=cc0; ca[1]=cc10; ca[2]=cc20; ca[3]=cc30;
+        ca[4]=cc1; ca[5]=cc11; ca[6]=cc21; ca[7]=cc31;
+    }
+    int bad = 0, worst = 0;
+    for (int q = 0; q < 8; q++) { int d = ca[q]-cr[q]; if (d<0) d=-d; if (d>worst) worst=d; if (d) bad++; }
+    snprintf(out, outsz,
+        "C5P asm=[%d %d %d %d | %d %d %d %d]\nC5P  C =[%d %d %d %d | %d %d %d %d] bad=%d worst=%d\n",
+        ca[0],ca[1],ca[2],ca[3],ca[4],ca[5],ca[6],ca[7],
+        cr[0],cr[1],cr[2],cr[3],cr[4],cr[5],cr[6],cr[7], bad, worst);
+#else
+    snprintf(out, outsz, "C5P host\n");
 #endif
 }

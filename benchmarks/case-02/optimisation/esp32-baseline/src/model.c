@@ -100,7 +100,11 @@ int tm_get_mode(void) { return g_mode; }
  * SRAM: x + buf1 + buf2 (64 KB fp32 each) + per-head q/k/v (fp32 48 KB)
  * + a16 (32 KB Q15 scratch in kernels.c)). g_out was removed: the final
  * LayerNorm writes into g_buf1, exposed via tm_output(). */
-static float g_x[TM_S * TM_D];
+/* R1 (FAST): the layer residual is carried as Q15 int16 at fixed scale
+ * g_res_sa (real value = q15 * g_res_sa); EXACT uses the fp32 view. One
+ * 64 KB buffer, reinterpreted by mode (zero extra SRAM). */
+static union { float f[TM_S * TM_D]; int32_t s[TM_S * TM_D]; } g_x;
+static float g_res_sa = 1.0f;      /* value per Q15 LSB of the residual */
 static float g_buf1[TM_S * TM_D];
 static float g_buf2[TM_S * TM_D];
 /* per-head Q/K/V stored as int16 (Q15) + a per-head-slice float scale,
@@ -124,7 +128,7 @@ static int16_t g_kh[TM_S * TM_HD];
 static int16_t g_vh[TM_S * TM_HD];
 static float g_qs, g_ks, g_vs;   /* dequant scales (amax/32767) per head */
 
-float* tm_input(void)  { return g_x; }
+float* tm_input(void)  { return g_x.f; }
 float* tm_output(void) { return g_buf1; }  /* final norm result */
 
 static uint32_t woff(int layer, int blk) {
@@ -430,8 +434,18 @@ void tm_scan_q12(const void* blob, TMQ12Weights* out) {
 
 void tm_forward(const float* xin, float* yout,
                 const float* W, const TMQ12Weights* q12) {
-    if (xin != g_x) memcpy(g_x, xin, sizeof g_x);
     int fast = (g_mode == TM_MODE_FAST);
+    if (fast) {
+        /* R1: residual carried as Q15 at fixed scale: full-scale 16.0
+         * (measured residual magnitude stays within ~±4.6 over all layers
+         * and seeds; 16 gives 3.5x headroom while keeping LSB precision
+         * ~2.4e-4, well under the 2e-3 output gate). */
+        g_res_sa = TM_RES_SPAN / 2147483648.0f;
+    /* g_res_sa: value per int32 unit of the residual; span/2^31 => numerically exact */
+        tm_quant_res_i32(xin, g_x.s, TM_S * TM_D, g_res_sa);
+    } else {
+        if (xin != g_x.f) memcpy(g_x.f, xin, sizeof g_x.f);
+    }
     PBT();
 
     for (int l = 0; l < TM_L; l++) {
@@ -441,11 +455,11 @@ void tm_forward(const float* xin, float* yout,
             /* fused LN -> a16 Q15: stats + O(D) amax bound + single
              * normalize/round pass. Removes the fp32 LN output, the separate
              * amax scan, and the separate quantize pass for qkv. */
-            g_qkv_sa = tm_bn_q15_int(g_x,
+            g_qkv_sa = tm_bn_q15_res(g_x.s, g_res_sa,
                                  W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
                                  tm_gemm_a16(), TM_S, TM_D);
         } else {
-            tm_layernorm(g_x,
+            tm_layernorm(g_x.f,
                          W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
                          g_buf1, TM_S, TM_D);
         }
@@ -535,9 +549,10 @@ void tm_forward(const float* xin, float* yout,
         /* ---- out projection ---- */
                 PB(P_OPROJ);
         if (fast) {
-            /* ctx already Q15 (global scale) in g_ctxq == g_buf2 -> raw core4 */
-            tm_gemm_core5(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
-                          W + woff(l, TM_W_BLK_OB), g_buf1,
+            /* ctx already Q15 (global scale) in g_ctxq == g_buf2 -> raw core,
+             * epilogue fuses the output into the Q15 residual in place */
+            tm_gemm_core5_resid(g_ctxq, 1.0f / g_ctx_sa, q12->q[l][3], q12->ws[l][3],
+                          W + woff(l, TM_W_BLK_OB), g_x.s, g_res_sa,
                           TM_S, TM_D, TM_D, TM_D);
         } else {
             tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_OW),
@@ -547,7 +562,7 @@ void tm_forward(const float* xin, float* yout,
 
         /* ---- residual ---- */
         PB(P_RES1);
-        tm_add_inplace(g_buf1, g_x, TM_S * TM_D);
+        if (!fast) tm_add_inplace(g_buf1, g_x.f, TM_S * TM_D);   /* R1: fused into core */
         PE(P_RES1);
 
         /* ---- norm2 (FAST: fused LN -> a16 Q15 via tight amax bound; the
@@ -555,11 +570,11 @@ void tm_forward(const float* xin, float* yout,
         float sa_ffn = TM_QACT_MAX;
         PB(P_NORM2);
         if (fast) {
-            sa_ffn = tm_bn_q15_int(g_x,
+            sa_ffn = tm_bn_q15_res(g_x.s, g_res_sa,
                                W + woff(l, TM_W_BLK_N2W), W + woff(l, TM_W_BLK_N2B),
                                tm_gemm_a16(), TM_S, TM_D);
         } else {
-            tm_layernorm(g_x,
+            tm_layernorm(g_x.f,
                          W + woff(l, TM_W_BLK_N2W), W + woff(l, TM_W_BLK_N2B),
                          g_buf1, TM_S, TM_D);
         }
@@ -589,8 +604,8 @@ void tm_forward(const float* xin, float* yout,
             /* a16 now holds Q15 (f1 output); integer GELU in place. */
             tm_gelu_q15_lut(tm_gemm_a16(), TM_S * TM_F, TM_QACT_MAX / sa2);
             PE(P_GELU);
-            tm_gemm_core5(tm_gemm_a16(), 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
-                         W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
+            tm_gemm_core5_resid(tm_gemm_a16(), 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+                         W + woff(l, TM_W_BLK_F2B), g_x.s, g_res_sa, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gelu_inplace(g_buf2, TM_S * TM_F);
             PE(P_GELU);
@@ -601,13 +616,18 @@ void tm_forward(const float* xin, float* yout,
 
         /* ---- residual ---- */
         PB(P_RES2);
-        tm_add_inplace(g_buf1, g_x, TM_S * TM_D);
+        if (!fast) tm_add_inplace(g_buf1, g_x.f, TM_S * TM_D);   /* R1: fused into core */
         PE(P_RES2);
     }
 
     /* ---- final norm ---- */
     PB(P_FINAL);
-    tm_layernorm(g_x, W + TM_W_FINALW, W + TM_W_FINALB, g_buf1, TM_S, TM_D);
+    if (fast) {
+        tm_ln_final_res(g_x.s, g_res_sa, W + TM_W_FINALW, W + TM_W_FINALB,
+                        g_buf1, TM_S, TM_D);
+    } else {
+        tm_layernorm(g_x.f, W + TM_W_FINALW, W + TM_W_FINALB, g_buf1, TM_S, TM_D);
+    }
     memcpy(yout, g_buf1, sizeof g_buf1);
     PE(P_FINAL);
     PET();

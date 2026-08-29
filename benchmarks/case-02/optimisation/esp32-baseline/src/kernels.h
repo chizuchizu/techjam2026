@@ -76,6 +76,10 @@ void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 void tm_gemm_core4_v2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                      float w_scale, const float* bias, float* C,
                      int M, int K, int N, int rowStride);
+float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                        float w_scale, const float* bias, int32_t* scratch,
+                        int16_t* Out, int M, int K, int N, int rowStride);
+
 void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                    float w_scale, const float* bias, float* C,
                    int M, int K, int N, int rowStride);
@@ -95,13 +99,20 @@ void tm_gemm_core(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_exp_f32(float y);
 
 void tm_microbench(char* out, size_t outsz);
+void tm_dbg_c5acc(char* out, size_t outsz);
 
 void tm_kbench2(char* out, size_t outsz);
 #ifdef __cplusplus
 }
 #endif
 
+void tm_quant_res_i32(const float* in, int32_t* out_q, int n, float sx);
+void tm_gemm_core5_resid(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias, int32_t* xq,
+                         float sx, int M, int K, int N, int rowStride);
+float tm_bn_q15_res(const int32_t* in_q, float sx, const float* gamma,
+                     const float* beta, int16_t* out_q, int S, int D);
+void tm_ln_final_res(const int32_t* in_q, float sx, const float* gamma,
+                     const float* beta, float* out, int S, int D);
+
 #endif /* TM_KERNELS_H */
-float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
-                     float w_scale, const float* bias, int32_t* scratch,
-                     int16_t* Out, int M, int K, int N, int rowStride);

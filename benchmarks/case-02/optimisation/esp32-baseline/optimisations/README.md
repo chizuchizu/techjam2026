@@ -27,6 +27,9 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ FFN1 fixed-point Q15 epilogue (opt 17)** | **2.838 → 2.701** | **15.6×** | host 50/50 (9.05e-4..1.12e-3), device 5/5 (9.2e-4..1.1e-3) |
 | **+ KB1 int32 bias-fold + asm requant, core5 bias-fold, int32-limb QK (opt 18)** | **2.701 → 2.447** | **17.2×** | host 50/50 (FAST ≤9.8e-4, EXACT ≤6.8e-5); device 5/5 (≤1.29e-3) |
 | **+ QK j-unroll-4, PV 8-accumulator (opt 19)** | **2.447 → 2.386** | **17.6×** | host 50/50 (≤9.99e-4); device 5/5 (≤1.29e-3), bit-exact attention |
+| **+ integer-residual FAST path (opt 21)** | **2.386 → 2.122** | **19.8×** | host 50/50 (worst 1.03e-3); device 25/25 test seeds PASS (worst 1.24e-3), ExScore 0.267 → 5.30 |
+| **+ KB0 head-GEMM asm on R1 (opt 22)** | **2.122 → 2.056** | **20.5×** | host 50/50 (worst 1.03e-3); device 25/25 PASS (worst 1.24e-3, kb0 bit-exact), ExScore 5.48 |
+| **+ core5 4×2 asm fix (opt 23, col1 product-reuse)** | **2.056 → 1.996** | **21.1×** | host 50/50; device 25/25 PASS (worst 1.08e-3); probe bad=0 |
 
 ## Files
 | file | contents |
@@ -39,7 +42,10 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 11_int32_attention_pv.md | integer-only PV (Q15 row-rescale + int32 acc) + integer ctx epilogue (m/2^sh) |
 | 12_gemm_jtile2.md | core4_v2 GEMM: j-tile-2 + K-pair prefetch, bit-exact vs core4 |
 | 18_kb1_core5_qkv2.md | KB1 int32 bias-fold + asm requant; core5 bias-fold epilogue; int32-limb QK |
+| 23_core5_asm_fix.md | core5 4×2 asm col1 product-reuse fix + probe `1:` label repair (2.056 → 1.996 s) |
 | 19_attn_qk_unroll_pv8.md | attention QK j-unroll-4 (3.25 instr/MAC) + PV 8 accumulators; core5-flash & IRAM negative results |
+| 21_integer_residual_fast_path.md | int32 exact residual + fused fixed-point epilogues + integer-stats norms (R1): 2.386 → 2.122 s, −11%, no new RAM |
+| 22_r1_kb0_composition.md | R1 + kb0 head-GEMM asm merge: 2.122 → 2.056 s, device 25/25 PASS |
 | research.md | firecrawl/web literature skim (research/techniques, kept at /tmp/jam26_opt) |
 
 ## Key techniques applied (performance-engineer view)

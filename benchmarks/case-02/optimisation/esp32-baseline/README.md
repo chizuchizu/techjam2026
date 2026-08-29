@@ -17,13 +17,13 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: ~2.39 s/forward**
-  (opt19; down from the 42.15 s starting implementation).
+  and biases are pre-quantized offline. **Measured on device: ~1.996 s/forward**
+  (opt23; down from the 42.15 s starting implementation).
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): **0 failures over 25 random seeds** (seeds 1234..1258),
-worst max_abs error 9.6e-4. On-device: **5/5 seeds pass**, max_abs
-6.7e-4..8.1e-4.
+|a-b| <= 0.02*|b|): host **54/54 seed-runs pass** (FAST worst 1.03e-3,
+EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
+1.996 s/forward. Scores (tools/score.py): MFU(raw-int) 19.2%, ExScore 5.65x.
 
 ## Repository layout
 

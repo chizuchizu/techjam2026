@@ -12,3 +12,5 @@ __pycache__/
 
 # firecrawl raw scrapes (research; distilled into the case-02 optimisation log)
 .firecrawl/
+# root-level raw web-search dumps (research scratch; results distilled into README/logs)
+search_*.json
