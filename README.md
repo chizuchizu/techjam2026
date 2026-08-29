@@ -36,7 +36,7 @@ experiments that are not official cases are isolated in
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
 | [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | Not implemented | Batch-parallel candidate |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at 5.27 s; partial multiboard paths verified |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at **1.996 s (21.1×, opt23)**; host 54/54 + device 25/25; partial multiboard paths verified |
 | [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | Not implemented | Small-batch scheduling |
 | [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | Not implemented | Batch tiling and dispatch |
 | [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | Not implemented | Throughput-oriented batch sharding |

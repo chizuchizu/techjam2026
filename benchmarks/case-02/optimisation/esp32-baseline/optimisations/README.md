@@ -29,7 +29,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ QK j-unroll-4, PV 8-accumulator (opt 19)** | **2.447 → 2.386** | **17.6×** | host 50/50 (≤9.99e-4); device 5/5 (≤1.29e-3), bit-exact attention |
 | **+ integer-residual FAST path (opt 21)** | **2.386 → 2.122** | **19.8×** | host 50/50 (worst 1.03e-3); device 25/25 test seeds PASS (worst 1.24e-3), ExScore 0.267 → 5.30 |
 | **+ KB0 head-GEMM asm on R1 (opt 22)** | **2.122 → 2.056** | **20.5×** | host 50/50 (worst 1.03e-3); device 25/25 PASS (worst 1.24e-3, kb0 bit-exact), ExScore 5.48 |
-| **+ core5 4×2 asm fix (opt 23, col1 product-reuse)** | **2.056 → 1.996** | **21.1×** | host 50/50; device 25/25 PASS (worst 1.08e-3); probe bad=0 |
+| **+ core5 4×2 asm fix (opt 23, col1 product-reuse)** | **2.056 → 1.996** | **21.1×** | host 54/54 (worst 1.03e-3); device 25/25 PASS (worst 1.24e-3); probe bad=0; ExScore 5.65 |
 
 ## Files
 | file | contents |

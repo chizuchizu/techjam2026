@@ -23,7 +23,7 @@ complete Transformer body.
 | Case | Batch | Sequence | Model dim | Heads | FFN dim | Layers | Status |
 |---:|---:|---:|---:|---:|---:|---:|---|
 | [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Not implemented |
-| [02](case-02/) | 1 | 128 | 128 | 4 | 128 | 4 | Single-board verified; partial multiboard verified |
+| [02](case-02/) | 1 | 128 | 128 | 4 | 128 | 4 | Single-board verified, **1.996 s/fwd (21.1×)**; partial multiboard verified |
 | [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Not implemented |
 | [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Not implemented |
 | [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Not implemented |
