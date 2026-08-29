@@ -1,0 +1,3 @@
+.pio/
+tools/shard_host_test
+tools/__pycache__/

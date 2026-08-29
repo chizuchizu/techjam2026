@@ -1,0 +1,90 @@
+[
+  {
+    "batch": 4,
+    "boards": 2,
+    "missing": [],
+    "complete": true,
+    "checked": 4,
+    "per_board_inputs": [
+      2,
+      2
+    ],
+    "per_board_compute_s": [
+      3.981,
+      3.981
+    ],
+    "compute_wall_s": 3.981,
+    "one_board_compute_s": 7.962,
+    "speedup": 2.0,
+    "serial_wall_s": 8.1,
+    "per_forward_s": 1.9904,
+    "fails": 0,
+    "max_abs": 0.0011286735534667969
+  },
+  {
+    "batch": 16,
+    "boards": 2,
+    "missing": [],
+    "complete": true,
+    "checked": 16,
+    "per_board_inputs": [
+      8,
+      8
+    ],
+    "per_board_compute_s": [
+      15.923,
+      15.923
+    ],
+    "compute_wall_s": 15.923,
+    "one_board_compute_s": 31.847,
+    "speedup": 2.0,
+    "serial_wall_s": 32.4,
+    "per_forward_s": 1.9904,
+    "fails": 0,
+    "max_abs": 0.0011532902717590332
+  },
+  {
+    "batch": 64,
+    "boards": 2,
+    "missing": [],
+    "complete": true,
+    "checked": 64,
+    "per_board_inputs": [
+      32,
+      32
+    ],
+    "per_board_compute_s": [
+      63.695,
+      63.695
+    ],
+    "compute_wall_s": 63.695,
+    "one_board_compute_s": 127.391,
+    "speedup": 2.0,
+    "serial_wall_s": 129.4,
+    "per_forward_s": 1.9905,
+    "fails": 0,
+    "max_abs": 0.0013346672058105469
+  },
+  {
+    "batch": 128,
+    "boards": 2,
+    "missing": [],
+    "complete": true,
+    "checked": 128,
+    "per_board_inputs": [
+      64,
+      64
+    ],
+    "per_board_compute_s": [
+      127.39,
+      127.389
+    ],
+    "compute_wall_s": 127.39,
+    "one_board_compute_s": 254.779,
+    "speedup": 2.0,
+    "serial_wall_s": 259.0,
+    "per_forward_s": 1.9904,
+    "fails": 0,
+    "max_abs": 0.0013346672058105469
+  }
+]

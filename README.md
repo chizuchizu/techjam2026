@@ -34,11 +34,11 @@ experiments that are not official cases are isolated in
 
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-64 total **127.36 s** on-device; 5/5 device PASS |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at **1.996 s (21.1×, opt23)**; host 54/54 + device 25/25; partial multiboard paths verified |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-4 total **7.96 s** on-device; 5/5 device PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-16 total **31.84 s** on-device; 5/5 device PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward**; batch-128 total **254.72 s** on-device; 5/5 device PASS |
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-64 **127.36 s** on one board; data-parallel on two boards **63.7 s (2.00x)**, 64/64 forwards PASS |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single- and two-board verified** | Full body at **1.996 s (21.1×, opt23)**, host 54/54 + device 25/25; complete two-board distributed forward **1.276 s (1.56x)** |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-4 **7.96 s** on one board; data-parallel on two boards **4.0 s (2.00x)**, 4/4 forwards PASS |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-16 **31.84 s** on one board; data-parallel on two boards **15.9 s (2.00x)**, 16/16 forwards PASS |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-128 **254.72 s** on one board; data-parallel on two boards **127.4 s (2.00x)**, 128/128 forwards PASS |
 | [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
 | [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device PASS |
 | [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |
@@ -74,12 +74,31 @@ change.
 
 #### Complete two-board end-to-end case 2
 
-- [ ] Run all four layers and the final LayerNorm across two boards.
-- [ ] Add the missing projections, residuals, LayerNorm, and FFN path.
-- [ ] Keep weights on the workers and return each complete layer output.
-- [ ] Validate the two-board output with five seeds.
-- [ ] Measure full wall time and split compute from communication.
-- [ ] Compare it with one board and save the raw results.
+- [x] Run all four layers and the final LayerNorm across two boards.
+- [x] Add the missing projections, residuals, LayerNorm, and FFN path.
+- [x] Keep weights on the workers; each board holds the full blobs in flash and
+      returns only its own output rows.
+- [x] Validate the two-board output with five seeds.
+- [x] Measure full wall time and split compute from communication.
+- [x] Compare it with one board and save the raw results.
+
+Result: **1.276 s across two C3s against 1.990 s on one (1.56x)** on the opt23
+kernels, 25/25 host seeds passing the accuracy gate with zero failing elements.
+Time blocked on the board-to-board link is 5-88 ms per forward. The measured
+window excludes host serial transfer, exactly as the single-board number does.
+See
+[`benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md`](benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md).
+
+#### Multiboard for the batch cases
+
+- [x] Data-parallel dispatch for cases 1, 3, 4 and 5 across N boards.
+- [x] Validate every output of every batch against the torch reference.
+- [x] Compare with one board and save the raw results.
+
+Result: **2.00x on two boards for B = 4, 16, 64 and 128** (cases 3, 4, 1, 5),
+all 212 forwards gated individually with zero failing elements. These cases are
+independent forwards over shared weights, so the boards exchange nothing. See
+[`benchmarks/batch-dp/`](benchmarks/batch-dp/).
 
 #### Benchmark four boards, then scale to eight
 
