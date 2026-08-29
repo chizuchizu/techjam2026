@@ -17,10 +17,8 @@ reference forward).
 * **FAST** (`TM_MODE_FAST`, default): the six per-layer projection GEMMs
   become **Q15 x Q12 fixed-point** (int16 x int16 -> int32 saturating),
   activations quantized per-tensor, weights pre-quantized offline. Attention
-  QK/PV, LayerNorm and the deg-11-poly GELU stay in fp32. **Measured on
-  device: ~42.1 s/forward** (the earlier ~2-4 s target was wrong - the fp32
-  attention/LN/GELU parts run as software float on the FPU-less core and
-  dominate the time).
+  QK/PV, LayerNorm and the deg-11-poly GELU stay in fp32. **Measured on device: ~3.97 s/forward** (10.6× vs the fp32 reference) after the
+  integer-pipeline optimizations documented in optimizations/.
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
 |a-b| <= 0.02*|b|): **0 failures over 25 random seeds** (seeds 1234..1258),

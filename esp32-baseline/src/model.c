@@ -298,21 +298,13 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                 a2 += (int64_t)p * (int32_t)vj[db+2];
                 a3 += (int64_t)p * (int32_t)vj[db+3];
             }
-            if (fast) {
+                        if (fast) {
                 float rot = inv * g_sctx;
                 int16_t* oq = g_ctxq + (size_t)i * TM_D + head * TM_HD + db;
-                oq[0] = (int16_t)(((float)a0 * rot) >= 0.f
-                                  ? (int32_t)((float)a0 * rot + 0.5f)
-                                  : (int32_t)((float)a0 * rot - 0.5f));
-                oq[1] = (int16_t)(((float)a1 * rot) >= 0.f
-                                  ? (int32_t)((float)a1 * rot + 0.5f)
-                                  : (int32_t)((float)a1 * rot - 0.5f));
-                oq[2] = (int16_t)(((float)a2 * rot) >= 0.f
-                                  ? (int32_t)((float)a2 * rot + 0.5f)
-                                  : (int32_t)((float)a2 * rot - 0.5f));
-                oq[3] = (int16_t)(((float)a3 * rot) >= 0.f
-                                  ? (int32_t)((float)a3 * rot + 0.5f)
-                                  : (int32_t)((float)a3 * rot - 0.5f));
+                oq[0] = (int16_t)(int32_t)((float)a0 * rot);
+                oq[1] = (int16_t)(int32_t)((float)a1 * rot);
+                oq[2] = (int16_t)(int32_t)((float)a2 * rot);
+                oq[3] = (int16_t)(int32_t)((float)a3 * rot);
             } else {
                 o[db]   = (float)a0 * inv;
                 o[db+1] = (float)a1 * inv;
