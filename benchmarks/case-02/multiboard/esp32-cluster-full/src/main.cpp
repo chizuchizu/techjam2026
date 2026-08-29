@@ -31,6 +31,7 @@
 #include "kernels.h"
 #include "link.h"
 #include "model_shard.h"
+#include "servo.h"
 
 extern const uint8_t _binary_weights_bin_start[] asm("_binary_weights_bin_start");
 extern const uint8_t _binary_weights_q12_bin_start[] asm("_binary_weights_q12_bin_start");
@@ -121,16 +122,18 @@ static uint32_t cluster_forward(uint32_t* compute_us) {
     if (!tm_link_barrier(0xA5, 30000)) return 0;
     const int64_t t0 = esp_timer_get_time();
 
+    tm_servo_busy(1);            /* no-op unless TM_SERVO_PIN is defined */
     for (int l = 0; l < TM_L; l++) {
         arm_layer_exchange();
         tm_shard_layer_pre(&g_shard, l);    /* fires on_kv_sent per head   */
         tm_shard_layer_post(&g_shard, l);   /* blocks in on_kv_needed only */
-        if (g_link_bad) return 0;
+        if (g_link_bad) { tm_servo_busy(0); return 0; }
         const int64_t td = esp_timer_get_time();
-        if (!tm_link_end_exchange(30000)) return 0;
+        if (!tm_link_end_exchange(30000)) { tm_servo_busy(0); return 0; }
         g_link_us += (uint64_t)(esp_timer_get_time() - td);
     }
     tm_shard_final(&g_shard);
+    tm_servo_busy(0);
 
     const int64_t t1 = esp_timer_get_time();
     if (!tm_link_barrier(0x5A, 30000)) return 0;
@@ -173,6 +176,13 @@ void setup() {
     delay(200);
     tm_scan_q12(_binary_weights_q12_bin_start, &g_q12);
     tm_link_set_heartbeat(heartbeat);
+#ifdef TM_SERVO_PIN
+    {
+        const int hz = tm_servo_begin(TM_SERVO_PIN);
+        Serial.printf("TM servo GPIO%d ledc=%dHz %s\n", TM_SERVO_PIN, hz,
+                      hz ? "ok" : "FAILED");
+    }
+#endif
     tm_shard_init(&g_shard, 0, g_wf32, &g_q12);
     install_hooks();
     Serial.printf("TM cluster node ready sloc=%d state=%u B\n",

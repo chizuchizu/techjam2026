@@ -80,6 +80,38 @@ the 42.15 s measured starting point; measured via repeated forwards on the
 C3 (wall-clock, same weights/input). Fine-grained per-phase and per-version
 profiles are in [`optimisations/README.md`](optimisations/README.md).
 
+## Optional: servo activity indicator
+
+`pio run -e esp32-servo-demo -t upload` builds the same firmware with a hobby
+servo that sweeps while a forward is running and parks at 90 degrees between
+them, as a visible sign the board is working. Signal on **GPIO2** (A0 and D0
+are the same pin on the XIAO ESP32C3); override with `-DTM_SERVO_PIN=<n>`.
+
+A forward is ~2 s of tight GEMM loops that never yield, so the sweep cannot
+live in `loop()`. It runs in its own FreeRTOS task above the Arduino loop task:
+FreeRTOS is preemptive, so the tick interrupt takes the CPU away every 20 ms,
+moves the servo and hands it straight back. The pulse train itself comes from
+the LEDC peripheral and costs no CPU.
+
+Measured cost: **1.990 s -> 2.000 s per forward, about 0.5%**, accuracy
+unchanged. The benchmark envs do not compile any of it in (`#ifdef
+TM_SERVO_PIN`), so the published numbers are unaffected.
+
+Two commands help when wiring it up, and isolate the PWM from the inference
+path: `V <byte 0..180>` parks at one angle, `W` sweeps for 6 s with no compute
+running.
+
+Note the C3's LEDC tops out at **14-bit** duty resolution (the original ESP32
+does 20). Asking for more makes `ledcSetup()` fail and no pulse is ever
+generated, which is why `tm_servo_begin()` returns the achieved frequency and
+`setup()` prints `ok`/`FAILED`. Power a servo from its own 5 V supply with the
+grounds tied together - stall current off the board's 3V3 rail will brown out
+the C3 mid-forward.
+
+The two-board cluster has the same option: `esp32-cluster-servo` in
+[`../../multiboard/esp32-cluster-full/`](../../multiboard/esp32-cluster-full/),
+where both boards sweep while they split one forward between them.
+
 ## Scoring (evaluation methodology)
 
 The benchmark evaluates a submission as a **weighted sum of per-test-case

@@ -20,6 +20,7 @@
 
 #include "model.h"
 #include "kernels.h"
+#include "servo.h"
 
 /* embedded blobs from board_build.embed_files (project root) */
 extern const uint8_t _binary_weights_bin_start[] asm("_binary_weights_bin_start");
@@ -49,8 +50,10 @@ __attribute__((used)) void tm_prof_emit(const char* line) {
 
 static void run_forward(void) {
     ensure_q12();
+    tm_servo_busy(1);            /* no-op unless TM_SERVO_PIN is defined */
     /* workspace lives in model.c: input = g_x, output = g_buf1 */
     tm_forward(tm_input(), tm_output(), g_wf32, &g_q12);
+    tm_servo_busy(0);
     g_forward_counter++;
 }
 
@@ -75,6 +78,13 @@ void setup() {
     Serial.setRxBufferSize(8192);
     delay(200);
     tm_set_mode(TM_MODE_DEFAULT);
+#ifdef TM_SERVO_PIN
+    {
+        const int hz = tm_servo_begin(TM_SERVO_PIN);
+        Serial.printf("TM servo GPIO%d ledc=%dHz %s\n", TM_SERVO_PIN, hz,
+                      hz ? "ok" : "FAILED");
+    }
+#endif
     Serial.println("TM XIAO-ESP32C3 case2 baseline ready");
     Serial.printf("TM weights f32=%u bytes q12=%u bytes\n",
                   (unsigned)(_binary_weights_bin_end - _binary_weights_bin_start),
@@ -137,6 +147,23 @@ void loop() {
             Serial.print(line);
             break;
         }
+#ifdef TM_SERVO_PIN
+        case 'V': {                 /* 'V' <deg 0..180>: park at one angle */
+            while (Serial.available() == 0) delay(2);
+            int deg = (int)Serial.read();
+            tm_servo_set_deg(deg);
+            Serial.printf("TM servo deg=%d\n", deg);
+            break;
+        }
+        case 'W': {                 /* sweep for ~6 s with no compute at all */
+            Serial.println("TM servo sweep 6s");
+            tm_servo_busy(1);
+            delay(6000);
+            tm_servo_busy(0);
+            Serial.println("TM servo sweep done");
+            break;
+        }
+#endif
         case 'X': {
             Serial.println("TM reset");
             break;

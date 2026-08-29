@@ -267,6 +267,9 @@ def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL):
 
     n = len(boards)
     assign = [[i for i in range(batch) if i % n == k] for k in range(n)]
+    if batch < n:
+        print(f"      note: {batch} inputs over {n} boards leaves {n - batch} idle; "
+              f"data parallelism can only use min(B, N)")
     results = [dict(us=[], fails=0, max_abs=0.0, wall=0.0, missing=[])
                for _ in range(n)]
 
