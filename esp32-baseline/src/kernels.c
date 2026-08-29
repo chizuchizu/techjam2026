@@ -87,6 +87,15 @@ static __inline__ uint64_t tm_cyc_now(void) {
 }
 static uint64_t g_c4_cyc = 0; static uint32_t g_c4_n = 0;
 static uint64_t g_c5_cyc = 0; static uint32_t g_c5_n = 0;
+
+#ifdef TM_RANGE
+static double r_min=1e30f, r_max=-1e30f; static long r_n=0;
+#define RTR(x) do { double v=(double)(x); if (v<r_min) r_min=v; if (v>r_max) r_max=v; r_n++; } while(0)
+static double h_gx_min=1e30f, h_gx_max=-1e30f, h_bx_min=1e30f, h_bx_max=-1e30f;
+static double h_bq_min=1e30f, h_bq_max=-1e30f, h_c_min=1e30f, h_c_max=-1e30f;
+static double h_c5g_min=1e30f, h_c5g_max=-1e30f, h_c5bg_min=1e30f, h_c5bg_max=-1e30f;
+#endif
+
 /* kernels-internal microsecond instrumentation (independent of model.c slots) */
 static uint32_t k_t0[4];
 static uint64_t k_acc[4]; static uint32_t k_n[4];
@@ -352,32 +361,81 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
     KPE(3);
     float sa = TM_QACT_MAX / (amax > 0.0f ? amax : 1.0f);
     KPE(0);
-    /* Fixed-point pass in Q30 (int64): coefficient rounding error * acc must
-     * stay below 0.5 q15 unit; a Q15 coefficient loses precision whenever acc
-     * is large (acc can approach 2^31), so Q30 + int64 is required. */
+    /* Bias fold in Q15-input units: BD[d] = round(bias[d]/g).  BX[d] =
+     * bias[d]*sa*2^30 grows to ~1.6e12 (int32 overflow) so fold the bias into
+     * the multiplier; fold error |BD*g - bias| <= g/2 lands far below the
+     * >>30 output bin (<= GX/2 = ~5e4 / 2^30 = 5e-5 q15 units).  GX = g*sa*2^30
+     * stays in [7.3e4, 1.04e5] on real QKV head scales. */
     KPB(1);
     const float gsa = g * sa;
-    const int64_t GX = (int64_t)(gsa * 1073741824.0f);          /* *2^30 */
-    int64_t BX[TM_HD];
+    const int32_t GX = (int32_t)(gsa * 1073741824.0f);
+    const float ginv = (g != 0.0f) ? (1.0f / g) : 0.0f;
+    int32_t BD[TM_HD];
     for (int d = 0; d < HD; d++)
-        BX[d] = (int64_t)(bias[d] * sa * 1073741824.0f);
+        BD[d] = (int32_t)(bias[d] * ginv + (bias[d] >= 0.0f ? 0.5f : -0.5f));
     for (int i = 0; i < S; i++) {
         const int32_t* ra = acc + (size_t)i * HD;
         int16_t* dd = dst + (size_t)i * HD;
         for (int d = 0; d < HD; d++) {
-            int64_t t = (int64_t)ra[d] * GX + BX[d];
-            int64_t tt = (t >= 0) ? (t + 536870912) : (-t + 536870912); /* +2^29 */
+#if defined(__riscv)
+            int32_t r = ra[d];
+#ifdef TM_RANGE
+            if (r < h_c_min) h_c_min = r; if (r > h_c_max) h_c_max = r;
+#endif
+            int32_t w = r + BD[d];
+            int32_t q, lo, hi, sn, c2, lo2;
+            __asm__ volatile(
+                "mul  %[lo], %[w], %[gx]\n\t"   /* lo = w*GX (low 32) */
+                "mulh %[hi], %[w], %[gx]\n\t"   /* hi = w*GX (high 32) */
+                "srai %[sn], %[hi], 31\n\t"     /* sign of t (64-bit) */
+                "slli %[c2], %[sn], 29\n\t"     /* +sign*2^29 low */
+                "add  %[lo], %[lo], %[c2]\n\t"
+                "sltu %[c2], %[lo], %[c2]\n\t"  /* carry into hi */
+                "add  %[hi], %[hi], %[c2]\n\t"
+                "slli %[sn], %[hi], 2\n\t"      /* (hi:lo) >> 30 arithmetic low32 */
+                "srl  %[lo2], %[lo], 30\n\t"
+                "or   %[q], %[sn], %[lo2]\n\t"
+                "li   %[sn], 32767\n\t"
+                "blt  %[sn], %[q], 2f\n\t"
+                "li   %[sn], -32767\n\t"
+                "blt  %[q], %[sn], 2f\n\t"
+                "j    3f\n\t"
+                "2:   mv   %[q], %[sn]\n\t"
+                "3:\n\t"
+                : [q] "=&r"(q), [lo] "=&r"(lo), [hi] "=&r"(hi),
+                  [sn] "=&r"(sn), [c2] "=&r"(c2), [lo2] "=&r"(lo2)
+                : [w] "r"(w), [gx] "r"(GX)
+                : "memory");
+            dd[d] = (int16_t)q;
+#else
+            int32_t r = ra[d];
+#ifdef TM_RANGE
+            if (r < h_c_min) h_c_min = r; if (r > h_c_max) h_c_max = r;
+#endif
+            int64_t t = ((int64_t)r + (int64_t)BD[d]) * (int64_t)GX;
+            int64_t tt = (t >= 0) ? (t + 536870912) : (-t + 536870912);
             int64_t qq = (t >= 0) ? tt : -tt;
             int32_t q = (int32_t)(qq >> 30);
             if (q > TM_QACT_MAX) q = (int)TM_QACT_MAX;
             else if (q < (int)-TM_QACT_MAX) q = -(int)TM_QACT_MAX;
             dd[d] = (int16_t)q;
+#endif
         }
     }
     KPE(1);
     return amax / TM_QACT_MAX;
 }
 
+
+
+#ifdef TM_RANGE
+void tm_range_dump(void) {
+    fprintf(stderr, "RNG n=%ld\n", r_n);
+    fprintf(stderr, "RNG GX=[%.1f,%.1f] BX=[%.1f,%.1f] (head_q15)\n", h_gx_min,h_gx_max,h_bx_min,h_bx_max);
+    fprintf(stderr, "RNG bq=[%.1f,%.1f] r=[%.1f,%.1f] (c5q15/head)\n", h_bq_min,h_bq_max,h_c_min,h_c_max);
+    fprintf(stderr, "RNG c5g=[%.6f,%.6f] BQ=[%.1f,%.1f] (core5)\n", h_c5g_min,h_c5g_max,h_c5bg_min,h_c5bg_max);
+}
+#endif
 
 /* core4: j-outer, 8-row i-tile, 8 int32 register accs.  Each flash weight
  * column is read once per 8 rows -> M*N*K*2/8 bytes of flash XIP (half of
@@ -542,6 +600,18 @@ void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                    int M, int K, int N, int rowStride) {
     uint64_t _c5s = tm_cyc_now();
     const float g = sa_inv * w_scale;
+    int32_t BQ[1024] __attribute__((aligned(4)));
+/* ranges via file-scope h_c5* */
+    const float ginv5 = (g != 0.0f) ? (1.0f / g) : 0.0f;
+    for (int jj = 0; jj < N && jj < 1024; jj++) {
+        float bv = bias ? bias[jj] : 0.0f;
+        float bg = bv * ginv5;
+        BQ[jj] = (int32_t)(bg + (bg >= 0.0f ? 0.5f : -0.5f));
+#ifdef TM_RANGE
+        if (g < h_c5g_min) h_c5g_min = g; if (g > h_c5g_max) h_c5g_max = g;
+        if (bg < h_c5bg_min) h_c5bg_min = bg; if (bg > h_c5bg_max) h_c5bg_max = bg;
+#endif
+    }
     for (int j = 0; j + 1 < N; j += 2) {
         const int16_t* w0 = Wq + (size_t)j * K;
         const int16_t* w1 = Wq + (size_t)(j + 1) * K;
@@ -572,14 +642,15 @@ void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 
 
             float* c0r = C + (size_t)it * rowStride + j;
-            c0r[0]              = (float)c00 * g + bj;
-            c0r[1]              = (float)c01 * g + bj1;
-            c0r[rowStride]      = (float)c10 * g + bj;
-            c0r[rowStride+1]    = (float)c11 * g + bj1;
-            c0r[2*rowStride]    = (float)c20 * g + bj;
-            c0r[2*rowStride+1]  = (float)c21 * g + bj1;
-            c0r[3*rowStride]    = (float)c30 * g + bj;
-            c0r[3*rowStride+1]  = (float)c31 * g + bj1;
+            const int32_t bq0 = BQ[j], bq1 = BQ[j+1];
+            c0r[0]              = (float)(c00 + bq0) * g;
+            c0r[1]              = (float)(c01 + bq1) * g;
+            c0r[rowStride]      = (float)(c10 + bq0) * g;
+            c0r[rowStride+1]    = (float)(c11 + bq1) * g;
+            c0r[2*rowStride]    = (float)(c20 + bq0) * g;
+            c0r[2*rowStride+1]  = (float)(c21 + bq1) * g;
+            c0r[3*rowStride]    = (float)(c30 + bq0) * g;
+            c0r[3*rowStride+1]  = (float)(c31 + bq1) * g;
         }
     }
     if (N & 1) {
@@ -598,10 +669,11 @@ void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                 c2 += (int32_t)a2[k]*b; c3 += (int32_t)a3[k]*b;
             }
             float* c0r = C + (size_t)it * rowStride + j;
-            c0r[0] = (float)c0 * g + bj;
-            c0r[rowStride]   = (float)c1 * g + bj;
-            c0r[2*rowStride] = (float)c2 * g + bj;
-            c0r[3*rowStride] = (float)c3 * g + bj;
+            const int32_t bq = BQ[j];
+            c0r[0] = (float)(c0 + bq) * g;
+            c0r[rowStride]   = (float)(c1 + bq) * g;
+            c0r[2*rowStride] = (float)(c2 + bq) * g;
+            c0r[3*rowStride] = (float)(c3 + bq) * g;
         }
     }
     g_c5_cyc += (uint64_t)(tm_cyc_now() - _c5s); g_c5_n++;
@@ -627,6 +699,9 @@ float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
         if (bias) {
             bq0 = (int32_t)(bias[j]   * ginv + (bias[j]   >= 0.0f ? 0.5f : -0.5f));
             bq1 = (int32_t)(bias[j+1] * ginv + (bias[j+1] >= 0.0f ? 0.5f : -0.5f));
+#ifdef TM_RANGE
+        { double v0=bq0,v1=bq1; if(v0<h_bq_min)h_bq_min=v0; if(v0>h_bq_max)h_bq_max=v0; if(v1<h_bq_min)h_bq_min=v1; if(v1>h_bq_max)h_bq_max=v1; }
+#endif
         }
         for (int it = 0; it < M; it += 4) {
             const int16_t* a0 = Aq + (size_t)(it + 0) * K;
@@ -1160,3 +1235,241 @@ void tm_microbench(char* out, size_t outsz) {
 #endif
 }
 
+void tm_kbench2(char* out, size_t outsz) {
+#if defined(__riscv)
+    enum { S=128, HD=32 };
+    int16_t* qh = tm_gemm_a16();
+    int16_t* kh = qh + S*HD;
+    int16_t* vh = kh + S*HD;
+    /* p15b and dummy4 live in the a16 tail (2048 int32 free after qh/kh/vh) */
+    int32_t* p15b = (int32_t*)(qh + 3*S*HD);
+    int32_t* dummy4 = p15b + S;
+    uint32_t st=12345;
+    for (int i=0;i<S*HD;i++){ st=st*1664525u+1013904223u; qh[i]=(int16_t)(st>>16); kh[i]=(int16_t)((st>>8)&0xffff); vh[i]=(int16_t)((st>>4)&0xffff); }
+    for (int i=0;i<S;i++){ st=st*1664525u+1013904223u; p15b[i]=(int32_t)(st>>17); }
+    uint32_t cyc0, cyc1;
+    volatile int32_t sink=0;
+    double qk_cur=0,qk_v2=0,pv_cur=0,pv_v2=0,c5_float=0,c5_int=0,c5_epi=0;
+
+    cyc0 = tm_cyc_now();
+    for (int rep=0; rep<4; rep++) {
+      for (int i=0;i<S;i++){
+        const int16_t* qi16=qh+(size_t)i*HD;
+        int64_t maxs = INT64_MIN;
+        for (int j=0;j<=i;j++){
+          const int16_t* kj16=kh+(size_t)j*HD;
+          int64_t dot=0; int d=0;
+          for (; d+1<HD; d+=2)
+            dot += (int32_t)(int16_t)qi16[d]*(int32_t)kj16[d]
+                 + (int32_t)(int16_t)qi16[d+1]*(int32_t)kj16[d+1];
+          for (; d<HD; d++) dot += (int32_t)(int16_t)qi16[d]*(int32_t)kj16[d];
+          if (dot>maxs) maxs=dot;
+        }
+        sink += (int32_t)maxs;
+      }
+    }
+    cyc1 = tm_cyc_now();
+    qk_cur = (double)(cyc1-cyc0)/4.0;
+
+    cyc0 = tm_cyc_now();
+    for (int rep=0; rep<4; rep++) {
+      for (int i=0;i<S;i++){
+        const int16_t* qi16=qh+(size_t)i*HD;
+        int32_t maxs32=INT32_MIN;
+        for (int j=0;j<=i;j++){
+          const int16_t* kj16=kh+(size_t)j*HD;
+          int32_t L=0,H=0; int d=0;
+          for (; d+1<HD; d+=2){
+            int32_t p = (int32_t)qi16[d]*(int32_t)kj16[d]
+                      + (int32_t)qi16[d+1]*(int32_t)kj16[d+1];
+            L += p; if ((uint32_t)L < (uint32_t)p) H+=1;
+          }
+          (void)H;
+          if (L>maxs32) maxs32=L;
+        }
+        sink += maxs32;
+      }
+    }
+    cyc1 = tm_cyc_now();
+    qk_v2 = (double)(cyc1-cyc0)/4.0;
+
+    cyc0 = tm_cyc_now();
+    for (int rep=0; rep<4; rep++) {
+      for (int i=0;i<S;i++){
+        int32_t a0=0,a1=0,a2=0,a3=0,a4=0,a5=0,a6=0,a7=0;
+        for (int db=0; db<HD; db+=8){
+          for (int j=0;j<=i;j++){
+            const int16_t* vj=vh+(size_t)j*HD;
+            int32_t p=p15b[j];
+            a0+=p*(int32_t)vj[db+0]; a1+=p*(int32_t)vj[db+1];
+            a2+=p*(int32_t)vj[db+2]; a3+=p*(int32_t)vj[db+3];
+            a4+=p*(int32_t)vj[db+4]; a5+=p*(int32_t)vj[db+5];
+            a6+=p*(int32_t)vj[db+6]; a7+=p*(int32_t)vj[db+7];
+          }
+        }
+        sink += a0+a1+a2+a3+a4+a5+a6+a7;
+      }
+    }
+    cyc1 = tm_cyc_now();
+    pv_cur = (double)(cyc1-cyc0)/4.0;
+
+    cyc0 = tm_cyc_now();
+    for (int rep=0; rep<4; rep++) {
+      for (int i=0;i<S;i++){
+        int32_t c0=0,c1=0,c2=0,c3=0;
+        for (int db=0; db<HD; db+=4){
+          for (int j=0;j<=i;j++){
+            const int16_t* vj=vh+(size_t)j*HD;
+            int32_t p=p15b[j];
+            c0+=p*(int32_t)vj[db]; c1+=p*(int32_t)vj[db+1];
+            c2+=p*(int32_t)vj[db+2]; c3+=p*(int32_t)vj[db+3];
+          }
+        }
+        sink += c0+c1+c2+c3;
+      }
+    }
+    cyc1 = tm_cyc_now();
+    pv_v2 = (double)(cyc1-cyc0)/4.0;
+
+    {
+      enum { M=128, K=128, N=128, IBLK=4 };
+      /* reuse qh/kh scratch for A5/W5; dummy circular store to limit RAM */
+      int16_t* A5 = qh;
+      int16_t* W5 = kh + S*HD;
+      int32_t amx=12345;
+      for (int i=0;i<M*K;i++){ amx=amx*1103515245+12345; A5[i]=(int16_t)(amx>>16); }
+      for (int i=0;i<N*K;i++){ amx=amx*1103515245+12345; W5[i]=(int16_t)(amx>>17); }
+      uint32_t t0,t1;
+      t0=tm_cyc_now();
+      for (int rep=0;rep<4;rep++){
+        for (int j=0;j<N;j++){
+          const int16_t* wr=W5+(size_t)j*K;
+          for (int it=0; it<M; it+=IBLK){
+            const int16_t* a0=A5+(size_t)(it+0)*K; const int16_t* a1=A5+(size_t)(it+1)*K;
+            const int16_t* a2=A5+(size_t)(it+2)*K; const int16_t* a3=A5+(size_t)(it+3)*K;
+            int32_t c0=0,c1=0,c2=0,c3=0;
+            for (int k=0;k<K;k++){ int32_t b=wr[k];
+              c0+=(int32_t)a0[k]*b; c1+=(int32_t)a1[k]*b; c2+=(int32_t)a2[k]*b; c3+=(int32_t)a3[k]*b; }
+            float bj=(float)j;
+            int32_t e0=(int32_t)((float)c0*0.25f+bj);
+            sink += e0 ^ (int32_t)((float)c1*0.25f+bj) ^ (int32_t)((float)c2*0.25f+bj) ^ (int32_t)((float)c3*0.25f+bj);
+          }
+        }
+      }
+      t1=tm_cyc_now();
+      c5_float=(double)(t1-t0)/4.0;
+      t0=tm_cyc_now();
+      for (int rep=0;rep<4;rep++){
+        for (int j=0;j<N;j++){
+          const int16_t* wr=W5+(size_t)j*K;
+          for (int it=0; it<M; it+=IBLK){
+            const int16_t* a0=A5+(size_t)(it+0)*K; const int16_t* a1=A5+(size_t)(it+1)*K;
+            const int16_t* a2=A5+(size_t)(it+2)*K; const int16_t* a3=A5+(size_t)(it+3)*K;
+            int32_t c0=0,c1=0,c2=0,c3=0;
+            for (int k=0;k<K;k++){ int32_t b=wr[k];
+              c0+=(int32_t)a0[k]*b; c1+=(int32_t)a1[k]*b; c2+=(int32_t)a2[k]*b; c3+=(int32_t)a3[k]*b; }
+            int32_t dn=it*N+j; dummy4[dn&127]^=c0; dummy4[(dn+1)&127]^=c1; dummy4[(dn+2)&127]^=c2; dummy4[(dn+3)&127]^=c3;
+          }
+        }
+      }
+      t1=tm_cyc_now();
+      c5_int=(double)(t1-t0)/4.0;
+      t0=tm_cyc_now();
+      for (int rep=0;rep<4;rep++){
+        for (int it=0; it<M; it+=IBLK){
+          for (int j=0;j<N;j++){
+            int32_t c0=dummy4[(it*N+j)&127];
+            sink += (int32_t)((float)c0*0.25f+(float)j) ^ (int32_t)((float)dummy4[(it*N+j+1)&127]*0.25f);
+          }
+        }
+      }
+      t1=tm_cyc_now();
+      c5_epi=(double)(t1-t0)/4.0;
+    }
+    {
+      enum { M=128, K=128, N=128, IBLK=4 };
+      int16_t* A5 = qh;
+      int16_t* W5 = kh + S*HD;
+      uint32_t t0,t1;
+      /* current core5 inner shape (j2 / i4 / K-pair) */
+      t0=tm_cyc_now();
+      for (int rep=0;rep<4;rep++){
+        for (int j=0;j+1<N;j+=2){
+          const int16_t* w0=W5+(size_t)j*K; const int16_t* w1=W5+(size_t)(j+1)*K;
+          for (int it=0;it<M;it+=4){
+            const int16_t* a0=A5+(size_t)it*K;
+            int32_t c00=0,c10=0,c20=0,c30=0,c01=0,c11=0,c21=0,c31=0;
+            int k=0;
+            for (;k+1<K;k+=2){
+              int32_t b0=w0[k],b1=w1[k],b0n=w0[k+1],b1n=w1[k+1];
+              int32_t v00=a0[k],v10=a0[K+k],v20=a0[2*K+k],v30=a0[3*K+k];
+              int32_t v01=a0[k+1],v11=a0[K+k+1],v21=a0[2*K+k+1],v31=a0[3*K+k+1];
+              c00+=v00*b0;c10+=v10*b0;c20+=v20*b0;c30+=v30*b0;
+              c01+=v00*b1;c11+=v11*b1;c21+=v21*b1;c31+=v31*b1;
+              c00+=v01*b0n;c10+=v11*b0n;c20+=v21*b0n;c30+=v31*b0n;
+              c01+=v01*b1n;c11+=v11*b1n;c21+=v21*b1n;c31+=v31*b1n;
+            }
+            sink += c00+c10+c20+c30+c01+c11+c21+c31;
+          }
+        }
+      }
+      t1=tm_cyc_now();
+      double c_c = (double)(t1-t0)/4.0;
+      /* KB0-style 8x1 asm inner */
+      t0=tm_cyc_now();
+      for (int rep=0;rep<4;rep++){
+        for (int j=0;j<N;j++){
+          const int16_t* wr=W5+(size_t)j*K;
+          for (int it=0;it<M;it+=8){
+            int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
+            const int16_t* rw=wr; const int16_t* rb=A5+(size_t)it*K;
+            const int16_t* whend=wr+K;
+            __asm__ __volatile__(
+              ".p2align 4\n"
+              "1:\n"
+              "lh  a5, 0(%[wpt])\n"
+              "lh  t0, 0(%[rb])\n"
+              "lh  t1, 256(%[rb])\n"
+              "lh  t2, 512(%[rb])\n"
+              "lh  t3, 768(%[rb])\n"
+              "lh  t4, 1024(%[rb])\n"
+              "lh  t5, 1280(%[rb])\n"
+              "lh  t6, 1536(%[rb])\n"
+              "lh  a0, 1792(%[rb])\n"
+              "addi %[wpt], %[wpt], 2\n"
+              "addi %[rb], %[rb], 2\n"
+              "mul  t0, t0, a5\n"
+              "mul  t1, t1, a5\n"
+              "mul  t2, t2, a5\n"
+              "mul  t3, t3, a5\n"
+              "mul  t4, t4, a5\n"
+              "mul  t5, t5, a5\n"
+              "mul  t6, t6, a5\n"
+              "mul  a0, a0, a5\n"
+              "add  %[c0], %[c0], t0\n"
+              "add  %[c1], %[c1], t1\n"
+              "add  %[c2], %[c2], t2\n"
+              "add  %[c3], %[c3], t3\n"
+              "add  %[c4], %[c4], t4\n"
+              "add  %[c5], %[c5], t5\n"
+              "add  %[c6], %[c6], t6\n"
+              "add  %[c7], %[c7], a0\n"
+              "bne  %[wpt], %[wend], 1b\n"
+              : [c0] "+r"(c0),[c1] "+r"(c1),[c2] "+r"(c2),[c3] "+r"(c3),
+                [c4] "+r"(c4),[c5] "+r"(c5),[c6] "+r"(c6),[c7] "+r"(c7),
+                [wpt] "+r"(rw),[rb] "+r"(rb)
+              : [wend] "r"(whend)
+              : "a0","a5","t0","t1","t2","t3","t4","t5","t6");
+            sink += c0+c1+c2+c3+c4+c5+c6+c7;
+          }
+        }
+      }
+      t1=tm_cyc_now();
+      double c_asm = (double)(t1-t0)/4.0;
+      snprintf(out,outsz,"K2 qk_cur=%.0f qk_v2=%.0f pv_cur=%.0f pv_v2=%.0f c5f=%.0f c5i=%.0f c5ep=%.0f Cinner=%.0f Asm8=%.0f sink=%d\n",
+        qk_cur,qk_v2,pv_cur,pv_v2,c5_float,c5_int,c5_epi,c_c,c_asm,(int)sink);
+    }
+#else
+    snprintf(out,outsz,"K2 host\n");
+#endif
+}

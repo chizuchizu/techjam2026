@@ -96,6 +96,7 @@ float tm_exp_f32(float y);
 
 void tm_microbench(char* out, size_t outsz);
 
+void tm_kbench2(char* out, size_t outsz);
 #ifdef __cplusplus
 }
 #endif

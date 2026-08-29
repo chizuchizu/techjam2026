@@ -240,22 +240,34 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
     const float g_sctx = fast ? g_ctx_sa : 0.0f;
     for (int i = 0; i < TM_S; i++) {
         const int16_t* qi16 = qh + (size_t)i * TM_HD;
-        int64_t maxs = INT64_MIN;
+        int32_t maxL = INT32_MIN, maxH = INT32_MIN;
         PB(P_ATTN_QK);
         for (int j = 0; j <= i; j++) {           /* pass 1: QK scores + max */
             const int16_t* kj16 = kh + (size_t)j * TM_HD;
-            int64_t dot = 0;
+            /* Hi/Lo int32 limbs == int64 dot bit-for-bit (carry via unsigned
+             * wrap).  The 2-product int32 pair matches the old int32 pair
+             * exactly, so this is identical integer math to the int64
+             * accumulate it replaces. */
+            int32_t L = 0, H = 0;
             int d = 0;
-            /* two int16 products fit int32 (<=2^31); 16 int64 adds instead of 32 */
-            for (; d + 1 < TM_HD; d += 2)
-                dot += (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d]
-                     + (int32_t)(int16_t)qi16[d+1] * (int32_t)kj16[d+1];
-            for (; d < TM_HD; d++)
-                dot += (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d];
-            g_attn_score[j] = dot;
-            if (dot > maxs) maxs = dot;
+            for (; d + 1 < TM_HD; d += 2) {
+                int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d]
+                          + (int32_t)(int16_t)qi16[d+1] * (int32_t)kj16[d+1];
+                uint32_t up = (uint32_t)L + (uint32_t)p;
+                H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
+                L = (int32_t)up;
+            }
+            for (; d < TM_HD; d++) {
+                int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d];
+                uint32_t up = (uint32_t)L + (uint32_t)p;
+                H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
+                L = (int32_t)up;
+            }
+            g_attn_score[j] = ((int64_t)(int32_t)H << 32) | (uint32_t)L;
+            if (H > maxH || (H == maxH && (uint32_t)L > (uint32_t)maxL)) { maxH = H; maxL = L; }
         }
         PE(P_ATTN_QK);
+        const int64_t maxs = ((int64_t)(int32_t)maxH << 32) | (uint32_t)maxL;
         /* exp pass: p15 per j (kept in g_p15) + lsum */
         int32_t lsum15 = 0;
         PB(P_ATTN_EXP);
