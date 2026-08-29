@@ -27,29 +27,34 @@ Fresh clean runs on the un-stuck boards; sources `.logs/result_opt.json` and
 ### PING latency (median), 0% loss in OPT
 | P | OPT med | OPT lost | COMPAT med | COMPAT lost | speedup |
 |---|---|---|---|---|---|
-| 0   | 838 µs | 0 | 1.9 ms | 1 | 2.3x |
-| 16  | 851 µs | 0 | 2.0 ms | 0 | 2.4x |
-| 64  | 846 µs | 0 | 2.4 ms | 1 | 2.9x |
-| 240 | **861 µs** | 0 | **3.9 ms** | 2 | **4.5x** |
+| 0   | 850 µs | 0 | 1.9 ms | 1 | 2.3x |
+| 16  | 860 µs | 0 | 2.0 ms | 0 | 2.4x |
+| 64  | 853 µs | 0 | 2.4 ms | 1 | 2.9x |
+| 240 | **878 µs** | 0 | **3.9 ms** | 2 | **4.4x** |
 
-OPT PING full detail (per payload P=0/16/64/240): n=2000, lost 0, med
-838/851/846/861 µs, min 682/674/662/702 µs, p95 2475/2396/2272/2259 µs.
+OPT PING full detail (canonical run, per payload P=0/16/64/240): n=2000, lost
+0, med 850/860/853/878 µs, min 661/670/683/704 µs, p95 2674/2596/2457/2596 µs.
+Repeat OPT runs land at med 818–878 µs (best day run: 838/851/846/861, 0 lost);
+all runs 0 loss except single-frame outliers.
 
 ### STREAM throughput (300 pkts/run, 0 fail)
 | P | OPT KB/s | OPT rtt med | COMPAT KB/s | COMPAT rtt med | speedup |
 |---|---|---|---|---|---|
-| 64  | 79.6 | 693 µs | 26.5 | 2.3 ms | 3.0x |
-| 128 | 149.6 | 678 µs | 42.7 | 2.8 ms | 3.5x |
-| 240 | **254.5** | 715 µs | **60.9** | 3.7 ms | **4.2x** |
+| 64  | 58.9 | 783 µs | 26.5 | 2.3 ms | 2.2x |
+| 128 | 111.0 | 818 µs | 42.7 | 2.8 ms | 2.6x |
+| 240 | **197.0** | 803 µs | **60.9** | 3.7 ms | **3.2x** |
+
+(Best repeat run: 79.6/149.6/254.5 KB/s, 300/300 acked — 3.0/3.5/4.2x.)
 
 Server ground truth identical in both runs: **304 pkts / 74,720 B** received,
 exactly matching client sent (304) with 300/300 ACKed — a fair A/B.
 
 ## Summary
-OPT median end-to-end RTT ≈ 0.84 ms across payloads — **~7x under the ESP-NOW
-default ~6 ms**, and 2.3–4.5x under COMPAT on this hardware; throughput 3.0–4.2x
-higher; 0 packets lost (vs 4 in COMPAT). Within ~20% of the best openly
-reported 689 µs (AMPDU-off + MCS7-SGI setup).
+OPT median end-to-end RTT ≈ 0.85 ms across payloads — **~7x under the ESP-NOW
+default ~6 ms**, and 2.3–4.4x under COMPAT on this hardware; throughput 2.2–3.2x
+higher in the canonical run (up to 3.0–4.2x in the best repeat); 0 packets lost
+(vs 4 in COMPAT). Within ~25% of the best openly reported 689 µs
+(AMPDU-off + MCS7-SGI setup).
 
 ## Tests (host-side, all PASS)
 - Build: all 4 envs SUCCESS in wt-01/07/08/09; `tools/build_all.sh` rc=0.
