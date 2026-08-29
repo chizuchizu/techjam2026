@@ -30,6 +30,8 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
 /* ---------------- LayerNorm ----------------
  * two-pass fp32: mean, unbiased-norm var, eps=TM_LN_EPS.
  */
+float tm_bn_q15(const float* in, const float* gamma, const float* beta,
+                int16_t* out_q, int S, int D);
 void tm_layernorm(const float* in, const float* gamma, const float* beta,
                   float* out, int S, int D);
 

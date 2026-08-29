@@ -24,7 +24,7 @@
 
 #include <math.h>
 #include <string.h>
-#define TM_PROFILE 0
+#define TM_PROFILE 1
 
 /* may be overridden (device: Serial.print per line) */
 __attribute__((weak)) void tm_prof_emit(const char* line) { (void)line; }
@@ -86,6 +86,8 @@ void tm_profile_dump(void) {
     (void)snprintf(line, sizeof line, "TOTAL ~ %llu us total_wall\n", prof_total_us);
     tm_prof_emit(line);
 #endif
+    extern void tm_kbench_dump(void);
+    tm_kbench_dump();
 }
 
 
@@ -313,23 +315,23 @@ void tm_forward(const float* xin, float* yout,
     PBT();
 
     for (int l = 0; l < TM_L; l++) {
-        /* ---- norm1 ---- */
+        /* ---- norm1 (FAST) ---- */
         PB(P_NORM1);
-        tm_layernorm(g_x,
-                     W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
-                     g_buf1, TM_S, TM_D);
+        if (fast) {
+            /* fused LN -> a16 Q15: stats + O(D) amax bound + single
+             * normalize/round pass. Removes the fp32 LN output, the separate
+             * amax scan, and the separate quantize pass for qkv. */
+            g_qkv_sa = tm_bn_q15(g_x,
+                                 W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
+                                 tm_gemm_a16(), TM_S, TM_D);
+        } else {
+            tm_layernorm(g_x,
+                         W + woff(l, TM_W_BLK_N1W), W + woff(l, TM_W_BLK_N1B),
+                         g_buf1, TM_S, TM_D);
+        }
         PE(P_NORM1);
-
         /* ---- attention: per-head Q/K/V proj (quantized) + attn ---- */
         {
-            /* FAST: quantize the shared norm1 output g_buf1 ONCE per layer;
-             * all 4 heads x 3 (Q/K/V) GEMMs reuse the same Q15 A (32 KB). */
-            if (fast) {
-                PB(P_QUANT);
-                g_qkv_sa = tm_gemm_amax(g_buf1, TM_S * TM_D);
-                tm_gemm_quantA_into(g_buf1, TM_S * TM_D, tm_gemm_a16(), g_qkv_sa);
-                PE(P_QUANT);
-            }
             const int h_order[TM_H] = {1, 2, 3, 0};
             for (int t = 0; t < TM_H; t++) {
                 int h = h_order[t];

@@ -12,9 +12,11 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | baseline fp32 | 42.15 | 1.00× | 25/25 host, 5/5 device |
 | integer attention (opt 1) | 15.21 | 2.77× | 25/25 + 25/25 EXACT |
 | + exp LUT (opt 2) | 13.70 | 3.08× | 25/25 + 25/25 EXACT |
-| + GEMM tiling / int GELU / quant+attn micro-opts (opts 3–5) | 6.91 | 6.10× | host 50/50, worst § 8e-4 |
-| + fused QKV int16 quantization (opt 6) | 6.56 | 6.43× | host 50/50, device 5/5, worst § 9.5e-4 |
-| + integer exp index, core4 GEMM (opts 7–8) | **5.27** | **8.0×** | host 50/50, device 5/5, worst § 9.4e-4 |
+| + GEMM tiling / int GELU / quant+attn micro-opts (opts 3–5) | 6.91 | 6.10× | host 50/50, worst 8e-4 |
+| + fused QKV int16 quantization (opt 6) | 6.56 | 6.43× | host 50/50, device 5/5, worst 9.5e-4 |
+| + integer exp index, core4 GEMM (opts 7–8) | 5.27 | 8.0× | host 50/50, device 5/5, worst 9.4e-4 |
+| + j-outer head GEMM, integer amax (opt 8b) | 4.862 | 8.67× | host 50/50, worst 9.4e-4 |
+| **+ fused LN→Q15 amax-bound (opt 9)** | **4.784** | **8.82×** | host 50/50 (FAST+EXACT), worst 1.14e-3 |
 
 ## Files
 | file | contents |
@@ -22,6 +24,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 00_baseline_profile.md | baseline compute + memory profile (start here) |
 | 01_integer_attention.md | integer QK + exact-max softmax + int PV + exp LUT |
 | 02_gemm_gelu_quant.md | GEMM register tiling, scale-exact int GELU, quant/attn micro-opts, fused QKV int quantization, integer exp index, core4 GEMM |
+| 03_layernorm_fused_quant.md | fused LN→Q15 with tight O(D) amax bound (removes a16 amax+quant passes) |
 | research.md | firecrawl/web literature skim (research/techniques, kept at /tmp/jam26_opt) |
 
 ## Key techniques applied (performance-engineer view)

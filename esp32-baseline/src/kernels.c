@@ -1,6 +1,7 @@
 /*
  * kernels.c - implementation of the low-level kernels.
  */
+#define TM_PROFILE 1
 #include "kernels.h"
 #pragma GCC optimize ("O3")
 
@@ -55,6 +56,43 @@ void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
     tm_gemm_quantA_into(A, M * K, a16, sa);
     tm_gemm_core4(a16, sa_inv, Wq, w_scale, bias, C, M, K, N, rowStride);
 }
+
+
+#ifdef TM_PROFILE
+#include <stdio.h>
+#if defined(__riscv)
+#include "esp_timer.h"
+#define KB_NOW() ((uint32_t)esp_timer_get_time())
+#else
+#include <time.h>
+static __inline__ uint32_t tm_kb_now_host(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)((uint64_t)ts.tv_sec * 1000000u + ts.tv_nsec / 1000u);
+}
+#define KB_NOW() tm_kb_now_host()
+#endif
+/* kernels-internal microsecond instrumentation (independent of model.c slots) */
+static uint32_t k_t0[4];
+static uint64_t k_acc[4]; static uint32_t k_n[4];
+#define KPB(i) do { k_t0[(i)] = KB_NOW(); } while (0)
+#define KPE(i) do { uint32_t d = KB_NOW() - k_t0[(i)]; \
+                    k_acc[(i)] += d; k_n[(i)]++; } while (0)
+void tm_kbench_clear(void) { for (int i=0;i<4;i++){k_acc[i]=0;k_n[i]=0;} }
+void tm_kbench_dump(void) {
+    extern void tm_prof_emit(const char* s);
+    char line[128];
+    for (int i=0;i<4 && k_n[i];i++){
+        (void)snprintf(line,sizeof line,"KB%d n=%u avg_us=%.1f tot_ms=%.1f\n",
+            i, k_n[i], (double)k_acc[i]/(double)k_n[i],
+            (double)k_acc[i]/1000.0);
+        tm_prof_emit(line);
+    }
+}
+#else
+#define KPB(i) do {} while (0)
+#define KPE(i) do {} while (0)
+#endif
+
 
 /* Quantize A into a caller buffer (Q15 fast-round, no libm). sa precomputed. */
 void tm_gemm_quantA_into(const float* A, int n, int16_t* out, float sa) {
@@ -159,50 +197,73 @@ void tm_gemm_core2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K) {
+    KPB(0);
     const float g = sa_inv * w_scale;
     const int S = TM_S, HD = TM_HD;
-    float amax = 0.0f;
-    enum { IBLK = 4, JBLK = 2 };
-    for (int it = 0; it < S; it += IBLK) {
-        const int16_t* a0r = Aq + (size_t)it * K;
-        const int16_t* a1r = Aq + (size_t)(it+1) * K;
-        const int16_t* a2r = Aq + (size_t)(it+2) * K;
-        const int16_t* a3r = Aq + (size_t)(it+3) * K;
-        for (int jb = 0; jb < HD; jb += JBLK) {
-            const int16_t* wr = Wq + (size_t)jb * K;
-            int32_t c00=0,c01=0, c10=0,c11=0, c20=0,c21=0, c30=0,c31=0;
+    /* Pass 1: j-outer GEMM (sequential W columns, flash-cache friendly like
+     * core4) straight into the int32 accumulator scratch.  Tracks per-column
+     * min/max of the int32 accs so amax is EXACT but requires only 2*HD fp32
+     * evals per gemm (c*g+b monotone in c, g>0) instead of one per output. */
+    int32_t cmin[TM_HD], cmax[TM_HD];
+    for (int d = 0; d < HD; d++) { cmin[d] = 0x7fffffff; cmax[d] = 0x80000000; }
+    enum { IBLK = 8 };
+    for (int j = 0; j < HD; j++) {
+        const int16_t* wr = Wq + (size_t)j * K;
+        for (int it = 0; it < S; it += IBLK) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            const int16_t* a4 = Aq + (size_t)(it+4) * K;
+            const int16_t* a5 = Aq + (size_t)(it+5) * K;
+            const int16_t* a6 = Aq + (size_t)(it+6) * K;
+            const int16_t* a7 = Aq + (size_t)(it+7) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
             for (int k = 0; k < K; k++) {
-                int32_t a0 = a0r[k], a1 = a1r[k], a2 = a2r[k], a3 = a3r[k];
-                int32_t b0 = wr[k], b1 = wr[K + k];
-                c00 += a0*b0; c01 += a0*b1;
-                c10 += a1*b0; c11 += a1*b1;
-                c20 += a2*b0; c21 += a2*b1;
-                c30 += a3*b0; c31 += a3*b1;
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k] * b;
+                c1 += (int32_t)a1[k] * b;
+                c2 += (int32_t)a2[k] * b;
+                c3 += (int32_t)a3[k] * b;
+                c4 += (int32_t)a4[k] * b;
+                c5 += (int32_t)a5[k] * b;
+                c6 += (int32_t)a6[k] * b;
+                c7 += (int32_t)a7[k] * b;
             }
-            int32_t* r0 = acc + (size_t)it * HD + jb;
-            int32_t* r1 = r0 + HD;
-            int32_t* r2 = r1 + HD;
-            int32_t* r3 = r2 + HD;
-            r0[0]=c00; r0[1]=c01;
-            r1[0]=c10; r1[1]=c11;
-            r2[0]=c20; r2[1]=c21;
-            r3[0]=c30; r3[1]=c31;
-            float v;
-            v = (float)c00*g + bias[jb];   if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c01*g + bias[jb+1]; if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c10*g + bias[jb];   if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c11*g + bias[jb+1]; if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c20*g + bias[jb];   if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c21*g + bias[jb+1]; if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c30*g + bias[jb];   if (v<0) v=-v;   if (v>amax) amax=v;
-            v = (float)c31*g + bias[jb+1]; if (v<0) v=-v;   if (v>amax) amax=v;
+            int32_t mn = c0 < c1 ? c0 : c1, mx = c0 > c1 ? c0 : c1;
+            mn = mn < c2 ? mn : c2; mx = mx > c2 ? mx : c2;
+            mn = mn < c3 ? mn : c3; mx = mx > c3 ? mx : c3;
+            mn = mn < c4 ? mn : c4; mx = mx > c4 ? mx : c4;
+            mn = mn < c5 ? mn : c5; mx = mx > c5 ? mx : c5;
+            mn = mn < c6 ? mn : c6; mx = mx > c6 ? mx : c6;
+            mn = mn < c7 ? mn : c7; mx = mx > c7 ? mx : c7;
+            if (mn < cmin[j]) cmin[j] = mn;
+            if (mx > cmax[j]) cmax[j] = mx;
+            int32_t* r0 = acc + (size_t)it * HD + j;
+            r0[0*HD] = c0; r0[1*HD] = c1; r0[2*HD] = c2; r0[3*HD] = c3;
+            r0[4*HD] = c4; r0[5*HD] = c5; r0[6*HD] = c6; r0[7*HD] = c7;
         }
     }
+    /* exact amax from per-column extremes (matches the old per-output fp32
+     * eval exactly: same expressions, only evaluated at the extreme c's) */
+    KPB(3);
+    float amax = 0.0f;
+    for (int d = 0; d < HD; d++) {
+        float v1 = (float)cmax[d] * g + bias[d];
+        float v2 = (float)cmin[d] * g + bias[d];
+        if (v1 < 0.0f) v1 = -v1;
+        if (v2 < 0.0f) v2 = -v2;
+        if (v1 > amax) amax = v1;
+        if (v2 > amax) amax = v2;
+    }
+    KPE(3);
     float sa = TM_QACT_MAX / (amax > 0.0f ? amax : 1.0f);
+    KPE(0);
     /* Fixed-point pass in Q30 (int64): coefficient rounding error * acc must
      * stay below 0.5 q15 unit; a Q15 coefficient loses precision whenever acc
      * is large (acc can approach 2^31), so Q30 + int64 is required. */
-    const float gsa = g * sa;
+    KPB(1);
+const float gsa = g * sa;
     const int64_t GX = (int64_t)(gsa * 1073741824.0f);          /* *2^30 */
     int64_t BX[TM_HD];
     for (int d = 0; d < HD; d++)
@@ -220,6 +281,7 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             dd[d] = (int16_t)q;
         }
     }
+    KPE(1);
     return amax / TM_QACT_MAX;
 }
 
@@ -234,6 +296,7 @@ void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                    int M, int K, int N, int rowStride) {
     const float g = sa_inv * w_scale;
     enum { IBLK = 8 };
+KPB(2);
     for (int j = 0; j < N; j++) {
         const int16_t* wr = Wq + (size_t)j * K;
         for (int it = 0; it < M; it += IBLK) {
@@ -269,6 +332,7 @@ void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             c0r[7*rowStride] = (float)c7 * g + bj;
         }
     }
+    KPE(2);
 }
 
 void tm_gemm_core3(const int16_t* Aq, float sa_inv, const int16_t* Wq,
@@ -323,6 +387,77 @@ void tm_layernorm(const float* in, const float* gamma, const float* beta,
         for (int k = 0; k < D; k++)
             dst[k] = (src[k] - mean) * rstd * gamma[k] + beta[k];
     }
+}
+
+/* ---- fused LayerNorm -> Q15 (FAST path) ----
+ * Computes LN stats once, derives a SAFE per-buffer amax from a tight bound
+ * (max over k of Bmax*|gamma_k| + |beta_k| with Bmax = max_row rstd*(max|x| +
+ * |mean|); measured 1.01x median / 1.12x worst vs true max), then emits the
+ * Q15 activations in ONE normalize+round pass.  Replaces the fp32 LN
+ * normalize + separate amax scan + separate quantize in the qkv path.
+ * Returns the activation quant scale sa = 32767/amax (== tm_gemm_amax
+ * contract).  output_q replaces the fp32 out buffer.
+ */
+float tm_bn_q15(const float* in, const float* gamma, const float* beta,
+                int16_t* out_q, int S, int D) {
+    /* Pass 1: per-row sum, sumsq, max|x| (one fused scan). */
+    float sums[TM_S], sqs[TM_S], mxx[TM_S];
+    float bmax = 0.0f;
+    {
+        float sum0 = 0.f, sq0 = 0.f, mx0 = 0.f;
+        for (int i = 0; i < S; i++) {
+            const float* src = in + (size_t)i * D;
+            sum0 = 0.f; sq0 = 0.f; mx0 = 0.f;
+            for (int k = 0; k < D; k++) {
+                float t = src[k];
+                sum0 += t; sq0 += t * t;
+                float a = t < 0.f ? -t : t;
+                if (a > mx0) mx0 = a;
+            }
+            sums[i] = sum0; sqs[i] = sq0; mxx[i] = mx0;
+        }
+    }
+    float mean_r[TM_S], rstd_r[TM_S];
+    for (int i = 0; i < S; i++) {
+        float mean = sums[i] / (float)D;
+        float sq = sqs[i] / (float)D;
+        float vr = sq - mean * mean;
+        if (vr < 0.f) vr = 0.f;
+        float rstd = 1.0f / sqrtf(vr + TM_LN_EPS);
+        mean_r[i] = mean; rstd_r[i] = rstd;
+        float br = rstd * (mxx[i] + (mean < 0.f ? -mean : mean));
+        if (br > bmax) bmax = br;
+    }
+    /* safe per-buffer amax bound (median 1.01x, worst ~1.12x of true max) */
+    float amb = 0.0f;
+    for (int k = 0; k < D; k++) {
+        float g = gamma[k] < 0.f ? -gamma[k] : gamma[k];
+        float b = beta[k]  < 0.f ? -beta[k]  : beta[k];
+        float v = bmax * g + b;
+        if (v > amb) amb = v;
+    }
+    if (!(amb > 0.f)) amb = 1.f;
+    /* 0.9999 safety => |q| <= 32767 always => no per-element clamp */
+    float sa = TM_QACT_MAX / amb * 0.9999f;
+    float AG[TM_D], AB[TM_D];
+    for (int k = 0; k < D; k++) { AG[k] = sa * gamma[k]; AB[k] = sa * beta[k]; }
+    /* Pass 2 (normalize+quant fused): out_q = round(A*x + B), A/B per row. */
+    for (int i = 0; i < S; i++) {
+        const float* src = in + (size_t)i * D;
+        int16_t* dst = out_q + (size_t)i * D;
+        float mean = mean_r[i], rstd = rstd_r[i];
+        float bA[TM_D], bB[TM_D];
+        for (int k = 0; k < D; k++) {
+            float A = AG[k] * rstd;
+            bA[k] = A; bB[k] = AB[k] - mean * A;
+        }
+        for (int k = 0; k < D; k++) {
+            float qf = bA[k] * src[k] + bB[k];
+            int32_t q = (qf >= 0.f) ? (int32_t)(qf + 0.5f) : (int32_t)(qf - 0.5f);
+            dst[k] = (int16_t)q;
+        }
+    }
+    return sa; /* the scale actually used on the a16 values */
 }
 
 /* ================= GELU (deg-11 poly erf) =================
