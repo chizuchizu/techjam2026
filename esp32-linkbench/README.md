@@ -45,3 +45,38 @@ adjust `P_SERVER`/`P_CLIENT` in `tools/run_bench.py` for your ports):
 The harness flashes each env, forces a clean boot (`esptool read_mac`), waits
 for the client's periodic `CLIENT|READY`, sends `B`, and cross-checks server
 ground truth. No router, no serial break-out needed.
+
+
+## Same-WiFi IP mode (`link-station`) — boards find each other over a router/hotspot
+
+For when every board joins the **same WiFi network** (e.g. a venue hotspot or
+router) instead of a private AP. Flash the *identical* `link-station` image
+onto any number of boards:
+
+    # edit the two lines in platformio.ini:  -DLF_WIFI_SSID="..." -DLF_WIFI_PASS="..."
+    pio run -e link-station -t upload --upload-port /dev/cu.usbmodem101    # board 1
+    pio run -e link-station -t upload --upload-port /dev/cu.usbmodem1101   # board 2
+    ... (same one line for every extra board)
+
+Each board (firmware: `src/station_comm.cpp`):
+- joins the configured STA network (auto-pins to the strongest matching AP),
+- advertises itself via mDNS → a stable `esp32-<mac>.local` hostname and IP,
+- broadcasts a UDP beacon (port 42100) every 2 s, so every board on the same
+  network learns every other board's IP with zero config,
+- answers UDP PING/PONG; press `H` on any board's serial to see measured RTT,
+- if the configured network is missing, it self-hosts an AP named **LINKNET**
+  (pw `linkfast123`). The first board to boot becomes the AP, later boards
+  join it — boards can always talk to each other.
+
+Serial commands: `S` scan nearby WiFis · `I` own IP/hostname/peers · `H` ping.
+
+Verified on the two XIAO boards (self-hosted LINKNET, no external router):
+both auto-linked (192.168.4.1 ↔ 192.168.4.2), mDNS + beacon discovery worked
+in both directions, UDP RTT **5–9 ms** once warm. Over IP the round-trip is
+~6–10x the 0.85 ms ESP-NOW link — for the very lowest latency use the
+ESP-NOW env above; use `link-station` when boards must share a normal WiFi
+network or when you need IP/mDNS addressing at all.
+
+> Note: some guest/campus networks (e.g. NTUGUEST) segment clients — boards
+> get IPs but cannot reach each other. Use your own hotspot/router and verify
+> with `H` (it should answer with `rtt`).

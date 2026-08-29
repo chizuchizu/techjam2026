@@ -1,3 +1,4 @@
+#ifndef BUILD_ROLE_STATION
 /*
  * esp32-linkfast - ultra-low-latency ESP-NOW link for 2x ESP32-C3 boards.
  *
@@ -447,3 +448,5 @@ void loop() {
     delay(100);
 }
 #endif // CLIENT
+
+#endif // BUILD_ROLE_STATION
