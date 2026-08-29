@@ -35,7 +35,13 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
 /* Shared Q15 activation scratch (32 KB).  Used by the FAST projection
  * GEMMs.  Sequential use: the QKV path quantizes g_buf1 ONCE per layer and
  * reuses this buffer across all heads; oproj/f1/f2 re-use it after. */
-static int16_t a16[TM_S * TM_D];
+/* TM_A16_ROWS lets a build that only ever feeds fewer rows (the multiboard
+ * shard runs TM_S/nodes) shrink this buffer; it defaults to the whole
+ * sequence for the single-board firmware. */
+#ifndef TM_A16_ROWS
+#define TM_A16_ROWS TM_S
+#endif
+static int16_t a16[TM_A16_ROWS * TM_D];
 
 /* Accessor so model.c can share the same scratch (no duplicate 32 KB). */
 int16_t* tm_gemm_a16(void) { return a16; }
@@ -159,8 +165,16 @@ void tm_gemm_core2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K) {
+    return tm_gemm_head_q15_m(Aq, sa_inv, Wq, w_scale, bias, acc, dst, TM_S, K);
+}
+
+/* Row-count-parameterised variant (M must be a multiple of 4). The multiboard
+ * shard runs the same kernel over its TM_S/nodes local rows. */
+float tm_gemm_head_q15_m(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias,
+                         int32_t* acc, int16_t* dst, int M, int K) {
     const float g = sa_inv * w_scale;
-    const int S = TM_S, HD = TM_HD;
+    const int S = M, HD = TM_HD;
     float amax = 0.0f;
     enum { IBLK = 4, JBLK = 2 };
     for (int it = 0; it < S; it += IBLK) {
@@ -393,6 +407,46 @@ void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
 void tm_add_inplace(const float* x, float* y, int n) {
     for (int i = 0; i < n; i++) y[i] += x[i];
 }
+
+/* ================= attention softmax exp LUT =================
+ * 513 entries of round(32767*exp(-i/51.2)): the attention logit domain is
+ * y-units of 1/6553.5 nat, index = y>>7 with 7-bit linear interpolation.
+ * Shared by the single-board forward (model.c) and the multiboard shard. */
+const int16_t tm_attn_exp_lut[513] = {
+    32767, 32133, 31512, 30902, 30305, 29718, 29144, 28580, 28027, 27485, 26953, 26432, 25921, 25419, 24928, 24446,
+    23973, 23509, 23054, 22609, 22171, 21742, 21322, 20909, 20505, 20108, 19720, 19338, 18964, 18597, 18238, 17885,
+    17539, 17200, 16867, 16541, 16221, 15907, 15599, 15298, 15002, 14712, 14427, 14148, 13874, 13606, 13343, 13085,
+    12832, 12584, 12340, 12101, 11867, 11638, 11413, 11192, 10976, 10763, 10555, 10351, 10151, 9954, 9762, 9573,
+    9388, 9206, 9028, 8854, 8682, 8514, 8350, 8188, 8030, 7875, 7722, 7573, 7426, 7283, 7142, 7004,
+    6868, 6735, 6605, 6477, 6352, 6229, 6109, 5991, 5875, 5761, 5650, 5540, 5433, 5328, 5225, 5124,
+    5025, 4928, 4832, 4739, 4647, 4557, 4469, 4383, 4298, 4215, 4133, 4053, 3975, 3898, 3823, 3749,
+    3676, 3605, 3536, 3467, 3400, 3334, 3270, 3207, 3145, 3084, 3024, 2966, 2908, 2852, 2797, 2743,
+    2690, 2638, 2587, 2537, 2488, 2439, 2392, 2346, 2301, 2256, 2212, 2170, 2128, 2087, 2046, 2007,
+    1968, 1930, 1892, 1856, 1820, 1785, 1750, 1716, 1683, 1651, 1619, 1587, 1557, 1527, 1497, 1468,
+    1440, 1412, 1385, 1358, 1331, 1306, 1280, 1256, 1231, 1208, 1184, 1161, 1139, 1117, 1095, 1074,
+    1053, 1033, 1013, 993, 974, 955, 937, 919, 901, 884, 866, 850, 833, 817, 801, 786,
+    771, 756, 741, 727, 713, 699, 685, 672, 659, 646, 634, 622, 610, 598, 586, 575,
+    564, 553, 542, 532, 521, 511, 501, 492, 482, 473, 464, 455, 446, 437, 429, 421,
+    412, 404, 397, 389, 381, 374, 367, 360, 353, 346, 339, 333, 326, 320, 314, 308,
+    302, 296, 290, 285, 279, 274, 268, 263, 258, 253, 248, 243, 239, 234, 230, 225,
+    221, 217, 212, 208, 204, 200, 196, 193, 189, 185, 182, 178, 175, 171, 168, 165,
+    162, 158, 155, 152, 149, 146, 144, 141, 138, 135, 133, 130, 128, 125, 123, 121,
+    118, 116, 114, 111, 109, 107, 105, 103, 101, 99, 97, 95, 93, 92, 90, 88,
+    86, 85, 83, 82, 80, 78, 77, 75, 74, 73, 71, 70, 68, 67, 66, 65,
+    63, 62, 61, 60, 59, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47,
+    46, 45, 45, 44, 43, 42, 41, 40, 40, 39, 38, 37, 37, 36, 35, 35,
+    34, 33, 33, 32, 31, 31, 30, 30, 29, 28, 28, 27, 27, 26, 26, 25,
+    25, 24, 24, 23, 23, 22, 22, 22, 21, 21, 20, 20, 20, 19, 19, 18,
+    18, 18, 17, 17, 17, 16, 16, 16, 16, 15, 15, 15, 14, 14, 14, 14,
+    13, 13, 13, 13, 12, 12, 12, 12, 11, 11, 11, 11, 10, 10, 10, 10,
+    10, 10, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 8, 8, 7, 7,
+    7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5,
+    5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    1,
+};
 
 /* ================= fast exp (valid y<=0) =================
  * e^y = 2^(n+f):  y*log2(e) = n+f, n = floor, f in [0,1).

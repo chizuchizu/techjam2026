@@ -8,12 +8,23 @@ interpreted results.
 
 | Directory | Purpose |
 |---|---|
+| [`esp32-cluster-full/`](esp32-cluster-full/) | **Complete two-board distributed case-2 forward** |
 | [`esp32_cluster_transport/`](esp32_cluster_transport/) | UDP/TCP attention and official layer-0 worker |
 | [`esp32-linkbench/`](esp32-linkbench/) | Two-board ESP-NOW bandwidth benchmark |
 | [`tools/`](tools/) | Discovery, transport, head-parallel, KV-sharded, and layer-0 coordinators |
 | [`results/`](results/) | Raw captures and result reports |
 
-## Verified results
+## Complete distributed forward
+
+| Scope | Boards | Wall time | Speedup | Accuracy |
+|---|---:|---:|---:|---|
+| All four layers, complete case-2 body | 1 C3 | 5.293 s | 1.00x | Pass, 5/5 seeds |
+| All four layers, complete case-2 body | 2 C3s | **3.060 s** | **1.73x** | Pass, 5/5 seeds, 0 failing elements |
+
+See [`esp32-cluster-full/`](esp32-cluster-full/) and
+[`results/CASE2_FULL_E2E_RESULTS.md`](results/CASE2_FULL_E2E_RESULTS.md).
+
+## Earlier partial-scope results
 
 | Scope | Boards | Wall time | Speedup | Accuracy |
 |---|---:|---:|---:|---|
@@ -22,11 +33,12 @@ interpreted results.
 | Four causal `128 x 32` attention heads | 1 C3 | 3.000 s average | 1.00x | Pass |
 | Four causal `128 x 32` attention heads | 4 C3s | **0.766 s** | **3.92x** | Pass, zero failed elements |
 
-These are partial case-02 paths, not complete distributed Transformer
-forwards. See [`../README.md`](../README.md) for the exact scope exclusions.
+These are partial case-02 paths. See [`../README.md`](../README.md) for the
+exact scope exclusions.
 
 Detailed reports:
 
+- [`results/CASE2_FULL_E2E_RESULTS.md`](results/CASE2_FULL_E2E_RESULTS.md)
 - [`results/CASE2_NORM_HEAD_RESULTS.md`](results/CASE2_NORM_HEAD_RESULTS.md)
 - [`results/FOUR_C3_PARALLEL_RESULTS.md`](results/FOUR_C3_PARALLEL_RESULTS.md)
 - [`results/TWO_C3_PARALLEL_RESULTS.md`](results/TWO_C3_PARALLEL_RESULTS.md)
@@ -38,6 +50,16 @@ Detailed reports:
 ## Reproduce
 
 From the repository root:
+
+The complete distributed forward (two boards, no router or credentials):
+
+```bash
+cd benchmarks/case-02/multiboard/esp32-cluster-full
+./tools/flash_boards.sh
+python3 tools/run_cluster_e2e.py --seeds 0 1 2 3 4
+```
+
+The earlier partial-scope head-parallel path:
 
 ```bash
 cp benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.example.h \
