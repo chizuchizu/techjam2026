@@ -80,6 +80,8 @@ network or when you need IP/mDNS addressing at all.
 > Note: some guest/campus networks (e.g. NTUGUEST) segment clients — boards
 > get IPs but cannot reach each other. Use your own hotspot/router and verify
 > with `H` (it should answer with `rtt`).
-Role-by-role setup (hub vs client), exact `platformio.ini` env snippets,
-expected serial output, and troubleshooting: **[docs/STATION_SETUP.md](docs/STATION_SETUP.md)**.
+No IP setup needed — IPs are automatic (hub = 192.168.4.1, clients get
+192.168.4.x via DHCP). Full role-by-role setup (hub vs client), exact
+`platformio.ini` env snippets, expected serial output, and troubleshooting:
+**[docs/STATION_SETUP.md](docs/STATION_SETUP.md)**.
 
