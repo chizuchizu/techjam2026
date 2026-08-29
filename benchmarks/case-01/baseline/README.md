@@ -14,7 +14,7 @@ Case 1 single-board batch speedup.
 Complete forward = all 64 batch inputs on one board.
 
 | Implementation | Board | Complete forward | Accuracy |
-|---|---:|---|
+|---|---:|---|---|
 | Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 127.36 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
 
 The result covers the complete Case 1 Transformer body, not only

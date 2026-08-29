@@ -15,7 +15,7 @@ Complete forward = all 64 batch inputs on one board (each input is one
 `S*D` frame streamed through the firmware).
 
 | Implementation | Board | Complete forward (single-input) | Accuracy |
-|---|---:|---|
+|---|---:|---|---|
 | Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | **not measurable** — linker `dram0_0_seg` overflowed by 23,920 B; no firmware image | Pass, 25/25 host checks both modes, worst 1.0885e-03 (FAST) / 9.1493e-05 (EXACT) |
 
 ## SRAM-limit record (why there is no device number)

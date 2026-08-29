@@ -15,7 +15,7 @@ Complete forward = all 64 batch inputs on one board (each input is one
 `S*D` frame streamed through the firmware).
 
 | Implementation | Board | Complete forward (single-input) | Accuracy |
-|---|---:|---|
+|---|---:|---|---|
 | Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 2.460 s (157.44 s batch-64) | Pass, worst max absolute error 1.0893e-03 (FAST, physical seed 3) |
 
 The result covers the complete Case 11 Transformer body, not only
