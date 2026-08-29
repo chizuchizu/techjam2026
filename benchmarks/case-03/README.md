@@ -54,13 +54,24 @@ compare single-board streaming with batch-parallel multiboard dispatch.
 Record per-batch latency and steady-state throughput; do not present
 pipeline fill time as single-sample latency.
 
-## Multiboard result
+## Results
 
-Data parallel across two physical XIAO ESP32-C3 boards: the 4 inputs are independent forwards over the same weights, so input `i` runs on board `i % N` and the boards exchange nothing.
+Whole-case time: all 4 inputs of the batch, device measurement of the
+complete four-layer body, host serial transfer excluded.
 
-| Boards | Batch time | Speedup | Gate |
-|---:|---:|---:|---|
-| 1 | 8.0 s | 1.00x | Pass |
-| 2 | **4.0 s** | **2.00x** | Pass, 0 failing elements |
+| Build | Boards | Batch of 4 | Speedup | Validation |
+|---|---:|---:|---:|---|
+| Unoptimised baseline | 1 | 168.6 s * | 1.00x | estimated, see note |
+| Optimised firmware (opt23) | 1 | 7.96 s | 21.2x | Pass, 50/50 host checks |
+| Data parallel | 2 | **4.0 s** | **42.1x** | Pass, 4/4 forwards, 0 failing elements |
 
-Implementation and method: [`../batch-dp/`](../batch-dp/); results: [`../batch-dp/RESULTS_TWO_C3.md`](../batch-dp/RESULTS_TWO_C3.md).
+`*` This case was never run on the pre-optimisation firmware, so its baseline
+is estimated as `4 x 42.15 s` from case 2's measured starting point. The
+other two rows are measured.
+
+The 4 inputs are independent forwards over the same weights, so input `i`
+runs on board `i % N` and the boards exchange nothing - which is why two boards
+give exactly 2.00x over the optimised single board.
+
+Implementation and method: [`../batch-dp/`](../batch-dp/); results:
+[`../batch-dp/RESULTS_TWO_C3.md`](../batch-dp/RESULTS_TWO_C3.md).
