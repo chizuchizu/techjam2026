@@ -53,8 +53,8 @@ setup, calibration, communication, and warm-up are included in timing.
 - Do not commit `secrets.h`, credentials, MAC addresses, private IP addresses,
   build output, virtual environments, or serial-port-specific configuration.
 - Do not copy old H200 benchmark work back into the active case directories.
-  Shared official source material belongs in `benchmarks/reference/`; retired
-  GPU work stays under `archive/`.
+  The official problem statement and PyTorch reference stay at the repository
+  root; retired GPU work stays under `archive/`.
 - Put case-specific firmware, tools, and results under the matching
   `benchmarks/case-NN/` directory. Do not mix results from different official
   shapes.

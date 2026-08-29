@@ -105,7 +105,7 @@ for full citations. Decisions:
 | `docs/esp32_implementation_summary.md` | This file |
 | `docs/esp32_fastest_kernels_research.md` | Kernel techniques research brief (C) |
 | `docs/esp32_fp32_emulation_research.md` | Paper-grounded FP32-emulation recommendation |
-| `benchmarks/reference/torch_transformer_benchmark.py` | Official benchmark architecture and seed-1234 init used by the exporter |
+| `torch_transformer_benchmark.py` (root) | Official benchmark architecture and seed-1234 init used by the exporter |
 | `.firecrawl/` | Raw research sources (scrapes, search JSON) |
 | `benchmarks/case-02/optimisation/esp32-baseline/` | Implemented and physically validated case-02 code |
 

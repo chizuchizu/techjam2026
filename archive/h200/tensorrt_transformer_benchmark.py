@@ -13,7 +13,7 @@ import torch.nn as nn
 
 import sys
 repository_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(repository_root / "benchmarks" / "reference"))
+sys.path.insert(0, str(repository_root))
 
 from torch_transformer_benchmark import (
     BaselineTransformer,

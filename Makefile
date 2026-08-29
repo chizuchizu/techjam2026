@@ -5,7 +5,7 @@ MULTIBOARD_DIR := $(CASE2_DIR)/multiboard
 EXPERIMENTS_DIR := benchmarks/experiments
 BASELINE_PROJECT := $(OPTIMISATION_DIR)/esp32-baseline
 PYTHON_SOURCES := \
-	benchmarks/reference/torch_transformer_benchmark.py \
+	torch_transformer_benchmark.py \
 	$(wildcard $(BASELINE_PROJECT)/tools/*.py) \
 	$(wildcard $(MULTIBOARD_DIR)/tools/*.py) \
 	$(wildcard $(EXPERIMENTS_DIR)/*/tools/*.py) \

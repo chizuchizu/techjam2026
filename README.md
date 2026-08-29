@@ -25,9 +25,9 @@ benchmarks/case-02/
     └── results/
 ```
 
-The competition problem statement remains at
-[`COMPETITION_RULES.MD`](COMPETITION_RULES.MD), while the shared executable
-reference is in [`benchmarks/reference/`](benchmarks/reference/). Smaller
+The competition problem statement and official executable reference remain at
+the repository root: [`COMPETITION_RULES.MD`](COMPETITION_RULES.MD) and
+[`torch_transformer_benchmark.py`](torch_transformer_benchmark.py). Smaller
 experiments that are not official cases are isolated in
 [`benchmarks/experiments/`](benchmarks/experiments/).
 
@@ -53,6 +53,67 @@ experiments that are not official cases are isolated in
 The approach notes for unimplemented cases are design hypotheses, not measured
 claims. Each case README records what must be validated before its status can
 change.
+
+## Hackathon submission TODO
+
+### Benchmark evidence
+
+- [x] Add the official case-2 baseline implementation.
+- [x] Validate the case-2 baseline against the required accuracy gate.
+- [x] Record the physical single-board baseline timing.
+- [x] Add the optimised case-2 single-board implementation.
+- [x] Validate the optimised implementation on host and physical hardware.
+- [x] Record the baseline-to-optimised single-board speedup.
+- [x] Record the two-board partial-layer result.
+- [x] Record the four-board attention result.
+- [ ] Run the final case-2 commands from a fresh checkout.
+- [ ] Record the exact board, clock, framework, compiler, and library versions.
+- [ ] Choose the final raw captures that will be cited in the submission.
+- [ ] Check that every cited speedup compares the same shape and scope.
+
+### Repository and README
+
+- [x] Organise official work into one directory per benchmark case.
+- [x] Keep case-2 baseline, optimisation, multiboard code, and results together.
+- [x] Keep the competition problem statement at the repository root.
+- [x] Document setup and reproduction commands.
+- [ ] Add a short project overview for non-technical judges.
+- [ ] Add a limitations and future-improvements section.
+- [ ] Add a team-contributions section with one line per person.
+- [ ] Document the AI tools, libraries, frameworks, and development tools used.
+- [ ] Explain that the official benchmark uses seeded random weights and no dataset.
+- [ ] Check the public repository for credentials, private addresses, and build files.
+- [ ] Merge the final pull request and verify all README links on GitHub.
+
+### Demo video
+
+- [ ] Write a short problem → approach → result demo script.
+- [ ] Record the ESP32 setup and identify the boards on camera.
+- [ ] Record one reproducible inference or benchmark run.
+- [ ] Show the accuracy result before showing the speedup.
+- [ ] Explain the boundary between the full single-board result and partial multiboard results.
+- [ ] Add captions or readable terminal zoom for timings and validation output.
+- [ ] Upload the video publicly to YouTube.
+- [ ] Add the public video link to the Devpost submission.
+
+### Devpost submission
+
+- [ ] Write the project description and problem statement.
+- [ ] Describe the single-board and multiboard approaches.
+- [ ] List development tools, APIs, libraries, frameworks, and assets.
+- [ ] Add the GitHub repository link.
+- [ ] Add the demo video link.
+- [ ] Add limitations, future work, and practical impact.
+- [ ] Add all team members and their contributions.
+- [ ] Preview the complete submission while logged out.
+- [ ] Submit before the deadline and save the confirmation.
+
+### Optional technical stretch goals
+
+- [ ] Complete output projection, residuals, second LayerNorm, and FFN for one distributed layer.
+- [ ] Run all four case-2 layers across multiple boards.
+- [ ] Add worker heartbeats, retry handling, and cached performance profiles.
+- [ ] Implement and validate another official benchmark case in its own directory.
 
 ## Quick setup
 

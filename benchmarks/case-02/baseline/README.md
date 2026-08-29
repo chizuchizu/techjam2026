@@ -1,7 +1,7 @@
 # Case-02 baseline
 
 The shared PyTorch definition is
-[`../../reference/torch_transformer_benchmark.py`](../../reference/torch_transformer_benchmark.py).
+[`../../../torch_transformer_benchmark.py`](../../../torch_transformer_benchmark.py).
 This directory owns the physical starting point used to measure case-02
 single-board speedup.
 

@@ -3,7 +3,7 @@
 export_case2.py - emit validation artifacts for the ESP32 case-2 baseline.
 
 Reads the exact torch reference implementation from
-benchmarks/reference/torch_transformer_benchmark.py (official competition benchmark;
+torch_transformer_benchmark.py at the repository root (official competition benchmark;
 the same weight init seed, the same
 random-input generator, same fp32 reference forward), then writes:
 
@@ -25,9 +25,8 @@ import sys
 import numpy as np
 import torch
 
-benchmarks_root = pathlib.Path(__file__).resolve().parents[4]
-reference_root = benchmarks_root / "reference"
-sys.path.insert(0, str(reference_root))
+repository_root = pathlib.Path(__file__).resolve().parents[5]
+sys.path.insert(0, str(repository_root))
 
 from torch_transformer_benchmark import (
     BaselineTransformer,

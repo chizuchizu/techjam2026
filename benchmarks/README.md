@@ -37,6 +37,8 @@ complete Transformer body.
 | [13](case-13/) | 64 | 1,024 | 128 | 4 | 128 | 4 | Not implemented |
 | [14](case-14/) | 32 | 100,000 | 1,024 | 16 | 1,024 | 2 | Not implemented |
 
-Shared official source material is in [`reference/`](reference/). Supporting
-microbenchmarks and small-model demonstrations are in
-[`experiments/`](experiments/), outside the official case results.
+The shared official
+[`problem statement`](../COMPETITION_RULES.MD) and
+[`PyTorch reference`](../torch_transformer_benchmark.py) remain at the
+repository root. Supporting microbenchmarks and small-model demonstrations are
+in [`experiments/`](experiments/), outside the official case results.
