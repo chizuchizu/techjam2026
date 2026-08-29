@@ -1,6 +1,6 @@
 # Review of `techjam2026/esp32-baseline` — case 07
 
-Reviewed commit: `e62c772c80` from `chizuchizu/techjam2026`, on 2026-08-29.
+Reviewed commit: `bf8388d1fb` from `chizuchizu/techjam2026`, on 2026-08-29.
 
 ## What is confirmed
 
