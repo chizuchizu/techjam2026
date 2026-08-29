@@ -182,8 +182,8 @@ independent int32 accumulators whose union is folded to one int64 only at the en
 i.e. real activation sequences through LN→Q/K/V→attention→oproj→FFN, with per-buffer Q15 and per-matrix
 Q12 quantization identical to the C pipeline — see methods note at the end):
 
-| accumulate site | dims | worst |Σ| over 25 seeds | 2^31 fraction | verdict |
-|---|---|---|---|---|---|
+| accumulate site | dims | worst \|Σ\| over 25 seeds | 2^31 fraction | verdict |
+|---|---|---|---|---|
 | QK full dot (one int32 acc) | 32 | 2.83e9 (8 overflow events) | 1.32 | **unsafe** |
 | QK lane-4 (8 dims / int32 acc) | 4×8 | 1.76e9 | 0.82 | **safe** (18% margin) |
 | QK lane-8 (4 dims / int32 acc) | 8×4 | 1.90e9 | 0.88 | safe (thin) |
