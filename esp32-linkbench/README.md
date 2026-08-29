@@ -17,16 +17,18 @@ PING 2000 rounds/payload:
 
 | P | OPT med | OPT min | OPT lost | COMPAT med | COMPAT lost | speedup |
 |---|---|---|---|---|---|---|
-| 0   | 838 µs | 682 µs | 0 | 1.9 ms | 1 | 2.3x |
-| 16  | 851 µs | 674 µs | 0 | 2.0 ms | 0 | 2.4x |
-| 64  | 846 µs | 662 µs | 0 | 2.4 ms | 1 | 2.9x |
-| 240 | **861 µs** | 702 µs | 0 | **3.9 ms** | 2 | **4.5x** |
+| 0   | 850 µs | 661 µs | 0 | 1.9 ms | 1 | 2.3x |
+| 16  | 860 µs | 670 µs | 0 | 2.0 ms | 0 | 2.4x |
+| 64  | 853 µs | 683 µs | 0 | 2.4 ms | 1 | 2.9x |
+| 240 | **878 µs** | 704 µs | 0 | **3.9 ms** | 2 | **4.4x** |
 
-STREAM 300 packets/payload: OPT 79.6 / 149.6 / **254.5 KB/s** (P=64/128/240),
-300/300 ACKed, 0 fail — COMPAT 26.5 / 42.7 / 60.9 KB/s (**3.0–4.2x** faster).
-Server ground truth matched in both runs (304 pkts / 74,720 B).
+STREAM 300 packets/payload: OPT 58.9 / 111.0 / **197.0 KB/s** (P=64/128/240),
+300/300 ACKed, 0 fail — COMPAT 26.5 / 42.7 / 60.9 KB/s (**2.2–3.2x** faster;
+best repeat run 3.0–4.2x). Server ground truth matched in both runs
+(304 pkts / 74,720 B).
 
-End-to-end RTT ≈ **0.84 ms** — ~7x under the ESP-NOW 1 Mbps default (~6 ms).
+End-to-end RTT ≈ **0.85 ms** — ~7x under the ESP-NOW 1 Mbps default (~6 ms).
+Repeat runs land at 818–878 µs median; 0 loss in the full-set run.
 Details: `docs/OPTIMIZATION_GUIDE.md`, `docs/ESP32_LINKFAST_FINAL_REPORT.md`.
 
 ## Build & run

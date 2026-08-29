@@ -7,19 +7,22 @@ measured numbers (branch `linkfast`, in-tree `src/main.cpp`), and records what
 did NOT matter.
 
 **Headline (measured on real hardware, `esp32-linkbench/.logs/result_opt.json`,
-mode=OPT, ch=1; also `result_compat.json` for the baseline):**
-- PING RTT median **838/851/846/861 µs** (P=0/16/64/240), min **662–702 µs**;
-  P95 ≈ **2.3–2.5 ms**; **0 packets lost across 8000 rounds** (COMPAT: 1.9–3.9 ms
+mode=OPT, ch=1; `result_compat.json` for the baseline):**
+- PING RTT median **850/860/853/878 µs** (P=0/16/64/240), min **661–704 µs**;
+  P95 ≈ **2.5–2.6 ms**; **0 packets lost across 8000 rounds** (COMPAT: 1.9–3.9 ms
   median, 4 lost).
-- STREAM throughput **79.6 / 149.6 / 254.5 KB/s** (64/128/240 B payloads,
-  300 packets), **300/300 acked, 0 fail**, stream RTT median 693–715 µs
-  (COMPAT: 26.5/42.7/60.9 KB/s, i.e. 3.0–4.2x slower).
+- STREAM throughput **58.9 / 111.0 / 197.0 KB/s** (64/128/240 B payloads,
+  300 packets), **300/300 acked, 0 fail**, stream RTT median 783–818 µs
+  (COMPAT: 26.5/42.7/60.9 KB/s; in the best repeat run 79.6/149.6/254.5 KB/s,
+  i.e. 3.0–4.2x slower).
 - Server ground truth (`SERVER|rx`): 304 pkts / 74,720 B received, identical in
   both OPT and COMPAT runs — a fair A/B.
 
-That puts end-to-end RTT ≈ 0.84 ms — about **7× faster than the ~6 ms default
-ESP-NOW link**, 2.3–4.5x faster than this repo's own COMPAT baseline, and
-within ~20% of the best openly reported 689 µs (all numbers below in the table).
+That puts end-to-end RTT ≈ **0.85 ms** — about **7× faster than the ~6 ms default
+ESP-NOW link**, 2.3–4.4x faster than this repo's own COMPAT baseline, and
+within ~25% of the best openly reported 689 µs (all numbers below in the
+table). Repeat runs land in the 818–878 µs median band (RF jitter); every run
+kept 0 loss except single-frame outliers.
 
 ---
 
