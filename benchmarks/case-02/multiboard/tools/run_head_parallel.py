@@ -2,6 +2,11 @@
 """Dispatch deterministic attention heads to ESP32 UDP workers."""
 
 from __future__ import annotations
+import os, sys
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                 "..", "..", "..", "experiments",
+                                                 "attention-layer", "tools")))
+
 
 import argparse
 import concurrent.futures
