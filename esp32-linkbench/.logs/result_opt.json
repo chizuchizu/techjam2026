@@ -1,0 +1,106 @@
+{
+ "ping": [
+  {
+   "P": 0,
+   "n": 2000,
+   "lost": 0,
+   "rtt_med": 850,
+   "rtt_min": 661,
+   "rtt_max": 6709,
+   "rtt_p95": 2674,
+   "jit": 5993,
+   "srv_med": 0,
+   "cs_med": 1677015,
+   "sc_med": 0
+  },
+  {
+   "P": 16,
+   "n": 2000,
+   "lost": 0,
+   "rtt_med": 860,
+   "rtt_min": 670,
+   "rtt_max": 11727,
+   "rtt_p95": 2596,
+   "jit": 10866,
+   "srv_med": 0,
+   "cs_med": 1677011,
+   "sc_med": 0
+  },
+  {
+   "P": 64,
+   "n": 2000,
+   "lost": 0,
+   "rtt_med": 853,
+   "rtt_min": 683,
+   "rtt_max": 8254,
+   "rtt_p95": 2457,
+   "jit": 7264,
+   "srv_med": 0,
+   "cs_med": 1677006,
+   "sc_med": 0
+  },
+  {
+   "P": 240,
+   "n": 2000,
+   "lost": 0,
+   "rtt_med": 878,
+   "rtt_min": 704,
+   "rtt_max": 21936,
+   "rtt_p95": 2596,
+   "jit": 21133,
+   "srv_med": 0,
+   "cs_med": 1677025,
+   "sc_med": 0
+  }
+ ],
+ "stream": [
+  {
+   "P": 64,
+   "N": 300,
+   "sent": 304,
+   "fail": 0,
+   "err": 0,
+   "acked": 300,
+   "bytes": 19200,
+   "us": 326081,
+   "thr": 58881,
+   "rtt_us_med": 783
+  },
+  {
+   "P": 128,
+   "N": 300,
+   "sent": 304,
+   "fail": 0,
+   "err": 0,
+   "acked": 300,
+   "bytes": 38400,
+   "us": 346050,
+   "thr": 110966,
+   "rtt_us_med": 818
+  },
+  {
+   "P": 240,
+   "N": 300,
+   "sent": 304,
+   "fail": 0,
+   "err": 0,
+   "acked": 300,
+   "bytes": 72000,
+   "us": 365460,
+   "thr": 197011,
+   "rtt_us_med": 803
+  }
+ ],
+ "server_rx": {
+  "pkts": 304,
+  "bytes": 74720
+ },
+ "boot": {
+  "CLIENT": {
+   "mac": "64:E8:33:89:B7:A8",
+   "ch": 1,
+   "mode": "OPT"
+  }
+ },
+ "server_boot": null
+}
