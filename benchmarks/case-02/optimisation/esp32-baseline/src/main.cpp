@@ -132,6 +132,11 @@ void loop() {
             Serial.print(line);
             break;
         }
+        case 'Q': {
+            char line[220]; tm_kbench2(line, sizeof line);
+            Serial.print(line);
+            break;
+        }
         case 'X': {
             Serial.println("TM reset");
             break;
