@@ -30,6 +30,8 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
 /* ---------------- LayerNorm ----------------
  * two-pass fp32: mean, unbiased-norm var, eps=TM_LN_EPS.
  */
+float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
+               int16_t* out_q, int S, int D);
 float tm_bn_q15(const float* in, const float* gamma, const float* beta,
                 int16_t* out_q, int S, int D);
 void tm_layernorm(const float* in, const float* gamma, const float* beta,
@@ -62,6 +64,10 @@ int16_t* tm_gemm_a16(void);
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K);
+
+void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                       float w_scale, const float* bias, float* C,
+                       int M, int K, int N, int rowStride, int wStride, int first);
 
 void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                    float w_scale, const float* bias, float* C,
