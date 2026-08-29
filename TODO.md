@@ -4,13 +4,15 @@
 
 1. Add automatic node registration, unique node IDs, heartbeats, and a worker
    registry for a fleet of ESP32-C3 boards.
-2. Integrate distributed heads with one complete layer of `esp32-baseline`,
-   adding output projection, both residuals, second LayerNorm, and FFN to the
-   now-verified first-LayerNorm/Q/K/V/attention path.
+2. Integrate distributed heads with one complete layer of
+   `benchmarks/case-02/optimisation/esp32-baseline`, adding output projection,
+   both residuals, second LayerNorm, and FFN to the now-verified
+   first-LayerNorm/Q/K/V/attention path.
 3. Cache worker performance profiles and retry a timed-out head on another
    healthy node.
 4. Replace the remaining floating-point attention, LayerNorm, and GELU work in
-   `esp32-baseline` with independently validated fixed-point kernels.
+   the case-02 single-board implementation with independently validated
+   fixed-point kernels.
 5. Add a larger trained tokenizer/model and evaluate prompts that were not in
    its training corpus.
 

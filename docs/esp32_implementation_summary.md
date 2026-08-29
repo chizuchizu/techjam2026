@@ -4,6 +4,10 @@
 **Track:** Active TechJam ESP32 track
 **Hardware scope:** One-board numerical baseline, then multi-board scaling
 
+> Historical planning snapshot. The implemented case-02 code now lives under
+> `benchmarks/case-02/`; see that directory's README for current measured
+> results and status.
+
 ---
 
 ## 1. Goal
@@ -57,9 +61,9 @@ Case 2 config: `B=1, S=128, D=128, H=4, L=4, F=128`, causal attention,
 | KV per layer | 131 KB | **66 KB** |
 | Live SRAM budget | ≈262 KB < 400 KB ✅ | |
 
-### Planned layout
+### Planned layout (implemented at the current case-specific path)
 ```
-esp32-baseline/
+benchmarks/case-02/optimisation/esp32-baseline/
   platformio.ini          # board seeed_xiao_esp32c3, Arduino framework
   src/main.cpp            # load weights, run, print results over serial
   src/model.c/.h          # forward(): layer loop
@@ -101,18 +105,15 @@ for full citations. Decisions:
 | `docs/esp32_implementation_summary.md` | This file |
 | `docs/esp32_fastest_kernels_research.md` | Kernel techniques research brief (C) |
 | `docs/esp32_fp32_emulation_research.md` | Paper-grounded FP32-emulation recommendation |
-| `torch_transformer_benchmark.py` (root) | Official benchmark architecture and seed-1234 init used by the exporter |
+| `benchmarks/reference/torch_transformer_benchmark.py` | Official benchmark architecture and seed-1234 init used by the exporter |
 | `.firecrawl/` | Raw research sources (scrapes, search JSON) |
-| `esp32-baseline/` | **Not scaffolded yet** (code) — next step |
+| `benchmarks/case-02/optimisation/esp32-baseline/` | Implemented and physically validated case-02 code |
 
 ## 7. Status vs plan
 
-`plan` (7 phases): target set ✅ → toolchain ✅ (PlatformIO verified, device detected) →
-host reference/exporter (TODO) → model port (TODO) → accuracy gate (TODO) →
-on-device benchmark harness (TODO) → multi-board scaling / write-up (v2).
-
-**Done:** hardware verification, feasibility math, scope, all kernel/emulation research, acceptance criteria.
-**Next:** scaffold `esp32-baseline/`, port kernels, validate vs torch reference, wire timing.
+The original plan has been completed for the single-board case-02 body and for
+partial multiboard attention paths. Current status and next steps are tracked in
+[`benchmarks/case-02/README.md`](../benchmarks/case-02/README.md).
 See `TODO.md` for the current ESP32 priorities. The retired GPU backlog lives
 on in git history.
 

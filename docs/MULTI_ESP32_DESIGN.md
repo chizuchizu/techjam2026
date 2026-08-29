@@ -110,4 +110,4 @@ The official-size TCP protocol passes physical one- and two-worker validation;
 the two boards are heterogeneous, so measured calibration assigns one head to
 the C3 and three to the faster dual-core ESP32 when both must participate. An
 unconstrained latency scheduler correctly idles the C3 for this batch. See
-[`results/LARGE_HEAD_PARALLEL_RESULTS.md`](../results/LARGE_HEAD_PARALLEL_RESULTS.md).
+[`LARGE_HEAD_PARALLEL_RESULTS.md`](../benchmarks/case-02/multiboard/results/LARGE_HEAD_PARALLEL_RESULTS.md).
