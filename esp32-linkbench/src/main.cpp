@@ -210,6 +210,7 @@ void loop() {
 
 static uint8_t g_server_mac[6] = {0};
 static volatile bool g_server_known = false;
+static bool g_booted = false;
 static uint8_t g_client_mac[6];
 static volatile int32_t g_wifi_rssi = 0;
 static uint32_t g_send_err_stat = 0;
@@ -420,14 +421,29 @@ void setup() {
     if (!g_server_known) Serial.println("CLIENT|NO_SERVER");
 
     delay(100);
-#if LF_RUN_PING
+#ifndef LF_AUTORUN
+#define LF_AUTORUN 1
+#endif
+#if LF_AUTORUN
     run_ping();
-#endif
-#if LF_RUN_STREAM
     run_stream();
-#endif
     Serial.println("CLIENT|DONE");
+#endif
+    Serial.println("CLIENT|READY");
 }
 
-void loop() { delay(10000); }
+void loop() {
+    if (!g_server_known) { delay(10000); return; }
+    if (!g_booted) { Serial.println("CLIENT|READY"); g_booted = true; }
+    static unsigned long last_ready = 0;
+    unsigned long now = millis();
+    if (now - last_ready > 2000) { Serial.println("CLIENT|READY"); last_ready = now; }
+    if (Serial.available() > 0) {
+        char c = (char)Serial.read();
+        if (c == 'B' || c == 'b') { run_ping(); run_stream(); Serial.println("CLIENT|DONE"); }
+        else if (c == 'P' || c == 'p') { run_ping(); Serial.println("CLIENT|DONE"); }
+        else if (c == 'S' || c == 's') { run_stream(); Serial.println("CLIENT|DONE"); }
+    }
+    delay(100);
+}
 #endif // CLIENT
