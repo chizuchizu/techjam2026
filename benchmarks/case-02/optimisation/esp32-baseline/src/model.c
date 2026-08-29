@@ -120,7 +120,20 @@ static int16_t g_qh[TM_S * TM_HD];
  * One global ctx scale per layer keeps the single K=128 core4 for oproj. */
 #define g_ctxq ((int16_t *)(g_buf2))
 #define v_all  ((int16_t *)(g_buf1))
-#define g_acc  ((int32_t *)(((unsigned char *)g_buf1) + 2 * TM_S * TM_HD * 4))
+#define g_acc  tm_acc_scratch()
+static inline int32_t* tm_acc_scratch(void) {
+    /* int32 gemm scratch for the (Q,K,V) head projections (FAST phase A).
+     * v_all occupies the head of g_buf1: H*HD==D so that is always
+     * 2*S*D bytes.  The scratch goes right after v_all while that stays
+     * inside g_buf1 (H>=2); for H==1 (HD==D) g_buf1 has no room, so it
+     * borrows g_buf2's unused int32 space instead.  Safe there: g_ctxq
+     * only writes the low (int16) half of g_buf2, and only after every
+     * head's V projection has already consumed the scratch. */
+    if ((size_t)(2 * TM_S * TM_H * TM_HD + TM_S * TM_HD * 4) <=
+        (size_t)(TM_S * TM_D * 4))
+        return (int32_t *)(((unsigned char *)g_buf1) + 2 * TM_S * TM_H * TM_HD);
+    return (int32_t *)(g_buf2);
+}
 static float g_ctx_sa;               /* per-layer global ctx Q15 scale (FAST) */
 static float g_vs_h[TM_H];           /* per-head V scales (FAST phase A) */
 
@@ -432,6 +445,13 @@ void tm_scan_q12(const void* blob, TMQ12Weights* out) {
     }
 }
 
+static void tm_head_order(int* ho) {
+    /* per-head visit order (only affects buffer locality, not correctness;
+     * keeps the tuned {1,2,3,0} for the case-2 H==4 shape) */
+    for (int i = 0; i < TM_H; i++) ho[i] = i;
+    if (TM_H == 4) { const int f[4] = {1, 2, 3, 0}; for (int i = 0; i < 4; i++) ho[i] = f[i]; }
+}
+
 void tm_forward(const float* xin, float* yout,
                 const float* W, const TMQ12Weights* q12) {
     int fast = (g_mode == TM_MODE_FAST);
@@ -494,7 +514,7 @@ void tm_forward(const float* xin, float* yout,
             }
             PE(P_QKV);
             g_ctx_sa = TM_QACT_MAX / (ctx_max > 0.0f ? ctx_max : 1.0f) * 0.9999f;
-            const int h_order[TM_H] = {1, 2, 3, 0};
+            int h_order[TM_H]; tm_head_order(h_order);
             for (int t = 0; t < TM_H; t++) {
                 int h = h_order[t];
                 PB(P_QKV);
@@ -517,7 +537,7 @@ void tm_forward(const float* xin, float* yout,
                 PE(P_ATTN);
             }
         } else {
-            const int h_order[TM_H] = {1, 2, 3, 0};
+            int h_order[TM_H]; tm_head_order(h_order);
             for (int t = 0; t < TM_H; t++) {
                 int h = h_order[t];
                 PB(P_QKV);

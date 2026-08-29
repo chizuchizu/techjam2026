@@ -1,8 +1,10 @@
 /*
- * tm_config.h - Tech Jam case-2 transformer configuration for the ESP32-C3.
+ * tm_config.h - Tech Jam transformer configuration for the ESP32-C3.
  *
  * Target: Seeed XIAO ESP32C3 (400 KB SRAM, 4 MB flash, 160 MHz RV32IMC, NO FPU).
- * Model : B=1 S=128 D=128 H=4 HD=32 F=128 L=4, causal, fp32 baseline.
+ * Model : B=1 (per-input forward; batch cases stream B inputs on one board),
+ *         S/D/H/F/L set below (case 2 defaults S=128 D=128 H=4 F=128 L=4),
+ *         causal, fp32 baseline.
  *
  * The forward pass has two selectable numeric modes:
  *   TM_MODE_EXACT - fp32 GEMM/reference arithmetic with shared quantized
@@ -17,8 +19,11 @@
 
 #include <stdint.h>
 
-/* ---------- model geometry (case 2) ---------- */
-#define TM_B      1
+/* ---------- model geometry (per-case; case 2 defaults) ---------- */
+#define TM_B      1   /* batch size: informational; firmware does one forward per input frame */
+/* Per-case geometry — set to the target case. The Q15/Q12 asm GEMM kernels are
+ * only compiled for K==128 (TM_D==128 && TM_F==128); other shapes fall back to
+ * the validated C paths automatically (see kernels.c). */
 #define TM_S      128
 #define TM_D      128
 #define TM_H      4
@@ -29,8 +34,9 @@
 
 #define TM_LN_EPS 1e-5f
 
-/* score scale = 1/sqrt(head_dim) (fp32, matches torch BaselineSelfAttention) */
-#define TM_ATTN_SCALE 0.1767766922712326f
+/* score scale = 1/sqrt(head_dim) (fp32, matches torch BaselineSelfAttention).
+ * Depends on TM_HD so head/dim sweeps stay correct; == 1/sqrt(32) for case 2. */
+#define TM_ATTN_SCALE (1.0f / sqrtf((float)TM_HD))
 
 /* ---------- numeric modes ---------- */
 #define TM_MODE_EXACT 0
@@ -46,7 +52,7 @@
 #define TM_QWT_MAX    2047.0f
 
 /* ---------- weight layout ---------- */
-/* Flat fp32 weight buffer, per layer l in [0,TM_L), 99,584 floats:
+/* Flat fp32 weight buffer, per layer l in [0,TM_L):
  *   0 norm1.weight[D]  1 norm1.bias[D]
  *   2 q.weight[D*D]    3 q.bias[D]
  *   4 k.weight[D*D]    5 k.bias[D]
@@ -56,7 +62,8 @@
  *  12 f1.weight[F*D]  13 f1.bias[F]
  *  14 f2.weight[D*F]  15 f2.bias[D]
  * then final_norm.weight[D], final_norm.bias[D].
- * Total = TM_L*99584 + 2*TM_D = 398,592 floats (matches torch param count).
+ * Total = L*(2D + 4(D^2+D) + 2D + (FD+F) + (DF+D)) + 2D floats
+ *         = L*TM_W_LAYER_FLOATS + 2*TM_D (matches the torch param count).
  */
 #define TM_W_BLK_N1W 0
 #define TM_W_BLK_N1B 1
@@ -84,7 +91,8 @@
      (b)==TM_W_BLK_QB||(b)==TM_W_BLK_KB||(b)==TM_W_BLK_VB||(b)==TM_W_BLK_OB ? TM_D : \
      TM_D*TM_D)   /* q,k,v,o weight matrices */
 
-#define TM_W_LAYER_FLOATS 99584
+#define TM_W_LAYER_FLOATS \
+    (2*TM_D + 4*(TM_D*TM_D + TM_D) + 2*TM_D + (TM_F*TM_D + TM_F) + (TM_D*TM_F + TM_D))
 #define TM_W_FINAL_OFF  ((uint32_t)TM_L * TM_W_LAYER_FLOATS)
 #define TM_W_TOTAL      (TM_W_FINAL_OFF + 2*TM_D)   /* 398,592 */
 #define TM_W_FINALW     (TM_W_FINAL_OFF + 0)

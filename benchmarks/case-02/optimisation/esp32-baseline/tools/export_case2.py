@@ -2,10 +2,10 @@
 """
 export_case2.py - emit validation artifacts for the ESP32 case-2 baseline.
 
-Reads the exact torch reference implementation from
-torch_transformer_benchmark.py at the repository root (official competition benchmark;
-the same weight init seed, the same
-random-input generator, same fp32 reference forward), then writes:
+Reads the exact torch reference implementation from the vendored tool
+torch_ref.py (a self-contained copy of the official benchmark reference; the same
+weight init seed, the same random-input generator, same fp32 reference forward),
+then writes:
 
   weights.bin         flat fp32 weights, 398,592 floats (see tm_config.h layout)
   weights_q12.bin     Q12 int16 matrices + per-matrix scale for the FAST GEMM
@@ -25,37 +25,36 @@ import sys
 import numpy as np
 import torch
 
-repository_root = pathlib.Path(__file__).resolve().parents[5]
-sys.path.insert(0, str(repository_root))
+# Self-contained reference: vendored torch_ref.py (no repository-root import).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from torch_transformer_benchmark import (
+from torch_ref import (
     BaselineTransformer,
     TransformerConfig,
     generate_random_case,
 )
 
-# ---------- config (case 2) ----------
-B, S, D, H, FH, L = 1, 128, 128, 4, 128, 4
-HD = D // H
+# ---------- shape config (per case; case-2 defaults) ----------
 SEED = 1234        # == benchmark --seed; also weights-init RNG
 
-LAYER_FLOATS = 2 * D + 4 * (D * D + D) + 2 * D + (FH * D + FH) + (D * FH + D)  # == 99,584
-assert LAYER_FLOATS == 99_584, LAYER_FLOATS
-TOTAL_FLOATS = L * LAYER_FLOATS + 2 * D
-assert TOTAL_FLOATS == 398_592, TOTAL_FLOATS
-
-# block order inside one layer (must mirror woff() in src/model.c)
-BLOCKS = [
-    ("norm1.weight", 0, D), ("norm1.bias", 0, D),
-    ("q_proj.weight", 0, D * D), ("q_proj.bias", 0, D),
-    ("k_proj.weight", 0, D * D), ("k_proj.bias", 0, D),
-    ("v_proj.weight", 0, D * D), ("v_proj.bias", 0, D),
-    ("out_proj.weight", 0, D * D), ("out_proj.bias", 0, D),
-    ("norm2.weight", 0, D), ("norm2.bias", 0, D),
-    ("ffn_in.weight", 0, FH * D), ("ffn_in.bias", 0, FH),
-    ("ffn_out.weight", 0, D * FH), ("ffn_out.bias", 0, D),
-]
-assert sum(n for _, _, n in BLOCKS) == LAYER_FLOATS
+def build_cfg(B, S, D, H, Fh, L):
+    """Derive all shape-dependent constants for the given case geometry."""
+    HD = D // H
+    LAYER_FLOATS = 2 * D + 4 * (D * D + D) + 2 * D + (Fh * D + Fh) + (D * Fh + D)
+    TOTAL_FLOATS = L * LAYER_FLOATS + 2 * D
+    # block order inside one layer (must mirror woff() in src/model.c)
+    BLOCKS = [
+        ("norm1.weight", 0, D), ("norm1.bias", 0, D),
+        ("q_proj.weight", 0, D * D), ("q_proj.bias", 0, D),
+        ("k_proj.weight", 0, D * D), ("k_proj.bias", 0, D),
+        ("v_proj.weight", 0, D * D), ("v_proj.bias", 0, D),
+        ("out_proj.weight", 0, D * D), ("out_proj.bias", 0, D),
+        ("norm2.weight", 0, D), ("norm2.bias", 0, D),
+        ("ffn_in.weight", 0, Fh * D), ("ffn_in.bias", 0, Fh),
+        ("ffn_out.weight", 0, D * Fh), ("ffn_out.bias", 0, D),
+    ]
+    assert sum(cnt for _, _, cnt in BLOCKS) == LAYER_FLOATS
+    return HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS
 
 
 def q12_block(w: np.ndarray):
@@ -73,11 +72,22 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--outdir", default=".", help="project root (embed files live here)")
     ap.add_argument("--seeds", type=int, default=25, help="number of accuracy seeds to export")
+    ap.add_argument("--B", type=int, default=1, help="batch size of the case (1-16)")
+    ap.add_argument("--S", type=int, default=128, help="sequence length")
+    ap.add_argument("--D", type=int, default=128, help="model dim")
+    ap.add_argument("--H", type=int, default=4, help="attention head count")
+    ap.add_argument("--F", type=int, default=128, help="FFN hidden dim")
+    ap.add_argument("--L", type=int, default=4, help="num layers")
     args = ap.parse_args()
 
     out = pathlib.Path(args.outdir)
     td = out / "testdata"
     td.mkdir(parents=True, exist_ok=True)
+
+    # per-case geometry (module defaults keep the case-2 behaviour when omitted)
+    global B, S, D, H, FH, L, HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS
+    B, S, D, H, FH, L = args.B, args.S, args.D, args.H, args.F, args.L
+    HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS = build_cfg(B, S, D, H, FH, L)
 
     device = torch.device("cpu")
     config = TransformerConfig(
@@ -144,8 +154,11 @@ def main() -> int:
         assert valid is None or bool(valid.all())
         with torch.inference_mode():
             ref = model(x, None)
-        xb = x.detach().cpu().numpy().astype(np.float32).ravel().tobytes()
-        rb = ref.detach().cpu().numpy().astype(np.float32).ravel().tobytes()
+        # The firmware runs one forward per input frame (B==1 on the board;
+        # batch cases stream B frames). Serialize batch element 0 per seed so
+        # the per-input host/device harnesses validate the exact pipeline.
+        xb = x[0].detach().cpu().numpy().astype(np.float32).ravel().tobytes()
+        rb = ref[0].detach().cpu().numpy().astype(np.float32).ravel().tobytes()
         (td / f"input_{t}.bin").write_bytes(xb)
         (td / f"ref_{t}.bin").write_bytes(rb)
         manifest.setdefault("files", {})[str(t)] = {

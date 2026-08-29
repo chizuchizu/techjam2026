@@ -45,7 +45,7 @@ def read_until(ser, token: bytes, timeout: float = 30.0) -> bytes:
 
 
 def send_input(ser, data: bytes, chunk: int = CHUNK, gap: float = GAP) -> None:
-    """Deliver a full 65536-byte input frame without tripping the CDC RX
+    """Deliver a full S*D-byte input frame without tripping the CDC RX
     drop bug: 1 KB chunks, 20 ms apart (safe margin below the >4 KB/10 ms
     threshold; 3/3 runs lossless at 1 KB/20 ms)."""
     off = 0
@@ -131,7 +131,14 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=3)
     args = ap.parse_args()
 
+    global N  # frame floats = S*D per case; inferred from the first input
     root = pathlib.Path(args.root)
+    probe = root / "testdata" / "input_0.bin"
+    if probe.exists():
+        N = len(probe.read_bytes()) // 4
+    print(f"[device] frame = {N} floats ({N * 4} bytes) -> TM_S*TM_D from input file")
+    if N <= 0:
+        raise SystemExit(f"cannot determine frame size from {probe}")
     ser = serial.Serial(args.port, args.baud, timeout=1.0)
     time.sleep(0.5)
     # opportunistically capture the boot banner if the port open put the

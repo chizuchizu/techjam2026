@@ -275,7 +275,7 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a7 = Aq + (size_t)(it+7) * K;
             int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
 #if defined(__riscv)
-            if ((K & 1) == 0 && K >= 4) {
+            if ((K & 1) == 0 && K >= 4 && K >= 128) {  /* asm strides assume K==128 */
                 /* 2-pair (16-MAC) unroll with software-pipelined flash-XIP
                  * weight prefetch.  a4/a5 hold w[k], w[k+1]; the next pair
                  * w[k+2], w[k+3] is prefetched at the END of each iteration
@@ -801,7 +801,7 @@ float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a3 = Aq + (size_t)(it + 3) * K;
             int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
 #if defined(__riscv)
-            if ((K & 1) == 0) {
+            if ((K & 1) == 0 && K >= 128) {  /* asm assumes K==128 row strides */
                 const int16_t* w_ = w0;
                 const int16_t* whend_ = w0 + K;
                 const int16_t* rb_ = a0;
@@ -1320,7 +1320,7 @@ void tm_gemm_core5_resid(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a3 = Aq + (size_t)(it + 3) * K;
             int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
 #if defined(__riscv)
-            if (((K) & 1) == 0 && (K) >= 4) {
+            if (((K) & 1) == 0 && (K) >= 4 && (K) >= 128) {  /* asm assumes K==128 */
                 const int16_t* wpt  = w0 + 2;
                 const int16_t* rhend = a0 + (K - 2);
                 const int16_t* rb_   = a0;
