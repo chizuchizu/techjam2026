@@ -19,6 +19,7 @@ benchmarks/case-02/
 ├── optimisation/
 │   └── esp32-baseline/
 └── multiboard/
+    ├── esp32-cluster-full/       complete two-board distributed forward
     ├── esp32_cluster_transport/
     ├── esp32-linkbench/
     ├── tools/
@@ -36,7 +37,7 @@ experiments that are not official cases are isolated in
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
 | [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | Not implemented | Batch-parallel candidate |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at 5.27 s; partial multiboard paths verified |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single- and two-board verified** | Full body at 5.293 s on one C3, 3.060 s on two (1.73x) |
 | [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | Not implemented | Small-batch scheduling |
 | [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | Not implemented | Batch tiling and dispatch |
 | [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | Not implemented | Throughput-oriented batch sharding |
@@ -72,12 +73,20 @@ change.
 
 #### Complete two-board end-to-end case 2
 
-- [ ] Run all four layers and the final LayerNorm across two boards.
-- [ ] Add the missing projections, residuals, LayerNorm, and FFN path.
-- [ ] Keep weights on the workers and return each complete layer output.
-- [ ] Validate the two-board output with five seeds.
-- [ ] Measure full wall time and split compute from communication.
-- [ ] Compare it with one board and save the raw results.
+- [x] Run all four layers and the final LayerNorm across two boards.
+- [x] Add the missing projections, residuals, LayerNorm, and FFN path.
+- [x] Keep weights on the workers; each board holds the full blobs in flash and
+      returns only its own output rows.
+- [x] Validate the two-board output with five seeds.
+- [x] Measure full wall time and split compute from communication.
+- [x] Compare it with one board and save the raw results.
+
+Result: **3.060 s across two C3s against 5.293 s on one (1.73x)**, 5/5 device
+seeds and 25/25 host seeds passing the accuracy gate with zero failing
+elements. Time blocked on the board-to-board link is 3-32 ms per forward. The
+measured window excludes host serial transfer, exactly as the single-board
+number does. See
+[`benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md`](benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md).
 
 #### Benchmark four boards, then scale to eight
 
@@ -146,8 +155,8 @@ change.
 
 ### Optional technical stretch goals
 
-- [ ] Complete output projection, residuals, second LayerNorm, and FFN for one distributed layer.
-- [ ] Run all four case-2 layers across multiple boards.
+- [x] Complete output projection, residuals, second LayerNorm, and FFN for one distributed layer.
+- [x] Run all four case-2 layers across multiple boards.
 - [ ] Add worker heartbeats, retry handling, and cached performance profiles.
 - [ ] Implement and validate another official benchmark case in its own directory.
 
@@ -169,8 +178,18 @@ python3 tools/export_case2.py --outdir . --seeds 25
 pio run -e esp32-baseline
 ```
 
-Configure a local, Git-ignored Wi-Fi secrets file before compiling the case-2
-cluster worker:
+Build and run the complete two-board case-2 forward. The boards form their own
+network, so no router or credentials are involved:
+
+```bash
+cd benchmarks/case-02/multiboard/esp32-cluster-full
+make -C tools shard_host_test && ./tools/shard_host_test all   # host gate
+./tools/flash_boards.sh                                        # both boards
+python3 tools/run_cluster_e2e.py --seeds 0 1 2 3 4
+```
+
+The older partial-scope head-parallel worker does need a local, Git-ignored
+Wi-Fi secrets file before compiling:
 
 ```bash
 cp benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.example.h \
