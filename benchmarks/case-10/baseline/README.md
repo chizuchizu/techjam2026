@@ -6,7 +6,7 @@ The torch reference is vendored inside the implementation at
 [`../optimisation/esp32-baseline/tools/torch_ref.py`](../optimisation/esp32-baseline/tools/torch_ref.py)
 (a self-contained copy of the official benchmark reference; same weight
 seed 1234, same random-input generator, same fp32 forward). This
-directory owns the host-gate evidence and the SRAM-limit record for the
+directory owns the SRAM-limit record for the
 Case 10 (H=2) geometry.
 
 ## Physical starting result
@@ -16,7 +16,7 @@ Complete forward = all 64 batch inputs on one board (each input is one
 
 | Implementation | Board | Complete forward (single-input) | Accuracy |
 |---|---:|---|---|
-| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | **not measurable** — linker `dram0_0_seg` overflowed by 23,920 B; no firmware image | Pass, 25/25 host checks both modes, worst 1.0885e-03 (FAST) / 9.1493e-05 (EXACT) |
+| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | **not measurable** — linker `dram0_0_seg` overflowed by 23,920 B; no firmware image | no firmware image |
 
 ## SRAM-limit record (why there is no device number)
 
@@ -35,20 +35,15 @@ buffers. Per-head state scales as `S * HD`, so it shrinks as H grows:
 
 Measured (not estimated) DRAM layouts above: `case-11` is the smallest
 head width, fits with 65,116 B free. `H<=2` genuinely cannot run the
-canonical workspace on one C3 — this is a hardware SRAM property, not a
-host-gate or accuracy failure (host checks are 50/50 PASS).
+canonical workspace on one C3 — this is a hardware SRAM property, not an
+accuracy failure.
 
 ## Result evidence
 
-- **Host gate (case-10).** From
-  `optimisation/esp32-baseline`: `(cd tools && make host_test && ./host_test
-  all --both)` — 50/50 seed-runs ALL PASS (25 seeds x FAST + EXACT),
-  worst absolute error 1.0885e-03 (FAST) / 9.1493e-05 (EXACT). Full raw
-  output and the build-failure capture live in
-  [`results/`](results/).
 - **Device build (case-10).** `pio run` fails at the link step:
   `region 'dram0_0_seg' overflowed by 23920 bytes`. No firmware image is
-  produced, so `device_test.py` cannot be run on PORT B.
+  produced, so `device_test.py` cannot be run on PORT B. The
+  build-failure capture lives in [`results/`](results/).
 - **Weights/vectors.** Regenerated deterministically
   (`tools/export_case2.py`, `--H 2 --D 128 --S 128 --F 128 --L 4`, 25
   seeds); weights.bin 1,594,368 B, weights_q12.bin 786,624 B. Both are
@@ -62,5 +57,5 @@ host-gate or accuracy failure (host checks are 50/50 PASS).
 2. Multiboard: H=1 (and H=2) are attention-subgraph-trivial for a
    split — one peer runs the full-D projections (the C3 can, as
    case-11 shows), the other carries the 64-wide (2x) attention. The
-   baseline here is the projector + host-gate-verified attention
+   baseline here is the projector + attention
    reference the split must match.

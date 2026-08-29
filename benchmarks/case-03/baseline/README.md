@@ -17,7 +17,7 @@ would be a derived projection and is not reported).
 
 | Implementation | Board | Per-input forward (measured on-board) | Accuracy |
 |---|---:|---|---|
-| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 1.990 s | Pass, worst max absolute error 1.0320e-03 (FAST) |
+| Current hybrid C implementation | XIAO ESP32-C3, 160 MHz | 1.990 s | Pass, 5/5 device seeds (worst device max_abs 1.0333e-03) |
 
 The result covers the complete Case 3 Transformer body, not only
 attention. The raw capture and independent review are in

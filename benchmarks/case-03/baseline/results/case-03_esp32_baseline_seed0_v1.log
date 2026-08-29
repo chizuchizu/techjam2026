@@ -1,7 +1,7 @@
 # case-03 esp32-baseline seed0 v1 — baseline capture log (re-measured on-board)
 # Per-input forward measured on-board (board A, /dev/cu.usbmodem101) by the
 # root agent — case-2 geometry (S=128 D=128 H=4 F=128 L=4), firmware commit 0dbf5e8.
-# 5/5 device seeds PASS (worst max_abs 1.0333e-03); 25/25 host seeds FAST+EXACT.
+# 5/5 device seeds PASS (worst max_abs 1.0333e-03).
 # Timing from the firmware TMR_TICK counter: 1.990 s/forward.
 [device] boot: TM XIAO-ESP32C3 case2 baseline ready
 [device] TM 1 128 128

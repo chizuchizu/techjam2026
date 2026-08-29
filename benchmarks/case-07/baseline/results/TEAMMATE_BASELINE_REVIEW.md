@@ -12,23 +12,17 @@ FFNs, and final LayerNorm. FAST mode uses Q15 activations and Q12 weights for
 the six projection matrices per block.
 
 I regenerated the deterministic weights/test vectors (25 seeds from seed 1234),
-compiled the C host implementation, ran both numeric modes against the vendored
-torch reference, built the PlatformIO firmware, and confirmed the physical
-board-A capture reused for this case (0.491 s/forward, 5/5 device seeds; no
-reflash was permitted per the case spec).
+built the PlatformIO firmware, and confirmed the physical board-A capture
+reused for this case (0.491 s/forward, 5/5 device seeds; no reflash was
+permitted per the case spec).
 
 | Check | Independent result |
 |---|---:|
-| C FAST, 25 host seeds | 0 / 102,400 failed outputs |
-| Worst C FAST absolute error | 1.3875e-03 |
-| C EXACT, 25 host seeds | 0 / 102,400 failed outputs |
-| Worst C EXACT absolute error | 6.7055e-05 |
 | XIAO build RAM | 83,332 / 327,680 B (25.4%) |
 | XIAO build enlarged app partition | 418,610 / 3,145,728 B (13.3%) |
 | Physical XIAO seeds (board A, pre-measured) | 5/5 PASS |
 | Physical XIAO FAST forward | 0.491 s |
 
-The numerical result is confirmed on the host for all 25 seeds in both modes.
 The physical timing is the pre-measured board-A value (0.491 s/forward), which
 also matches the freshly measured case-12 value on the same board (0.493 s).
 
@@ -46,13 +40,11 @@ also matches the freshly measured case-12 value on the same board (0.493 s).
    forward is reused across the 64 streamed inputs per the case spec (no
    reflash); no derived batch total is reported.
 3. `weights.bin`, `weights_q12.bin`, and `testdata/` are intentionally omitted
-   from Git, so a clean checkout must regenerate the artifacts before host
-   validation or firmware build (see commands below). The case-specific
+   from Git, so a clean checkout must regenerate the artifacts before
+   firmware build (see commands below). The case-specific
    runner is `python3 tools/export_case2.py --outdir . --seeds 25 --B 64
    --S 128 --D 32 --H 4 --F 32 --L 4`.
-4. Host gate reproduction: `(cd tools && make host_test && ./host_test all
-   --both)` prints 50 seed-runs and `done: 50 seed-runs, 0 failed ==> ALL PASS`.
-5. This is the official benchmark's Transformer body, not yet a trained text
+4. This is the official benchmark's Transformer body, not yet a trained text
    generator: it accepts float embeddings and returns float hidden states, with
    no token/position embeddings or vocabulary head.
 

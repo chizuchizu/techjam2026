@@ -23,9 +23,8 @@ The model is the reference `BaselineTransformer` from
   is claimed.
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): host 25/25 seeds pass in both FAST and EXACT modes
-(FAST worst 0.001089; EXACT worst 0.000091). On-device: **not run** — no
-firmware image links (see above).
+|a-b| <= 0.02*|b|). On-device: **not run** — no firmware image links
+(see above).
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
@@ -72,14 +71,12 @@ n timed forwards and prints `TM <mode> <us>...`.
 
 Param count 398,592 = 1.59 MB fp32. XIAO build: **FAIL** —
 `dram0_0_seg` overflowed by 23,920 B (no firmware image).
-Host-validated accuracy: FAST 0/25 seed failures (worst max_abs 0.001089);
-EXACT 0/25 (worst 0.000091).
 
 ## Current measured execution (on-device, FAST mode)
 
 Device gate (FAST, 5 seeds): **not run** — no firmware image links
-(`dram0_0_seg` overflow, see above). Host gate 25/25 seeds in both modes.
-Fine-grained per-phase and per-version profiles are in
+(`dram0_0_seg` overflow, see above). Fine-grained per-phase and
+per-version profiles are in
 [`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)

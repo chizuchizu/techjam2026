@@ -21,8 +21,7 @@ The model is the reference `BaselineTransformer` from
   (FAST, 5/5 device seeds; board B).
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|): host 25/25 seeds pass in both FAST and EXACT modes
-(FAST worst 1.0893e-03; EXACT worst 0.0001). On-device: **5/5 seeds pass**,
+|a-b| <= 0.02*|b|). On-device: **5/5 seeds pass**,
 worst max_abs 1.0893e-03, 2.462 s/forward.
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
@@ -69,8 +68,7 @@ n timed forwards and prints `TM <mode> <us>...`.
 ## Numbers
 
 Param count 398,592 = 1.59 MB fp32. XIAO build RAM 256,180 B (fits 400 KB).
-App partition 2,646,542 B (fits 4 MB). Host-validated accuracy: FAST
-0/25 seed failures (worst max_abs 1.0893e-03); EXACT 0/25 (worst 0.0001).
+App partition 2,646,542 B (fits 4 MB).
 
 ## Current measured execution (on-device, FAST mode)
 

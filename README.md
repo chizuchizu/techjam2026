@@ -34,18 +34,18 @@ experiments that are not official cases are isolated in
 
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
 |---:|---|---|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device + 25/25 host PASS |
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
 | [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single-board verified** | Full body at **1.996 s (21.1×, opt23)**; host 54/54 + device 25/25; partial multiboard paths verified |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device + 25/25 host PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device + 25/25 host PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device + 25/25 host PASS |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Implemented, complete body** | Measured on-board **1.990 s/forward** (board A); 5/5 device PASS |
 | [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
-| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device + 25/25 host PASS |
+| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device PASS |
 | [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |
-| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | **Not measurable on one XIAO** | Host-verified (25/25 × FAST/EXACT); DRAM link overflows by 73,072 B (needs 394,424 B) |
-| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | **Not measurable on one XIAO** | Host-verified (25/25 × FAST/EXACT); DRAM link overflows by 23,920 B (needs 345,272 B) |
-| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | **Implemented, complete body** | Measured on-board **2.462 s/forward** (board B); 5/5 device + 25/25 host PASS |
-| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | **Implemented, complete body** | Measured on-board **0.493 s/forward** (board A); 5/5 device + 25/25 host PASS |
+| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | **Not measurable on one XIAO** | DRAM link overflows by 73,072 B (needs 394,424 B) |
+| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | **Not measurable on one XIAO** | DRAM link overflows by 23,920 B (needs 345,272 B) |
+| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | **Implemented, complete body** | Measured on-board **2.462 s/forward** (board B); 5/5 device PASS |
+| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | **Implemented, complete body** | Measured on-board **0.493 s/forward** (board A); 5/5 device PASS |
 | [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | Not implemented | Online attention and KV sharding |
 | [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | Not implemented | Extreme sequence streaming |
 

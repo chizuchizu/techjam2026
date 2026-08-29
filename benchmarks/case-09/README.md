@@ -25,15 +25,14 @@ attention/projection path has no head loop at all.
 
 | Directory | Contents |
 |---|---|
-| [`baseline/`](baseline/) | Host gate evidence, SRAM-limit record and review |
+| [`baseline/`](baseline/) | SRAM-limit record and review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
 
 ## Comparable complete-forward result
 
 > **SRAM anomaly — not measurable on a single XIAO ESP32-C3.**
-> The canonical case-2 workspace is verified correct on host
-> (25/25 seeds, both modes) but **the firmware does not link on the
-> board**: the linker reports that region `dram0_0_seg` is overfull by
+> **The firmware does not link on the board**: the linker reports that
+> region `dram0_0_seg` is overfull by
 > **73,072 bytes** at `H=1`. The per-head Q/K/V/context buffers scale as
 > `S * HD` (inverse of `H`), so the single-head configuration has the
 > largest working set of all eight head-count cases. No physical device
@@ -43,12 +42,10 @@ attention/projection path has no head loop at all.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | not measurable — linker `dram0_0_seg` overflowed by 73,072 B | — | Pass, 25/25 host checks both modes; device build does not fit SRAM |
+| Current implementation (first physical capture) | not measurable — linker `dram0_0_seg` overflowed by 73,072 B | — | not run (no firmware image) |
 
-Host validation is complete and conclusive: 50/50 seed-runs (25 seeds x
-FAST + EXACT) all PASS with worst absolute error 1.0738e-03 (FAST) and
-7.7963e-05 (EXACT). The device measurement is physically impossible on
-this board with the current workspace.
+The device measurement is physically impossible on this board with the
+current workspace.
 
 ## Next case-specific step
 

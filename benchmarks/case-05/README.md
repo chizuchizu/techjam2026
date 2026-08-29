@@ -38,7 +38,7 @@ single-input forwards).
 
 | Build | Per-input forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | 1.990 s | 1.00x | Pass, 5/5 device seeds + 25/25 host checks |
+| Current implementation (first physical capture) | 1.990 s | 1.00x | Pass, 5/5 device seeds |
 
 Per-input forward measured on-board (board A): 1.990 s at the same
 S/D/H/F/L geometry, 5/5 device seeds

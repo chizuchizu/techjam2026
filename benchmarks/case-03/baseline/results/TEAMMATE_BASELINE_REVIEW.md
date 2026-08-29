@@ -14,27 +14,20 @@ LayerNorm, streaming causal attention, residuals, GELU FFNs, and final
 LayerNorm. FAST mode uses Q15 activations and Q12 weights for the six
 projection matrices per block.
 
-I regenerated the omitted deterministic weights/test vectors, compiled
-the C host implementation, reran the full 25-seed x 2-mode gate,
-independently recomputed seed 0 through the vendored torch_ref, and
-built the PlatformIO firmware for the batch shape. The concise capture
-is
+I regenerated the omitted deterministic weights/test vectors, built
+the PlatformIO firmware for the batch shape, flashed it to the board,
+and ran seeds 0–4 end to end. The concise capture is
 [`case-03_esp32_baseline_seed0_v1.log`](case-03_esp32_baseline_seed0_v1.log).
 
 | Check | Independent result |
 |---|---:|
-| C FAST, 25 host seeds | 0 / 409,600 failed outputs |
-| Worst C FAST absolute error | 1.0320e-03 |
-| C EXACT, 25 host seeds | 0 / 409,600 failed outputs |
-| Worst C EXACT absolute error | 7.8201e-05 |
-| Vendored torch_ref recompute, seed 0 vs committed ref_0.bin | 0 / 16,384 mismatched (max_abs 0.0) |
 | XIAO build RAM | 274,564 / 327,680 B (83.8%) |
 | XIAO build enlarged app partition | 2,644,470 / 3,145,728 B (84.1%) |
 | Physical XIAO seeds 0-4 (fresh on-board capture, board A) | PASS 5/5, 1.990 s/forward |
 
-The numerical result is confirmed on host and, for the timed per-input
-forward, on the physical board: the per-input 1.990 s is a fresh on-board
-capture on board A (5/5 device seeds, see the seed0_v1 log). A
+The timed per-input forward is confirmed on the physical board: the
+per-input 1.990 s is a fresh on-board capture on board A (5/5 device
+seeds, see the seed0_v1 log). A
 complete-batch total would be a derived projection and is
 deliberately not reported.
 
@@ -47,19 +40,16 @@ deliberately not reported.
 2. `weights.bin`, `weights_q12.bin`, and `testdata/` are intentionally
    omitted from Git. A clean checkout must regenerate them
    (`python3 tools/export_case2.py --outdir . --seeds 25 --B 4 --S 128 --D 128 --H 4 --F 128 --L 4`)
-   before host validation or firmware build. The exporter runs with
+   before firmware build. The exporter runs with
    the system python3 (torch 2.10.0) and reproduces the manifests
    deterministically.
-3. Host gate commands: from `optimisation/esp32-baseline`,
-   `(cd tools && make host_test && ./host_test all --both)` prints 50
-   per-seed lines and `done: 50 seed-runs, 0 failed ==> ALL PASS`.
-4. The firmware streams one input frame per forward; a batch of 4
+3. The firmware streams one input frame per forward; a batch of 4
    inputs is 4 sequential forwards with resident weights. Batch time
    would be additive (B x single forward), but this baseline reports
    only the measured per-input forward; there is no pipelining that
    could turn batch parallelism into per-input latency reduction on one
    board.
-5. This is the official benchmark's Transformer body, not yet a trained
+4. This is the official benchmark's Transformer body, not yet a trained
    text generator: it accepts float embeddings and returns float hidden
    states, with no token/position embeddings or vocabulary head.
 

@@ -14,7 +14,7 @@ single-board speedup.
 
 | Implementation | Board | Per-input forward (measured on-board) | Accuracy |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | XIAO ESP32-C3, 160 MHz | 0.493 s | Pass, 5/5 device seeds; worst FAST host-gate error 1.0319e-03 |
+| Current implementation (first physical capture) | XIAO ESP32-C3, 160 MHz | 0.493 s | Pass, 5/5 device seeds (worst device max_abs 1.0332e-03) |
 
 The result covers the complete case-12 Transformer body, not only attention.
 Its independent review and raw physical capture are in [`results/`](results/).
