@@ -4,10 +4,10 @@
 
 1. Add automatic node registration, unique node IDs, heartbeats, and a worker
    registry for a fleet of ESP32-C3 boards.
-2. Integrate distributed heads with one complete layer of
-   `benchmarks/case-02/optimisation/esp32-baseline`, adding output projection,
-   both residuals, second LayerNorm, and FFN to the now-verified
-   first-LayerNorm/Q/K/V/attention path.
+2. Extend the two-board row partition in
+   `benchmarks/case-02/multiboard/esp32-cluster-full` to four boards (`i % N`),
+   and cut the per-board replicated weight streaming that currently stands
+   between the measured 1.73x and 2x.
 3. Cache worker performance profiles and retry a timed-out head on another
    healthy node.
 4. Replace the remaining floating-point attention, LayerNorm, and GELU work in
@@ -29,5 +29,9 @@
 - Official case-2 layer-0 LayerNorm, Q/K/V projections, and attention on two
   physical C3s at 2.00x, with five device seeds passing.
 - Round-robin, calibrated-all, and latency-minimizing assignment policies.
+- Complete four-layer case-2 forward distributed across two physical C3s at
+  3.060 s against 5.293 s on one board (1.73x), 5/5 device seeds and 25/25 host
+  seeds passing the benchmark gate, with the per-layer K/V exchange overlapped
+  down to 3-32 ms of waiting.
 
 The retired NVIDIA H200 backlog lives on in git history (removed with the 2026 competition split).

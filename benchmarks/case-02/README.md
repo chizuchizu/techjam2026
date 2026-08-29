@@ -12,6 +12,7 @@ multiboard experiments.
 | [`baseline/`](baseline/) | First physical C3 capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
 | [`multiboard/`](multiboard/) | Worker firmware, coordinators, link benchmark, and distributed results |
+| [`multiboard/esp32-cluster-full/`](multiboard/esp32-cluster-full/) | Complete two-board distributed forward |
 
 ## Comparable complete-forward result
 
@@ -23,7 +24,23 @@ ESP32-C3 at 160 MHz.
 | Initial hybrid baseline | 42.15 s | 1.00x | Pass, 5/5 device seeds |
 | Current optimised firmware | **5.27 s** | **8.0x** | Pass, 5/5 device seeds and 50/50 host checks |
 
-## Multiboard results
+## Complete distributed result
+
+The whole four-layer body across two boards, same shape and same gate as the
+single-board rows above.
+
+| Build | Boards | Time/forward | Speedup | Validation |
+|---|---:|---:|---:|---|
+| Optimised single-board firmware | 1 C3 | 5.293 s | 1.00x | Pass, 5/5 device seeds |
+| [`esp32-cluster-full`](multiboard/esp32-cluster-full/) | 2 C3s | **3.060 s** | **1.73x** | Pass, 5/5 device seeds and 25/25 host checks |
+
+Both rows are the same two physical boards in one session. The split is by
+token row (`i % 2`), so the only inter-board traffic is one K/V exchange per
+layer — 131,200 bytes each way per forward, streamed per head over UDP and
+overlapped with arithmetic down to 3–32 ms of measured waiting. Details in
+[`multiboard/results/CASE2_FULL_E2E_RESULTS.md`](multiboard/results/CASE2_FULL_E2E_RESULTS.md).
+
+## Earlier partial-scope multiboard results
 
 These results use the case-2 shape but cover only the stated partial scope.
 
@@ -41,7 +58,5 @@ is a complete distributed case-2 time.
 
 ## Next case-specific step
 
-Complete one distributed layer by adding output projection, both residuals,
-the second LayerNorm, and FFN to the verified multiboard path. Only then extend
-the same partition across all four layers and report an end-to-end distributed
-case-2 result.
+Extend the row partition from two boards to four (`i % N`), and cut the
+replicated per-board weight streaming that stands between 1.73x and 2x.
