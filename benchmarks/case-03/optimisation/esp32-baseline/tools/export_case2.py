@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""
+export_case2.py - emit validation artifacts for the ESP32 case-2 baseline.
+
+Reads the exact torch reference implementation from the vendored tool
+torch_ref.py (a self-contained copy of the official benchmark reference; the same
+weight init seed, the same random-input generator, same fp32 reference forward),
+then writes:
+
+  weights.bin         flat fp32 weights, 398,592 floats (see tm_config.h layout)
+  weights_q12.bin     Q12 int16 matrices + per-matrix scale for the FAST GEMM
+  testdata/input_<s>.bin, ref_<s>.bin   torch input & reference output per seed
+  manifest.json       seeds, layout, hashes
+
+Requires the system python3 (torch + numpy). Usage:
+  python3 tools/export_case2.py --outdir . [--seeds 25]
+"""
+import argparse
+import hashlib
+import json
+import pathlib
+import struct
+import sys
+
+import numpy as np
+import torch
+
+# Self-contained reference: vendored torch_ref.py (no repository-root import).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from torch_ref import (
+    BaselineTransformer,
+    TransformerConfig,
+    generate_random_case,
+)
+
+# ---------- shape config (per case; case-2 defaults) ----------
+SEED = 1234        # == benchmark --seed; also weights-init RNG
+
+def build_cfg(B, S, D, H, Fh, L):
+    """Derive all shape-dependent constants for the given case geometry."""
+    HD = D // H
+    LAYER_FLOATS = 2 * D + 4 * (D * D + D) + 2 * D + (Fh * D + Fh) + (D * Fh + D)
+    TOTAL_FLOATS = L * LAYER_FLOATS + 2 * D
+    # block order inside one layer (must mirror woff() in src/model.c)
+    BLOCKS = [
+        ("norm1.weight", 0, D), ("norm1.bias", 0, D),
+        ("q_proj.weight", 0, D * D), ("q_proj.bias", 0, D),
+        ("k_proj.weight", 0, D * D), ("k_proj.bias", 0, D),
+        ("v_proj.weight", 0, D * D), ("v_proj.bias", 0, D),
+        ("out_proj.weight", 0, D * D), ("out_proj.bias", 0, D),
+        ("norm2.weight", 0, D), ("norm2.bias", 0, D),
+        ("ffn_in.weight", 0, Fh * D), ("ffn_in.bias", 0, Fh),
+        ("ffn_out.weight", 0, D * Fh), ("ffn_out.bias", 0, D),
+    ]
+    assert sum(cnt for _, _, cnt in BLOCKS) == LAYER_FLOATS
+    return HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS
+
+
+def q12_block(w: np.ndarray):
+    """Return (int16 flat, w_scale) for a [out,in] matrix, row-major out-major."""
+    w = np.ascontiguousarray(w.astype(np.float32))
+    amax = float(np.max(np.abs(w)))
+    if amax == 0.0:
+        amax = 1.0
+    sw = 2047.0 / amax
+    q = np.rint(w * sw).astype(np.int16)
+    return q, amax / 2047.0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--outdir", default=".", help="project root (embed files live here)")
+    ap.add_argument("--seeds", type=int, default=25, help="number of accuracy seeds to export")
+    ap.add_argument("--B", type=int, default=1, help="batch size of the case (1-16)")
+    ap.add_argument("--S", type=int, default=128, help="sequence length")
+    ap.add_argument("--D", type=int, default=128, help="model dim")
+    ap.add_argument("--H", type=int, default=4, help="attention head count")
+    ap.add_argument("--F", type=int, default=128, help="FFN hidden dim")
+    ap.add_argument("--L", type=int, default=4, help="num layers")
+    args = ap.parse_args()
+
+    out = pathlib.Path(args.outdir)
+    td = out / "testdata"
+    td.mkdir(parents=True, exist_ok=True)
+
+    # per-case geometry (module defaults keep the case-2 behaviour when omitted)
+    global B, S, D, H, FH, L, HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS
+    B, S, D, H, FH, L = args.B, args.S, args.D, args.H, args.F, args.L
+    HD, LAYER_FLOATS, TOTAL_FLOATS, BLOCKS = build_cfg(B, S, D, H, FH, L)
+
+    device = torch.device("cpu")
+    config = TransformerConfig(
+        batch_size=B, seq_len=S, d_model=D, num_heads=H,
+        ffn_dim=FH, num_layers=L, causal=True,
+    )
+    config.validate()
+
+    # ---- reference model with the SAME init RNG as the benchmark harness ----
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    model = BaselineTransformer(config).to(device=device, dtype=torch.float32).eval()
+
+    # ---- export flat fp32 weights ----
+    sd = model.state_dict()
+    flat = np.empty(TOTAL_FLOATS, dtype=np.float32)
+    n = 0
+    for l in range(L):
+        for key, _, cnt in BLOCKS:
+            if "proj" in key:
+                name = f"layers.{l}.attention.{key}"
+            else:
+                name = f"layers.{l}.{key}"
+            t = sd[name].detach().cpu().numpy().astype(np.float32).ravel()
+            assert t.size == cnt, (name, t.size, cnt)
+            flat[n:n + cnt] = t
+            n += cnt
+    for key in ("weight", "bias"):
+        t = sd[f"final_norm.{key}"].detach().cpu().numpy().astype(np.float32).ravel()
+        assert t.size == D
+        flat[n:n + D] = t
+        n += D
+    assert n == TOTAL_FLOATS
+
+    (out / "weights.bin").write_bytes(flat.tobytes())
+
+    # ---- Q12 blob: [layer][q,k,v,o,f1,f2] = {u32 count, f32 w_scale, i16 data} ----
+    qmats = ["q_proj", "k_proj", "v_proj", "out_proj", "ffn_in", "ffn_out"]
+    blob = bytearray()
+    for l in range(L):
+        for mat in qmats:
+            key = f"layers.{l}.attention.{mat}.weight" if "proj" in mat else f"layers.{l}.{mat}.weight"
+            w = sd[key].detach().cpu().numpy().astype(np.float32)
+            q, wscale = q12_block(w)  # [out,in] row-major == [N,K] expected by C
+            cnt = w.shape[0] * w.shape[1]
+            blob += struct.pack("<I", cnt)
+            blob += struct.pack("<f", wscale)
+            blob += q.ravel().astype("<i2").tobytes()
+    (out / "weights_q12.bin").write_bytes(bytes(blob))
+
+    # ---- per-seed inputs + torch references vs the real accuracy gate ----
+    manifest = {"seed": SEED, "trials": args.seeds,
+                "indexed_seed": list(range(args.seeds)),
+                "rtol": 0.02, "atol": 0.002,
+                "dims": {"B": B, "S": S, "D": D, "H": H, "HD": HD, "F": FH, "L": L}}
+    for t in range(args.seeds):
+        x, valid = generate_random_case(
+            config=config, device=device, dtype=torch.float32,
+            seed=SEED + t, padding_ratio=0.0, input_scale=1.0,
+        )
+        # Official top-level benchmark returns (x, valid_token_mask); with
+        # padding_ratio=0 every token is valid (mask all-True), which the C
+        # baseline already assumes. Accept the mask instead of requiring None.
+        assert valid is None or bool(valid.all())
+        with torch.inference_mode():
+            ref = model(x, None)
+        # The firmware runs one forward per input frame (B==1 on the board;
+        # batch cases stream B frames). Serialize batch element 0 per seed so
+        # the per-input host/device harnesses validate the exact pipeline.
+        xb = x[0].detach().cpu().numpy().astype(np.float32).ravel().tobytes()
+        rb = ref[0].detach().cpu().numpy().astype(np.float32).ravel().tobytes()
+        (td / f"input_{t}.bin").write_bytes(xb)
+        (td / f"ref_{t}.bin").write_bytes(rb)
+        manifest.setdefault("files", {})[str(t)] = {
+            "input_sha256": hashlib.sha256(xb).hexdigest()[:16],
+            "ref_sha256": hashlib.sha256(rb).hexdigest()[:16],
+        }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    wq_bytes = (out / "weights_q12.bin").stat().st_size
+    print(f"weights.bin      {(out/'weights.bin').stat().st_size:>9} bytes ({n} floats)")
+    print(f"weights_q12.bin  {wq_bytes:>9} bytes")
+    print(f"testdata:         {args.seeds} seeds -> input_<t>.bin / ref_<t>.bin")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
