@@ -335,6 +335,107 @@ KPB(2);
     KPE(2);
 }
 
+void tm_gemm_core4_v2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                     float w_scale, const float* bias, float* C,
+                     int M, int K, int N, int rowStride) {
+    /* j-tile-2 (2 output cols) x 8-row x K-pair: 16 int32 accs.  Each A q15
+     * load is reused across 2 weight cols (halves A-side lhu per MAC) and the
+     * 32 independent mul/add chains with all 20 loads hoisted ahead of the
+     * muls hide load->use latency on the 4-stage in-order RV32 core. */
+    const float g = sa_inv * w_scale;
+    for (int j = 0; j + 1 < N; j += 2) {
+        const int16_t* w0 = Wq + (size_t)j * K;
+        const int16_t* w1 = Wq + (size_t)(j + 1) * K;
+        for (int it = 0; it < M; it += 8) {
+            const int16_t* a0 = Aq + (size_t)(it + 0) * K;
+            const int16_t* a1 = Aq + (size_t)(it + 1) * K;
+            const int16_t* a2 = Aq + (size_t)(it + 2) * K;
+            const int16_t* a3 = Aq + (size_t)(it + 3) * K;
+            const int16_t* a4 = Aq + (size_t)(it + 4) * K;
+            const int16_t* a5 = Aq + (size_t)(it + 5) * K;
+            const int16_t* a6 = Aq + (size_t)(it + 6) * K;
+            const int16_t* a7 = Aq + (size_t)(it + 7) * K;
+            int32_t c00=0,c10=0,c20=0,c30=0,c40=0,c50=0,c60=0,c70=0;
+            int32_t c01=0,c11=0,c21=0,c31=0,c41=0,c51=0,c61=0,c71=0;
+            int k = 0;
+            for (; k + 1 < K; k += 2) {
+                int32_t b0 = w0[k],   b1 = w1[k];
+                int32_t b0n = w0[k+1], b1n = w1[k+1];
+                int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
+                int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+                int32_t v40=a4[k],   v50=a5[k],   v60=a6[k],   v70=a7[k];
+                int32_t v41=a4[k+1], v51=a5[k+1], v61=a6[k+1], v71=a7[k+1];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c40 += v40*b0; c50 += v50*b0; c60 += v60*b0; c70 += v70*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                c41 += v40*b1; c51 += v50*b1; c61 += v60*b1; c71 += v70*b1;
+                c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+                c40 += v41*b0n; c50 += v51*b0n; c60 += v61*b0n; c70 += v71*b0n;
+                c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+                c41 += v41*b1n; c51 += v51*b1n; c61 += v61*b1n; c71 += v71*b1n;
+            }
+            for (; k < K; k++) {
+                int32_t b0 = w0[k], b1 = w1[k];
+                int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+                int32_t v40=a4[k], v50=a5[k], v60=a6[k], v70=a7[k];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c40 += v40*b0; c50 += v50*b0; c60 += v60*b0; c70 += v70*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                c41 += v40*b1; c51 += v50*b1; c61 += v60*b1; c71 += v70*b1;
+            }
+            float bj  = bias ? bias[j] : 0.0f;
+            float bj1 = bias ? bias[j+1] : 0.0f;
+            float* c0r = C + (size_t)it * rowStride + j;
+            c0r[0]              = (float)c00 * g + bj;
+            c0r[1*rowStride]    = (float)c10 * g + bj;
+            c0r[2*rowStride]    = (float)c20 * g + bj;
+            c0r[3*rowStride]    = (float)c30 * g + bj;
+            c0r[4*rowStride]    = (float)c40 * g + bj;
+            c0r[5*rowStride]    = (float)c50 * g + bj;
+            c0r[6*rowStride]    = (float)c60 * g + bj;
+            c0r[7*rowStride]    = (float)c70 * g + bj;
+            c0r[1]              = (float)c01 * g + bj1;
+            c0r[1+1*rowStride]  = (float)c11 * g + bj1;
+            c0r[1+2*rowStride]  = (float)c21 * g + bj1;
+            c0r[1+3*rowStride]  = (float)c31 * g + bj1;
+            c0r[1+4*rowStride]  = (float)c41 * g + bj1;
+            c0r[1+5*rowStride]  = (float)c51 * g + bj1;
+            c0r[1+6*rowStride]  = (float)c61 * g + bj1;
+            c0r[1+7*rowStride]  = (float)c71 * g + bj1;
+        }
+    }
+    if (N & 1) {  /* odd-N tail: single column */
+        int j = N - 1;
+        const int16_t* wr = Wq + (size_t)j * K;
+        for (int it = 0; it < M; it += 8) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            const int16_t* a4 = Aq + (size_t)(it+4) * K;
+            const int16_t* a5 = Aq + (size_t)(it+5) * K;
+            const int16_t* a6 = Aq + (size_t)(it+6) * K;
+            const int16_t* a7 = Aq + (size_t)(it+7) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
+            for (int k = 0; k < K; k++) {
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k]*b; c1 += (int32_t)a1[k]*b; c2 += (int32_t)a2[k]*b; c3 += (int32_t)a3[k]*b;
+                c4 += (int32_t)a4[k]*b; c5 += (int32_t)a5[k]*b; c6 += (int32_t)a6[k]*b; c7 += (int32_t)a7[k]*b;
+            }
+            float bj = bias ? bias[j] : 0.0f;
+            float* c0r = C + (size_t)it * rowStride + j;
+            c0r[0]           = (float)c0 * g + bj;
+            c0r[1*rowStride] = (float)c1 * g + bj;
+            c0r[2*rowStride] = (float)c2 * g + bj;
+            c0r[3*rowStride] = (float)c3 * g + bj;
+            c0r[4*rowStride] = (float)c4 * g + bj;
+            c0r[5*rowStride] = (float)c5 * g + bj;
+            c0r[6*rowStride] = (float)c6 * g + bj;
+            c0r[7*rowStride] = (float)c7 * g + bj;
+        }
+    }
+}
+
 /* accumulate variant: C += Aq*Wq*g (+bias when bias!=NULL). Used by the
  * per-head oproj split so attention can emit Q15 ctx without a requant pass. */
 void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,

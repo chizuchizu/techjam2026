@@ -19,6 +19,8 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ fused LN→Q15 amax-bound (opt 9)** | **4.784** | **8.82×** | host 50/50 (FAST+EXACT), worst 1.14e-3 |
 | + integer LN pass: int-stats, direct Q15 emit (opt 9b) | 4.784 → 4.160 | 10.13× | host 50/50, worst 1.19e-3; device 5/5 |
 | **+ oproj Q15-ctx fusion: two-phase V proj + one K=128 core4 (opt 10)** | **4.160 → 3.969** | **10.62×** | host 50/50 FAST+EXACT, worst 1.12e-3; device 5/5, worst 1.14e-3 |
+| + integer-only attention PV + integer ctx epilogue (opt 11) | 3.969 → **3.688/3.706** | ~10.7× | host 50/50, worst 1.20e-3; device 5/5, worst 1.11e-3 |
+| + core4_v2 GEMM j-tile-2 + K-pair prefetch (opt 12) | 3.706 → **3.664** | ~11.5× | host 50/50, worst 1.20e-3; device 5/5 |
 
 ## Files
 | file | contents |
@@ -28,6 +30,8 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 02_gemm_gelu_quant.md | GEMM register tiling, scale-exact int GELU, quant/attn micro-opts, fused QKV int quantization, integer exp index, core4 GEMM |
 | 03_layernorm_fused_quant.md | fused LN→Q15 amax-bound + int-stats Q15 emit (removes a16 amax+quant passes) |
 | 04_oproj_ctx_fusion.md | two-phase V projection, per-layer global ctx Q15 scale, single K=128 core4 oproj |
+| 11_int32_attention_pv.md | integer-only PV (Q15 row-rescale + int32 acc) + integer ctx epilogue (m/2^sh) |
+| 12_gemm_jtile2.md | core4_v2 GEMM: j-tile-2 + K-pair prefetch, bit-exact vs core4 |
 | research.md | firecrawl/web literature skim (research/techniques, kept at /tmp/jam26_opt) |
 
 ## Key techniques applied (performance-engineer view)
