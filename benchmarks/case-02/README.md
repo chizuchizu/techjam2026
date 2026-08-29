@@ -15,13 +15,18 @@ multiboard experiments.
 
 ## Comparable complete-forward result
 
-These rows execute the same complete four-layer Transformer body on one XIAO
-ESP32-C3 at 160 MHz.
+These rows execute the same complete four-layer Transformer body, on Seeed
+XIAO ESP32-C3 boards at 160 MHz.
 
-| Build | Time/forward | Speedup | Validation |
-|---|---:|---:|---|
-| Initial hybrid baseline | 42.15 s | 1.00x | Pass, 5/5 device seeds |
-| Current optimised firmware | **1.996 s** | **21.1x** | Pass, 25/25 device seeds and 54/54 host checks |
+| Build | Boards | Time/forward | Speedup | Validation |
+|---|---:|---:|---:|---|
+| Initial hybrid baseline | 1 | 42.15 s | 1.00x | Pass, 5/5 device seeds |
+| Optimised firmware (opt23) | 1 | 1.996 s | 21.1x | Pass, 25/25 device seeds and 54/54 host checks |
+| [`esp32-cluster-full`](multiboard/esp32-cluster-full/) | 2 | **1.276 s** | **33.0x** | Pass, 25/25 host checks, 0 failing elements |
+
+The two-board row splits one forward by token row; against the single-board
+figure measured in the same session (1.990 s) that is 1.56x. Host serial
+transfer is excluded from every row.
 
 The case-2 optimised firmware was also run against cases 1, 3, 4, and 5
 (same S/D/H/F/L geometry, batch variants). Measured batch totals and the
@@ -29,14 +34,6 @@ unoptimized-baseline comparison are in
 [`../case2_code_on_cases_1_to_5.md`](../case2_code_on_cases_1_to_5.md).
 
 ## Complete distributed result
-
-The whole four-layer body across two boards, same shape and same gate as the
-single-board rows above, measured on the same two boards in one session.
-
-| Build | Boards | Time/forward | Speedup | Validation |
-|---|---:|---:|---:|---|
-| Optimised single-board firmware (opt23) | 1 C3 | 1.990 s | 1.00x | Pass, 5/5 device seeds |
-| [`esp32-cluster-full`](multiboard/esp32-cluster-full/) | 2 C3s | **1.276 s** | **1.56x** | Pass, 25/25 host checks, 0 failing elements |
 
 The split is by token row (`i % 2`): every case-2 operator is per-token except
 causal attention, so the only inter-board traffic is one K/V exchange per layer

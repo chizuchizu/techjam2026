@@ -32,25 +32,38 @@ experiments that are not official cases are isolated in
 
 ## Official case status
 
-| Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
-|---:|---|---|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-64 **127.36 s** on one board; data-parallel on two boards **63.7 s (2.00x)**, 64/64 forwards PASS |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | **Single- and two-board verified** | Full body at **1.996 s (21.1×, opt23)**, host 54/54 + device 25/25; complete two-board distributed forward **1.276 s (1.56x)** |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-4 **7.96 s** on one board; data-parallel on two boards **4.0 s (2.00x)**, 4/4 forwards PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-16 **31.84 s** on one board; data-parallel on two boards **15.9 s (2.00x)**, 16/16 forwards PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | **Single- and two-board verified** | **1.990 s/forward**, batch-128 **254.72 s** on one board; data-parallel on two boards **127.4 s (2.00x)**, 128/128 forwards PASS |
-| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | Not implemented | Streaming batch execution |
-| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | **Implemented, complete body** | Measured on-board **0.491 s/forward** (board A); 5/5 device PASS |
-| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | Not implemented | Weight and feature sharding |
-| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | **Not measurable on one XIAO** | DRAM link overflows by 73,072 B (needs 394,424 B) |
-| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | **Not measurable on one XIAO** | DRAM link overflows by 23,920 B (needs 345,272 B) |
-| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | **Implemented, complete body** | Measured on-board **2.462 s/forward** (board B); 5/5 device PASS |
-| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | **Implemented, complete body** | Measured on-board **0.493 s/forward** (board A); 5/5 device PASS |
-| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | Not implemented | Online attention and KV sharding |
-| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | Not implemented | Extreme sequence streaming |
+| Case | Shape `(B,S,D,H,F,L)` | Baseline, 1 board | Optimised, 1 board | 2 boards | vs baseline | Status |
+|---:|---|---:|---:|---:|---:|---|
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | 2,697.6 s * | 127.36 s | **63.7 s** | **42.3x** | Single- and two-board verified (data parallel, 2.00x) |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | 42.15 s | 1.990 s | **1.276 s** | **33.0x** | Single- and two-board verified (token-row split, 1.56x) |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | 168.6 s * | 7.96 s | **4.0 s** | **42.1x** | Single- and two-board verified (data parallel, 2.00x) |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **42.4x** | Single- and two-board verified (data parallel, 2.00x) |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **42.3x** | Single- and two-board verified (data parallel, 2.00x) |
+| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | Not implemented - streaming batch execution |
+| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | - | - | - | Not implemented - narrow-kernel overhead and fusion |
+| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | Not implemented - weight and feature sharding |
+| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | Not implemented - sequence/model sharding |
+| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | Not implemented - two head shards plus batch parallelism |
+| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | Not implemented - fine-grained head parallelism |
+| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | - | - | - | Not implemented - short-sequence launch overhead |
+| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | Not implemented - online attention and KV sharding |
+| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | Not implemented - extreme sequence streaming |
 
-Measured cross-case run of the case-2 optimised firmware on cases 1–5:
-[`benchmarks/case2_code_on_cases_1_to_5.md`](benchmarks/case2_code_on_cases_1_to_5.md).
+All times cover the **whole case**: one forward for case 2, the full batch of B
+inputs for the others. Every figure is the device's own measurement of the
+complete four-layer body, with host serial transfer excluded from all three
+columns alike.
+
+`*` Cases 1, 3, 4 and 5 were never run on the pre-optimisation firmware, so
+their baseline is **estimated** as `B x 42.15 s` from case 2's measured
+starting point. Only case 2's baseline is a measurement; the optimised and
+two-board columns are measured everywhere.
+
+Cases 1, 3, 4 and 5 are batches of independent forwards, so two boards run B/2
+inputs each and exchange nothing - exactly 2.00x. Case 2 is a single forward
+and has to be split *inside* the model, by token row, which costs one K/V
+exchange per layer and does not halve the per-board weight streaming - hence
+1.56x.
 
 The approach notes for unimplemented cases are design hypotheses, not measured
 claims. Each case README records what must be validated before its status can
