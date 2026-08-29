@@ -1,0 +1,10 @@
+[device] frame = 4096 floats (16384 bytes) -> TM_S*TM_D from input file
+[device] boot: ''
+[device] TM 1 32 128
+seed 0: fails=    0 max_abs=1.0332e-03 0.493s fwd PASS
+seed 1: fails=    0 max_abs=8.8114e-04 0.493s fwd PASS
+seed 2: fails=    0 max_abs=1.0134e-03 0.493s fwd PASS
+seed 3: fails=    0 max_abs=8.8792e-04 0.493s fwd PASS
+seed 4: fails=    0 max_abs=8.4207e-04 0.493s fwd PASS
+[device] TM 1 492020 492259
+ALL PASS

@@ -1,0 +1,118 @@
+#include <stddef.h>
+/*
+ * kernels.h - low-level numerics kernels (fp32 + fixed-point FAST path).
+ * See tm_config.h for model geometry and mode definitions.
+ */
+#ifndef TM_KERNELS_H
+#define TM_KERNELS_H
+
+#include "tm_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ---------------- fixed-point GEMM (FAST) ----------------
+ * C[M,N] = (A_q15 . W_q12^T) * (1/sa) * w_scale + bias
+ * A is fp32 input, quantized inside to Q15 with a per-call scale sa.
+ * W is pre-quantized Q12; w_scale = max|W|/2047 (stored in the blob).
+ * Accumulation is int32 (saturating-safe: realistic bounds ~9x below INT32_MAX).
+ */
+void tm_gemm_q12(const float* A, const int16_t* Wq, float w_scale,
+                 const float* bias, float* C,
+                 int M, int K, int N, int rowStride);
+
+/* ---------------- fp32 GEMM (EXACT) ----------------
+ * C[M,N] = A[M,K] . W[N,K]^T + bias[N]   (torchnn.Linear layout)
+ */
+void tm_gemm_f32(const float* A, const float* W, const float* bias,
+                 float* C, int M, int K, int N, int rowStride);
+
+/* ---------------- LayerNorm ----------------
+ * two-pass fp32: mean, unbiased-norm var, eps=TM_LN_EPS.
+ */
+float tm_bn_q15_int(const float* in, const float* gamma, const float* beta,
+               int16_t* out_q, int S, int D);
+float tm_bn_q15(const float* in, const float* gamma, const float* beta,
+                int16_t* out_q, int S, int D);
+void tm_layernorm(const float* in, const float* gamma, const float* beta,
+                  float* out, int S, int D);
+
+/* ---------------- GELU (exact="none" reference order) ----------------
+ * gelu(x) = 0.5*x*(1+erf(x/sqrt2)); erf via deg-11 minimax poly in
+ *           t = |x|/sqrt2 * 0.5 - 1.  (valid |x|<4, clamped; max err ~4.6e-5)
+ */
+void tm_gelu_inplace(float* x, int n);
+
+/* ---------------- elementwise add: y[i] += x[i] ---------------- */
+void tm_add_inplace(const float* x, float* y, int n);
+
+/* ---------------- fast exp for y<=0 (e^y, rel err ~1e-4) ----------------
+ * exp2-style split: e^y = 2^(f + n); f in [0,1) via 5-term Taylor poly.
+ */
+float tm_exp_fast(float y);
+#define TM_EXP_FAST_MIN -40.0f   /* below this -> 0 (exp(-40)~4e-18) */
+
+/* fp32 expf for the exact path (libgcc soft-float on the C3). */
+float tm_exp_f32(float y);
+void tm_gelu_q15_lut(int16_t* x, int n, float amax);
+
+
+/* FAST GEMM split API (Q15xQ12): quantize A once, reuse across heads. */
+void tm_gemm_quantA_into(const float* A, int n, int16_t* out, float sa);
+float tm_gemm_amax(const float* A, int n);
+int16_t* tm_gemm_a16(void);
+float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                       float w_scale, const float* bias,
+                       int32_t* acc, int16_t* dst, int K);
+
+void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                       float w_scale, const float* bias, float* C,
+                       int M, int K, int N, int rowStride, int wStride, int first);
+
+void tm_gemm_core4(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                   float w_scale, const float* bias, float* C,
+                   int M, int K, int N, int rowStride);
+void tm_gemm_core4_v2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                     float w_scale, const float* bias, float* C,
+                     int M, int K, int N, int rowStride);
+float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                        float w_scale, const float* bias, int32_t* scratch,
+                        int16_t* Out, int M, int K, int N, int rowStride);
+
+void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                   float w_scale, const float* bias, float* C,
+                   int M, int K, int N, int rowStride);
+
+void tm_gemm_core3(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+               float w_scale, const float* bias, float* C,
+               int M, int K, int N, int rowStride);
+
+void tm_gemm_core2(const int16_t* Aq, float sa_inv,
+                  const int16_t* Wq, float w_scale, const float* bias,
+                  float* C, int M, int K, int N, int rowStride);
+
+void tm_gemm_core(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                  float w_scale, const float* bias, float* C,
+                  int M, int K, int N, int rowStride);
+
+float tm_exp_f32(float y);
+
+void tm_microbench(char* out, size_t outsz);
+void tm_dbg_c5acc(char* out, size_t outsz);
+
+void tm_kbench2(char* out, size_t outsz);
+#ifdef __cplusplus
+}
+#endif
+
+void tm_quant_res_i32(const float* in, int32_t* out_q, int n, float sx);
+void tm_gemm_core5_resid(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias, int32_t* xq,
+                         float sx, int M, int K, int N, int rowStride);
+float tm_bn_q15_res(const int32_t* in_q, float sx, const float* gamma,
+                     const float* beta, int16_t* out_q, int S, int D);
+void tm_ln_final_res(const int32_t* in_q, float sx, const float* gamma,
+                     const float* beta, float* out, int S, int D);
+
+#endif /* TM_KERNELS_H */
