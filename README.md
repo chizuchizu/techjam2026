@@ -30,22 +30,6 @@ Shared competition material is stored once in
 not official cases are isolated in
 [`benchmarks/experiments/`](benchmarks/experiments/).
 
-## Latest verified results
-
-Case 2 is `B=1, S=128, D=128, H=4, F=128, L=4`, causal. The first two rows
-measure the same complete Transformer body. The multiboard rows have narrower
-scopes and are not complete distributed forwards.
-
-| Stage | Measured scope | Boards | Median wall time | Speedup | Accuracy |
-|---|---|---:|---:|---:|---|
-| Baseline | Complete case-2 Transformer body | 1 C3 | 42.15 s | 1.00x | Pass, 5/5 device seeds |
-| Optimised single board | Complete case-2 Transformer body | 1 C3 | **5.27 s** | **8.0x** | Pass, 5/5 device seeds and 50/50 host checks |
-| Multiboard | Layer-0 LayerNorm + Q/K/V + causal attention | 2 C3s | **4.850 s** | **2.00x** vs 9.693 s on one C3 | Pass, 5/5 seeds |
-| Multiboard | Four independent causal attention heads | 4 C3s | **0.766 s** | **3.92x** vs 3.000 s average on one C3 | Pass, zero failed elements |
-
-See the [`case-02 README`](benchmarks/case-02/README.md) for scope boundaries,
-implementation links, and raw measurements.
-
 ## Official case status
 
 | Case | Shape `(B,S,D,H,F,L)` | Status | Case notes |
