@@ -23,7 +23,9 @@ The model is the reference `BaselineTransformer` from
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
 |a-b| <= 0.02*|b|): host **54/54 seed-runs pass** (FAST worst 1.03e-3,
 EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
-1.996 s/forward. Scores (tools/score.py): MFU(raw-int) 19.2%, ExScore 5.65x.
+1.996 s/forward.
+
+Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
 ## Repository layout
 
@@ -36,8 +38,6 @@ EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
     tools/host_test.c     host validation vs torch references (25 seeds)
     tools/compare.py      verify a raw device output dump vs torch refs
     tools/score.py        MFU + bandwidth-aware execution-score calculator
-    tools/runs.json       measured device forward times (one case per run)
-    scores.json           score.py output (per-case MFU, ExScore, weighted sum)
     weights.bin           flat fp32 weights (1.59 MB, embedded)
     weights_q12.bin       Q12 weights + scales (0.79 MB, embedded)
     testdata/             per-seed input_<s>.bin / ref_<s>.bin
@@ -112,33 +112,9 @@ Definitions per test case i:
 - Submission score = `sum_i w_i * MFU_i` (equal weights by default; pass
   `--weights` to override).
 
-### Baseline scoring snapshot (case 2, single board)
+### Scoring snapshot
 
-The checked-in `tools/runs.json` and `scores.json` intentionally retain the
-42.1 s pre-optimisation measurements so the scoring baseline remains
-reproducible. They are not the latest latency capture.
-
-| Case | t (s) | MFU (mix) | MFU (raw-int) | ExScore |
-|---|---|---|---|---|
-| seed 0 | 42.130 | 26.7% | 0.91% | 26.7% |
-| seed 1 | 42.152 | 26.7% | 0.91% | 26.7% |
-| seed 2 | 42.134 | 26.7% | 0.91% | 26.7% |
-| seed 3 | 42.151 | 26.7% | 0.91% | 26.7% |
-| seed 4 | 42.138 | 26.7% | 0.91% | 26.7% |
-| T-sweep 1 | 42.103 | 26.8% | 0.91% | 26.8% |
-| T-sweep 2 | 42.073 | 26.8% | 0.91% | 26.8% |
-
-**Weighted-sum score: MFU = 26.7%**, **ExScore = 26.7%** (bandwidth does not
-bind: the weighted roofline equals the mixed-compute peak; a blocked GEMM with
-4x operand reuse would move the GEMM clearly below its ridge).
-Robustness: at P_SOFTFP = 1.5..2.7 MFLOP/s, ExScore = 35.4..20.0%; at
-BW = 320 MB/s, ExScore = 27.5%.
-
-Context: against the strict raw scalar ceiling (everything as int16 MAC),
-MFU = 0.91% — that framing is unfair because 18% of nominal FLOPs are fp32 and
-cannot run on the int peak; those fp32 parts actually account for **97% of the
-peak-equivalent time**, so the practical lever is fixed-point
-attention/LayerNorm/GELU, not the GEMMs.
+Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
 ### 2-node / inter-node bandwidth
 
@@ -162,14 +138,7 @@ Measured links (source of truth: [`../../multiboard/esp32-linkbench/`](../../mul
 | USB-CDC host↔board | board→host | ~286 KB/s | identical on both boards |
 | Driver pacing (device_test) | host→board | ~50 KB/s | 1 KB/20 ms, 7× safety margin |
 
-Validation vs scoring (this repo, measured `node_bw=61470 B/s`, `node_traf=131072 B/fwd`):
-`t_transfer = 2.13 s` = **5.1%** of `t_measured = 42.13 s` → link scale 1.000 →
-**ExScore unchanged (26.7%)**. The node link has **~20× headroom**: it would only
-become binding if per-forward node traffic grew to ≈2.4 MB (≈20× current 128 KB)
-or the forward time shrank below ≈2.1 s. The USB-CDC host link (≈0.23 s host
-share) also does not bind. Conclusion: for the current 2-board footprint the
-**compute (42 s forward) dominates; node-to-node bandwidth is not the scoring
-bottleneck**, but the model above reports the instant it becomes one.
+Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
 Run: `python3 tools/score.py --node-bw <B/s> --node-traf <bytes/forward>`
 (e.g. `--node-bw 200000 --node-traf 131072` = 64 KB in + 64 KB out per forward;
