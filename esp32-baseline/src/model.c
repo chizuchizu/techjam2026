@@ -496,10 +496,17 @@ void tm_forward(const float* xin, float* yout,
         PE(P_NORM2);
 
         /* ---- FFN ---- */
+        float sa2 = 0.0f;
         PB(P_F1);
         if (fast) {
-            tm_gemm_core5(tm_gemm_a16(), 1.0f / sa_ffn, q12->q[l][4], q12->ws[l][4],
-                          W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
+            /* Q15-output FFN1: integer epilogue (bias folded, int amax -> sa2).
+             * Returns sa2 = QMAX/(amax*g) (inverse), like tm_gemm_amax. */
+            int16_t* a16_in = tm_gemm_a16();
+            sa2 = tm_gemm_core5_q15(a16_in, 1.0f / sa_ffn,
+                                          q12->q[l][4], q12->ws[l][4],
+                                          W + woff(l, TM_W_BLK_F1B),
+                                          (int32_t *)g_buf2, a16_in,
+                                          TM_S, TM_D, TM_F, TM_F);
         } else {
             tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_F1W),
                         W + woff(l, TM_W_BLK_F1B), g_buf2, TM_S, TM_D, TM_F, TM_F);
@@ -509,15 +516,10 @@ void tm_forward(const float* xin, float* yout,
         PB(P_F2);
         PB(P_GELU);
         if (fast) {
-            /* FUSED GELU + f2 quantize: quantize f1 out to Q15, apply integer
-             * GELU in place (I-BERT), feed core GEMM directly.  Saves the
-             * standalone fp32 gelu pass AND f2's re-quantization+amax scan. */
-            float sa2 = tm_gemm_amax(g_buf2, TM_S * TM_F);
-            int16_t* a2 = tm_gemm_a16();
-            tm_gemm_quantA_into(g_buf2, TM_S * TM_F, a2, sa2);
-            tm_gelu_q15_lut(a2, TM_S * TM_F, TM_QACT_MAX / sa2);
+            /* a16 now holds Q15 (f1 output); integer GELU in place. */
+            tm_gelu_q15_lut(tm_gemm_a16(), TM_S * TM_F, TM_QACT_MAX / sa2);
             PE(P_GELU);
-            tm_gemm_core5(a2, 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
+            tm_gemm_core5(tm_gemm_a16(), 1.0f / sa2, q12->q[l][5], q12->ws[l][5],
                          W + woff(l, TM_W_BLK_F2B), g_buf1, TM_S, TM_F, TM_D, TM_D);
         } else {
             tm_gelu_inplace(g_buf2, TM_S * TM_F);

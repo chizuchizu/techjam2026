@@ -1,3 +1,4 @@
+#include <stddef.h>
 /*
  * kernels.h - low-level numerics kernels (fp32 + fixed-point FAST path).
  * See tm_config.h for model geometry and mode definitions.
@@ -93,8 +94,13 @@ void tm_gemm_core(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 
 float tm_exp_f32(float y);
 
+void tm_microbench(char* out, size_t outsz);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* TM_KERNELS_H */
+float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                     float w_scale, const float* bias, int32_t* scratch,
+                     int16_t* Out, int M, int K, int N, int rowStride);

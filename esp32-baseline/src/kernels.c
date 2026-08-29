@@ -4,6 +4,9 @@
 #define TM_PROFILE 1
 #include "kernels.h"
 #pragma GCC optimize ("O3")
+#ifndef TM_IRAM
+#define TM_IRAM
+#endif
 
 #include <math.h>
 #include <string.h>
@@ -262,17 +265,64 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
             const int16_t* a6 = Aq + (size_t)(it+6) * K;
             const int16_t* a7 = Aq + (size_t)(it+7) * K;
             int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
-            for (int k = 0; k < K; k++) {
-                int32_t b = wr[k];
-                c0 += (int32_t)a0[k] * b;
-                c1 += (int32_t)a1[k] * b;
-                c2 += (int32_t)a2[k] * b;
-                c3 += (int32_t)a3[k] * b;
-                c4 += (int32_t)a4[k] * b;
-                c5 += (int32_t)a5[k] * b;
-                c6 += (int32_t)a6[k] * b;
-                c7 += (int32_t)a7[k] * b;
+#if defined(__riscv)
+            if ((K & 1) == 0) {
+                const int16_t* w = wr;
+                const int16_t* whend = wr + K;
+                const int16_t* rb = a0;
+                __asm__ __volatile__(
+                    ".p2align 4\n"
+                    "1:\n"
+                    "lh  a5, 0(%[wpt])\n"
+                    "lh  t0, 0(%[rb])\n"
+                    "lh  t1, 256(%[rb])\n"
+                    "lh  t2, 512(%[rb])\n"
+                    "lh  t3, 768(%[rb])\n"
+                    "lh  t4, 1024(%[rb])\n"
+                    "lh  t5, 1280(%[rb])\n"
+                    "lh  t6, 1536(%[rb])\n"
+                    "lh  a0, 1792(%[rb])\n"
+                    "addi %[wpt], %[wpt], 2\n"
+                    "addi %[rb], %[rb], 2\n"
+                    "mul  t0, t0, a5\n"
+                    "mul  t1, t1, a5\n"
+                    "mul  t2, t2, a5\n"
+                    "mul  t3, t3, a5\n"
+                    "mul  t4, t4, a5\n"
+                    "mul  t5, t5, a5\n"
+                    "mul  t6, t6, a5\n"
+                    "mul  a0, a0, a5\n"
+                    "add  %[c0], %[c0], t0\n"
+                    "add  %[c1], %[c1], t1\n"
+                    "add  %[c2], %[c2], t2\n"
+                    "add  %[c3], %[c3], t3\n"
+                    "add  %[c4], %[c4], t4\n"
+                    "add  %[c5], %[c5], t5\n"
+                    "add  %[c6], %[c6], t6\n"
+                    "add  %[c7], %[c7], a0\n"
+                    "bne  %[wpt], %[wend], 1b\n"
+                    : [c0] "+r"(c0), [c1] "+r"(c1), [c2] "+r"(c2),
+                      [c3] "+r"(c3), [c4] "+r"(c4), [c5] "+r"(c5),
+                      [c6] "+r"(c6), [c7] "+r"(c7),
+                      [wpt] "+r"(w), [rb] "+r"(rb)
+                    : [wend] "r"(whend)
+                    : "a0", "a5", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+            } else
+#endif
+            {
+                for (int k = 0; k < K; k++) {
+                    int32_t b = wr[k];
+                    c0 += (int32_t)a0[k] * b;
+                    c1 += (int32_t)a1[k] * b;
+                    c2 += (int32_t)a2[k] * b;
+                    c3 += (int32_t)a3[k] * b;
+                    c4 += (int32_t)a4[k] * b;
+                    c5 += (int32_t)a5[k] * b;
+                    c6 += (int32_t)a6[k] * b;
+                    c7 += (int32_t)a7[k] * b;
+                }
             }
+
             int32_t mn = c0 < c1 ? c0 : c1, mx = c0 > c1 ? c0 : c1;
             mn = mn < c2 ? mn : c2; mx = mx > c2 ? mx : c2;
             mn = mn < c3 ? mn : c3; mx = mx > c3 ? mx : c3;
@@ -306,7 +356,7 @@ float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
      * stay below 0.5 q15 unit; a Q15 coefficient loses precision whenever acc
      * is large (acc can approach 2^31), so Q30 + int64 is required. */
     KPB(1);
-const float gsa = g * sa;
+    const float gsa = g * sa;
     const int64_t GX = (int64_t)(gsa * 1073741824.0f);          /* *2^30 */
     int64_t BX[TM_HD];
     for (int d = 0; d < HD; d++)
@@ -519,6 +569,8 @@ void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                 c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
                 c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
             }
+
+
             float* c0r = C + (size_t)it * rowStride + j;
             c0r[0]              = (float)c00 * g + bj;
             c0r[1]              = (float)c01 * g + bj1;
@@ -553,6 +605,112 @@ void tm_gemm_core5(const int16_t* Aq, float sa_inv, const int16_t* Wq,
         }
     }
     g_c5_cyc += (uint64_t)(tm_cyc_now() - _c5s); g_c5_n++;
+}
+
+/* core5 variant writing Q15 directly (fixed-point epilogue):
+ * out_q15 = round((acc + bq_j) * QMAX / amax), bq_j = round(bias[j]/g),
+ * amax = max|acc + bq_j| (int, bias folded).  Stored in place into Out[]
+ * as int32 whose low half holds the q15 (caller uses (int16_t*)Out).
+ * Returns sa2 = QMAX / (amax*g) -- the inverse of the float output
+ * magnitude, matching tm_gemm_amax's convention (caller uses QMAX/sa2 as
+ * the true max for gelu and 1/sa2 as the q15 input scale for FFN2). */
+float tm_gemm_core5_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                        float w_scale, const float* bias, int32_t* scratch,
+                        int16_t* Out, int M, int K, int N, int rowStride) {
+    const float g = sa_inv * w_scale;
+    const float ginv = (g != 0.0f) ? (1.0f / g) : 0.0f;
+    int32_t amax = 1;
+    for (int j = 0; j + 1 < N; j += 2) {
+        const int16_t* w0 = Wq + (size_t)j * K;
+        const int16_t* w1 = Wq + (size_t)(j + 1) * K;
+        int32_t bq0 = 0, bq1 = 0;
+        if (bias) {
+            bq0 = (int32_t)(bias[j]   * ginv + (bias[j]   >= 0.0f ? 0.5f : -0.5f));
+            bq1 = (int32_t)(bias[j+1] * ginv + (bias[j+1] >= 0.0f ? 0.5f : -0.5f));
+        }
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it + 0) * K;
+            const int16_t* a1 = Aq + (size_t)(it + 1) * K;
+            const int16_t* a2 = Aq + (size_t)(it + 2) * K;
+            const int16_t* a3 = Aq + (size_t)(it + 3) * K;
+            int32_t c00=0,c10=0,c20=0,c30=0, c01=0,c11=0,c21=0,c31=0;
+            int k = 0;
+            for (; k + 1 < K; k += 2) {
+                int32_t b0 = w0[k], b1 = w1[k], b0n = w0[k+1], b1n = w1[k+1];
+                int32_t v00=a0[k],   v10=a1[k],   v20=a2[k],   v30=a3[k];
+                int32_t v01=a0[k+1], v11=a1[k+1], v21=a2[k+1], v31=a3[k+1];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+                c00 += v01*b0n; c10 += v11*b0n; c20 += v21*b0n; c30 += v31*b0n;
+                c01 += v01*b1n; c11 += v11*b1n; c21 += v21*b1n; c31 += v31*b1n;
+            }
+            for (; k < K; k++) {
+                int32_t b0 = w0[k], b1 = w1[k];
+                int32_t v00=a0[k], v10=a1[k], v20=a2[k], v30=a3[k];
+                c00 += v00*b0; c10 += v10*b0; c20 += v20*b0; c30 += v30*b0;
+                c01 += v00*b1; c11 += v10*b1; c21 += v20*b1; c31 += v30*b1;
+            }
+            int32_t v00 = c00 + bq0, v10 = c10 + bq0, v20 = c20 + bq0, v30 = c30 + bq0;
+            int32_t v01 = c01 + bq1, v11 = c11 + bq1, v21 = c21 + bq1, v31 = c31 + bq1;
+            int32_t* orow = scratch + (size_t)it * rowStride + j;
+            orow[0] = v00; orow[1] = v01;
+            orow[rowStride]   = v10; orow[rowStride+1]   = v11;
+            orow[2*rowStride] = v20; orow[2*rowStride+1] = v21;
+            orow[3*rowStride] = v30; orow[3*rowStride+1] = v31;
+            int32_t a;
+            a = v00<0?-v00:v00; if (a>amax) amax=a;
+            a = v10<0?-v10:v10; if (a>amax) amax=a;
+            a = v20<0?-v20:v20; if (a>amax) amax=a;
+            a = v30<0?-v30:v30; if (a>amax) amax=a;
+            a = v01<0?-v01:v01; if (a>amax) amax=a;
+            a = v11<0?-v11:v11; if (a>amax) amax=a;
+            a = v21<0?-v21:v21; if (a>amax) amax=a;
+            a = v31<0?-v31:v31; if (a>amax) amax=a;
+        }
+    }
+    if (N & 1) {
+        int j = N - 1;
+        const int16_t* wr = Wq + (size_t)j * K;
+        int32_t bq0 = 0;
+        if (bias) bq0 = (int32_t)(bias[j] * ginv + (bias[j] >= 0.0f ? 0.5f : -0.5f));
+        for (int it = 0; it < M; it += 4) {
+            const int16_t* a0 = Aq + (size_t)(it+0) * K;
+            const int16_t* a1 = Aq + (size_t)(it+1) * K;
+            const int16_t* a2 = Aq + (size_t)(it+2) * K;
+            const int16_t* a3 = Aq + (size_t)(it+3) * K;
+            int32_t c0=0,c1=0,c2=0,c3=0;
+            for (int k = 0; k < K; k++) {
+                int32_t b = wr[k];
+                c0 += (int32_t)a0[k]*b; c1 += (int32_t)a1[k]*b;
+                c2 += (int32_t)a2[k]*b; c3 += (int32_t)a3[k]*b;
+            }
+            int32_t v0 = c0 + bq0, v1 = c1 + bq0, v2 = c2 + bq0, v3 = c3 + bq0;
+            int32_t* orow = scratch + (size_t)it * rowStride + j;
+            orow[0] = v0; orow[rowStride] = v1;
+            orow[2*rowStride] = v2; orow[3*rowStride] = v3;
+            int32_t aa;
+            aa = v0<0?-v0:v0; if (aa>amax) amax=aa;
+            aa = v1<0?-v1:v1; if (aa>amax) amax=aa;
+            aa = v2<0?-v2:v2; if (aa>amax) amax=aa;
+            aa = v3<0?-v3:v3; if (aa>amax) amax=aa;
+        }
+    }
+    /* pass 2: fixed-point convert -> q15 = round(x * QMAX / amax).
+     * sa: drop low bits so divisor fits 20 bits (max precision with int64). */
+    int sa = 0; int64_t amr = amax;
+    while (amr > ((int64_t)1 << 20)) { amr >>= 1; sa++; }
+    const int64_t SC = (int64_t)(0.5 + (double)TM_QACT_MAX * (double)((int64_t)1 << 20) / (double)amr);
+    const int32_t R2 = 1 << 19;
+    const int32_t QQ = (int32_t)TM_QACT_MAX;
+    int n = M * N;
+    for (int i = 0; i < n; i++) {
+        int64_t x = scratch[i] >> sa;       /* arithmetic shift */
+        int64_t q = (x * SC + R2) >> 20;
+        if (q > QQ) q = QQ;
+        if (q < -QQ) q = -QQ;
+        Out[i] = (int16_t)q;
+    }
+    return TM_QACT_MAX / ((float)amax * g);
 }
 
 void tm_gemm_core4_acc(const int16_t* Aq, float sa_inv, const int16_t* Wq,
@@ -947,3 +1105,58 @@ float tm_exp_fast(float y) {
 }
 
 float tm_exp_f32(float y) { return expf(y); }
+
+/* ---- microbench: MUL latency / issue + flash-vs-IRAM GEMM loop pressure ---- */
+void tm_microbench(char* out, size_t outsz) {
+#if defined(__riscv)
+    volatile int32_t x0=2,x1=3,x2=5,x3=7,x4=11,x5=13,x6=17,x7=19;
+    uint32_t w0=2,w1=3,w2=5,w3=7,w4=11,w5=13,w6=17,w7=19;
+    volatile uint64_t r;
+    uint64_t t;
+    /* dependent chain: MUL latency + add serialize */
+    x0=2; for (int i=0;i<10000;i++) x0 = x0*w0; r = x0;
+    t = tm_cyc_now();
+    x0=2; for (int i=0;i<100000;i++) x0 = x0*w0; r = x0;
+    uint64_t dep = tm_cyc_now()-t;
+    /* 8 independent chains: issue-limited throughput */
+    t = tm_cyc_now();
+    for (int i=0;i<100000;i++){
+        x0=x0*w0; x1=x1*w1; x2=x2*w2; x3=x3*w3;
+        x4=x4*w4; x5=x5*w5; x6=x6*w6; x7=x7*w7;
+    }
+    r = (uint64_t)(x0+x1+x2+x3+x4+x5+x6+x7);
+    uint64_t par = tm_cyc_now()-t;
+    /* raw 4x2 GEMM k-loop from this location (flash or IRAM depending on env) */
+    int32_t c0=0,c1=0,c2=0,c3=0,c4=0,c5=0,c6=0,c7=0;
+    static int16_t ga[8][128], gw[2][128];
+    t = tm_cyc_now();
+    for (int k=0;k<128;k++){
+        int16_t a0=ga[0][k],a1=ga[1][k],a2=ga[2][k],a3=ga[3][k];
+        int16_t b0=gw[0][k], b1=gw[1][k];
+        c0+=a0*b0; c1+=a1*b0; c2+=a2*b0; c3+=a3*b0;
+        c4+=a0*b1; c5+=a1*b1; c6+=a2*b1; c7+=a3*b1;
+    }
+    uint64_t g1 = tm_cyc_now()-t;
+    t = tm_cyc_now();
+    for (int kk=0;kk<128;kk+=2){
+        int16_t a0=ga[0][kk],a1=ga[1][kk],a2=ga[2][kk],a3=ga[3][kk];
+        int16_t b0=gw[0][kk], b1=gw[1][kk];
+        c0+=a0*b0; c1+=a1*b0; c2+=a2*b0; c3+=a3*b0;
+        c4+=a0*b1; c5+=a1*b1; c6+=a2*b1; c7+=a3*b1;
+        a0=ga[0][kk+1];a1=ga[1][kk+1];a2=ga[2][kk+1];a3=ga[3][kk+1];
+        b0=gw[0][kk+1]; b1=gw[1][kk+1];
+        c0+=a0*b0; c1+=a1*b0; c2+=a2*b0; c3+=a3*b0;
+        c4+=a0*b1; c5+=a1*b1; c6+=a2*b1; c7+=a3*b1;
+    }
+    uint64_t g2 = tm_cyc_now()-t;
+    r = (uint64_t)(c0+c1+c2+c3+c4+c5+c6+c7);
+    (void)r;
+    snprintf(out, outsz,
+       "MB dep=%.2fcz par8=%.2fcz 4x2k1=%.2f cz/MAC 4x2k2=%.2f cz/MAC\n",
+       (double)dep/100000.0, (double)par/(100000u*8u),
+       (double)g1/128.0/8.0, (double)g2/128.0/8.0);
+#else
+    snprintf(out, outsz, "MB host\n");
+#endif
+}
+

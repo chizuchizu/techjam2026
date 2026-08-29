@@ -127,6 +127,11 @@ void loop() {
             tm_profile_dump();
             break;
         }
+        case 'K': {
+            char line[160]; tm_microbench(line, sizeof line);
+            Serial.print(line);
+            break;
+        }
         case 'X': {
             Serial.println("TM reset");
             break;
