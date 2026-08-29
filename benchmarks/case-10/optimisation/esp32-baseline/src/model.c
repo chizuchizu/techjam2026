@@ -107,10 +107,23 @@ static union { float f[TM_S * TM_D]; int32_t s[TM_S * TM_D]; } g_x;
 static float g_res_sa = 1.0f;      /* value per Q15 LSB of the residual */
 static float g_buf1[TM_S * TM_D];
 static float g_buf2[TM_S * TM_D];
-/* per-head Q/K/V stored as int16 (Q15) + a per-head-slice float scale,
- * dequantized on read inside attn_head. Halves the 3 head buffers
- * (48 -> 24 KB). fp32 staging during projection reuses g_buf2. */
-static int16_t g_qh[TM_S * TM_HD];
+/* per-head Q/K/V are int16 (Q15) + per-head-slice float scales, dequantized
+ * on read inside attn_head. With D == H*HD (H>=2) the per-head Q/K buffers
+ * are placed with ZERO static cost by overlaying dead scratch (case-10
+ * H=2 SRAM shrink):
+ *   FAST: qh/kh live in the UPPER half of g_buf2, i.e. byte [2*S*D .. 2*S*D
+ *         + 2*S*HD + 2*S*HD).  ctx (g_ctxq = g_buf2 int16 [S,D]) uses only
+ *         the lower 2*S*D half; the upper half is untouched from end-of-qkv
+ *         till oproj, so Q/K projections + attention can stage there.
+ *   EXACT: qh/kh live in kernels.c's a16 scratch (int16 [S,D], 32 KB) which
+ *         the EXACT path never touches; V keeps a dedicated g_vh.
+ * H==1 (HD==D) has no free half to overlay and is not supported by this
+ * memory plan. */
+static int16_t g_vh[TM_S * TM_HD];   /* EXACT-mode V only (FAST uses v_all) */
+#define g_qh_fast ((int16_t *)((unsigned char *)g_buf2 + 2 * TM_S * TM_D))
+#define g_kh_fast (g_qh_fast + TM_S * TM_HD)
+#define g_qh_exact ((int16_t *)tm_gemm_a16())
+#define g_kh_exact (g_qh_exact + TM_S * TM_HD)
 /* FAST-only aliases, zero extra SRAM:
  *   g_ctxq  == g_buf2 int16 view  (attn Q15 ctx, interleaved [i][h*HD+d]);
  *             g_buf2 is free from end-of-qkv till oproj/reuse, and oproj writes g_buf1.
@@ -137,8 +150,6 @@ static inline int32_t* tm_acc_scratch(void) {
 static float g_ctx_sa;               /* per-layer global ctx Q15 scale (FAST) */
 static float g_vs_h[TM_H];           /* per-head V scales (FAST phase A) */
 
-static int16_t g_kh[TM_S * TM_HD];
-static int16_t g_vh[TM_S * TM_HD];
 static float g_qs, g_ks, g_vs;   /* dequant scales (amax/32767) per head */
 
 float* tm_input(void)  { return g_x.f; }
@@ -522,17 +533,17 @@ void tm_forward(const float* xin, float* yout,
                 g_qs = tm_gemm_head_q15(tm_gemm_a16(), sainv,
                                     q12->q[l][0] + (size_t)h * TM_HD * TM_D,
                                     q12->ws[l][0], W + woff(l, TM_W_BLK_QB) + h * TM_HD,
-                                    g_acc, g_qh, TM_D);
+                                    g_acc, g_qh_fast, TM_D);
                 PE(P_QUANT);
                 PB(P_QUANT);
                 g_ks = tm_gemm_head_q15(tm_gemm_a16(), sainv,
                                     q12->q[l][1] + (size_t)h * TM_HD * TM_D,
                                     q12->ws[l][1], W + woff(l, TM_W_BLK_KB) + h * TM_HD,
-                                    g_acc, g_kh, TM_D);
+                                    g_acc, g_kh_fast, TM_D);
                 PE(P_QUANT);
                 PE(P_QKV);
                 PB(P_ATTN);
-                attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks,
+                attn_head(g_buf2, g_qh_fast, g_qs, g_kh_fast, g_ks,
                           v_all + (size_t)h * TM_S * TM_HD, g_vs_h[h], h);
                 PE(P_ATTN);
             }
@@ -545,13 +556,13 @@ void tm_forward(const float* xin, float* yout,
                             W + woff(l, TM_W_BLK_QB) + h * TM_HD,
                             g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
                 PB(P_QUANT);
-                g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh);
+                g_qs = quant_head(g_buf2 + h * TM_HD, TM_D, g_qh_exact);
                 PE(P_QUANT);
                 tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_KW) + (size_t)h * TM_HD * TM_D,
                             W + woff(l, TM_W_BLK_KB) + h * TM_HD,
                             g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
                 PB(P_QUANT);
-                g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh);
+                g_ks = quant_head(g_buf2 + h * TM_HD, TM_D, g_kh_exact);
                 PE(P_QUANT);
                 tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_VW) + (size_t)h * TM_HD * TM_D,
                             W + woff(l, TM_W_BLK_VB) + h * TM_HD,
@@ -561,7 +572,7 @@ void tm_forward(const float* xin, float* yout,
                 PE(P_QUANT);
                 PE(P_QKV);
                 PB(P_ATTN);
-                attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks, g_vh, g_vs, h);
+                attn_head(g_buf2, g_qh_exact, g_qs, g_kh_exact, g_ks, g_vh, g_vs, h);
                 PE(P_ATTN);
             }
         }
