@@ -22,18 +22,18 @@ complete Transformer body.
 
 | Case | Batch | Sequence | Model dim | Heads | FFN dim | Layers | Status |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Not implemented |
+| [01](case-01/) | 64 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device + 25/25 host PASS |
 | [02](case-02/) | 1 | 128 | 128 | 4 | 128 | 4 | Single-board verified, **1.996 s/fwd (21.1×)**; partial multiboard verified |
-| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Not implemented |
-| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Not implemented |
-| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Not implemented |
+| [03](case-03/) | 4 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device + 25/25 host PASS |
+| [04](case-04/) | 16 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device + 25/25 host PASS |
+| [05](case-05/) | 128 | 128 | 128 | 4 | 128 | 4 | Implemented, complete body: **1.990 s/forward** on-board; 5/5 device + 25/25 host PASS |
 | [06](case-06/) | 10,000 | 128 | 128 | 4 | 128 | 4 | Not implemented |
-| [07](case-07/) | 64 | 128 | 32 | 4 | 32 | 4 | Not implemented |
+| [07](case-07/) | 64 | 128 | 32 | 4 | 32 | 4 | Implemented, complete body: **0.491 s/forward** on-board; 5/5 device + 25/25 host PASS |
 | [08](case-08/) | 64 | 128 | 1,024 | 4 | 1,024 | 4 | Not implemented |
-| [09](case-09/) | 64 | 128 | 128 | 1 | 128 | 4 | Not implemented |
-| [10](case-10/) | 64 | 128 | 128 | 2 | 128 | 4 | Not implemented |
-| [11](case-11/) | 64 | 128 | 128 | 16 | 128 | 4 | Not implemented |
-| [12](case-12/) | 64 | 32 | 128 | 4 | 128 | 4 | Not implemented |
+| [09](case-09/) | 64 | 128 | 128 | 1 | 128 | 4 | Host-verified only (25/25 × FAST/EXACT); **not measurable on one XIAO** — DRAM link overflows by 73,072 B (needs 394,424 B) |
+| [10](case-10/) | 64 | 128 | 128 | 2 | 128 | 4 | Host-verified only (25/25 × FAST/EXACT); **not measurable on one XIAO** — DRAM link overflows by 23,920 B (needs 345,272 B) |
+| [11](case-11/) | 64 | 128 | 128 | 16 | 128 | 4 | Implemented, complete body: **2.462 s/forward** on-board; 5/5 device + 25/25 host PASS |
+| [12](case-12/) | 64 | 32 | 128 | 4 | 128 | 4 | Implemented, complete body: **0.493 s/forward** on-board; 5/5 device + 25/25 host PASS |
 | [13](case-13/) | 64 | 1,024 | 128 | 4 | 128 | 4 | Not implemented |
 | [14](case-14/) | 32 | 100,000 | 1,024 | 16 | 1,024 | 2 | Not implemented |
 
