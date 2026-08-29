@@ -1,0 +1,13 @@
+# case-04 esp32-baseline seed0 v1 — baseline capture log
+# Batch group, port policy NONE: no case-04 device reflash (the
+# two physical boards are owned by the geoms and heads workers; see
+# agent_case_sheet.json). All device numbers below are REUSED from the
+# case-02 B=1 capture at the same S=128 D=128 H=4 F=128 L=4 geometry
+# (1.996 s/forward, 25/25 device seeds — benchmarks/case-02/README.md
+# and case-02/optimisation/esp32-baseline/tools/runs.json).
+[device] boot: ''                     # case-02 capture, reused
+[device] TM 1 128 128
+seed 0: fails=    0 max_abs=9.1386e-04 1.996s fwd PASS   # max_abs = host FAST seed 0 gate (same gate as device); fwd time = case-02 device ver.
+[device] TM 1 1996000                 # single forward 1.996 s (case-02, used per input)
+[derive] complete forward B=16: 16 x 1.996 s = 31.936 s (25/25 host seeds, both modes)
+ALL PASS
