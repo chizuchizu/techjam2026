@@ -25,9 +25,10 @@ benchmarks/case-02/
     └── results/
 ```
 
-Shared competition material is stored once in
-[`benchmarks/reference/`](benchmarks/reference/). Smaller experiments that are
-not official cases are isolated in
+The competition problem statement remains at
+[`COMPETITION_RULES.MD`](COMPETITION_RULES.MD), while the shared executable
+reference is in [`benchmarks/reference/`](benchmarks/reference/). Smaller
+experiments that are not official cases are isolated in
 [`benchmarks/experiments/`](benchmarks/experiments/).
 
 ## Official case status
