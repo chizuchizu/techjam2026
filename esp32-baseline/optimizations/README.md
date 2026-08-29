@@ -23,6 +23,8 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | + core4_v2 GEMM j-tile-2 + K-pair prefetch (opt 12) | 3.706 → **3.664** | ~11.5× | host 50/50, worst 1.20e-3; device 5/5 |
 | + integer LN pass, int amax+quant (opts 13–14) | 3.664 → **3.205** | ~13.1× | host 50/50, worst 1.27e-3; device 5/5, worst 1.088e-3 |
 | **+ core5 GEMM: j-tile-2×IBLK=4 (opt 15)** | **3.205 → 2.982** | **14.1×** | host 50/50, worst 1.277e-3; device 5/5, worst 1.088e-3 |
+| **+ head_q15 8-MAC hand-asm (opt 16)** | **2.982 → 2.838** | **14.8×** | host 50/50, device 5/5, worst 1.088e-3 (bit-exact) |
+| **+ FFN1 fixed-point Q15 epilogue (opt 17)** | **2.838 → 2.701** | **15.6×** | host 50/50 (9.05e-4..1.12e-3), device 5/5 (9.2e-4..1.1e-3) |
 
 ## Files
 | file | contents |
