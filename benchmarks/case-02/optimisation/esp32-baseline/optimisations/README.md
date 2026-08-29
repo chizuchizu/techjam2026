@@ -26,6 +26,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ head_q15 8-MAC hand-asm (opt 16)** | **2.982 → 2.838** | **14.8×** | host 50/50, device 5/5, worst 1.088e-3 (bit-exact) |
 | **+ FFN1 fixed-point Q15 epilogue (opt 17)** | **2.838 → 2.701** | **15.6×** | host 50/50 (9.05e-4..1.12e-3), device 5/5 (9.2e-4..1.1e-3) |
 | **+ KB1 int32 bias-fold + asm requant, core5 bias-fold, int32-limb QK (opt 18)** | **2.701 → 2.447** | **17.2×** | host 50/50 (FAST ≤9.8e-4, EXACT ≤6.8e-5); device 5/5 (≤1.29e-3) |
+| **+ QK j-unroll-4, PV 8-accumulator (opt 19)** | **2.447 → 2.386** | **17.6×** | host 50/50 (≤9.99e-4); device 5/5 (≤1.29e-3), bit-exact attention |
 
 ## Files
 | file | contents |
@@ -38,6 +39,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 11_int32_attention_pv.md | integer-only PV (Q15 row-rescale + int32 acc) + integer ctx epilogue (m/2^sh) |
 | 12_gemm_jtile2.md | core4_v2 GEMM: j-tile-2 + K-pair prefetch, bit-exact vs core4 |
 | 18_kb1_core5_qkv2.md | KB1 int32 bias-fold + asm requant; core5 bias-fold epilogue; int32-limb QK |
+| 19_attn_qk_unroll_pv8.md | attention QK j-unroll-4 (3.25 instr/MAC) + PV 8 accumulators; core5-flash & IRAM negative results |
 | research.md | firecrawl/web literature skim (research/techniques, kept at /tmp/jam26_opt) |
 
 ## Key techniques applied (performance-engineer view)
@@ -68,11 +70,11 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 ## Final device validation (TM_PROFILE off)
 ```
 [device] TM 1 128 128
-seed 0: fails=    0 max_abs=1.1065e-03 2.4439s fwd PASS
-seed 1: fails=    0 max_abs=1.0107e-03 2.4440s fwd PASS
-seed 2: fails=    0 max_abs=1.0414e-03 2.4436s fwd PASS
-seed 3: fails=    0 max_abs=1.2925e-03 2.4438s fwd PASS
-seed 4: fails=    0 max_abs=1.0145e-03 2.4434s fwd PASS
+seed 0: fails=    0 max_abs=1.1065e-03 2.3839s fwd PASS
+seed 1: fails=    0 max_abs=1.0107e-03 2.3840s fwd PASS
+seed 2: fails=    0 max_abs=1.0414e-03 2.3836s fwd PASS
+seed 3: fails=    0 max_abs=1.2925e-03 2.3838s fwd PASS
+seed 4: fails=    0 max_abs=1.0145e-03 2.3834s fwd PASS
 ALL PASS
 RAM 270,860 B (82.7% of 320 KB) · Flash 2,629,884 B (83.6% of 3 MB)
 ```

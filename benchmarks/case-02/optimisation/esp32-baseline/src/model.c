@@ -242,29 +242,79 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
         const int16_t* qi16 = qh + (size_t)i * TM_HD;
         int32_t maxL = INT32_MIN, maxH = INT32_MIN;
         PB(P_ATTN_QK);
-        for (int j = 0; j <= i; j++) {           /* pass 1: QK scores + max */
-            const int16_t* kj16 = kh + (size_t)j * TM_HD;
-            /* Hi/Lo int32 limbs == int64 dot bit-for-bit (carry via unsigned
-             * wrap).  The 2-product int32 pair matches the old int32 pair
-             * exactly, so this is identical integer math to the int64
-             * accumulate it replaces. */
-            int32_t L = 0, H = 0;
-            int d = 0;
-            for (; d + 1 < TM_HD; d += 2) {
-                int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d]
-                          + (int32_t)(int16_t)qi16[d+1] * (int32_t)kj16[d+1];
-                uint32_t up = (uint32_t)L + (uint32_t)p;
-                H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
-                L = (int32_t)up;
+        /* j-unrolled QK: 4 causal rows share the qi16 elements, each with its
+         * own int32 hi/lo limb accumulator (identical integer math to the int64
+         * dot, per-dot accumulation order unchanged -> bit-exact vs opt18). */
+        {
+            int j = 0;
+            const int nj = i + 1;
+            for (; j + 3 < nj; j += 4) {
+                const int16_t* k0 = kh + (size_t)(j + 0) * TM_HD;
+                const int16_t* k1 = kh + (size_t)(j + 1) * TM_HD;
+                const int16_t* k2 = kh + (size_t)(j + 2) * TM_HD;
+                const int16_t* k3 = kh + (size_t)(j + 3) * TM_HD;
+                int32_t L0 = 0, H0 = 0, L1 = 0, H1 = 0, L2 = 0, H2 = 0, L3 = 0, H3 = 0;
+                int d = 0;
+                for (; d + 1 < TM_HD; d += 2) {
+                    const int32_t q0 = (int32_t)(int16_t)qi16[d];
+                    const int32_t q1 = (int32_t)(int16_t)qi16[d + 1];
+                    { int32_t p = q0 * (int32_t)(int16_t)k0[d] + q1 * (int32_t)(int16_t)k0[d+1];
+                      uint32_t up = (uint32_t)L0 + (uint32_t)p;
+                      H0 += (int32_t)(up < (uint32_t)L0) + (int32_t)(p < 0 ? -1 : 0); L0 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k1[d] + q1 * (int32_t)(int16_t)k1[d+1];
+                      uint32_t up = (uint32_t)L1 + (uint32_t)p;
+                      H1 += (int32_t)(up < (uint32_t)L1) + (int32_t)(p < 0 ? -1 : 0); L1 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k2[d] + q1 * (int32_t)(int16_t)k2[d+1];
+                      uint32_t up = (uint32_t)L2 + (uint32_t)p;
+                      H2 += (int32_t)(up < (uint32_t)L2) + (int32_t)(p < 0 ? -1 : 0); L2 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k3[d] + q1 * (int32_t)(int16_t)k3[d+1];
+                      uint32_t up = (uint32_t)L3 + (uint32_t)p;
+                      H3 += (int32_t)(up < (uint32_t)L3) + (int32_t)(p < 0 ? -1 : 0); L3 = (int32_t)up; }
+                }
+                for (; d < TM_HD; d++) {
+                    const int32_t q0 = (int32_t)(int16_t)qi16[d];
+                    { int32_t p = q0 * (int32_t)(int16_t)k0[d];
+                      uint32_t up = (uint32_t)L0 + (uint32_t)p;
+                      H0 += (int32_t)(up < (uint32_t)L0) + (int32_t)(p < 0 ? -1 : 0); L0 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k1[d];
+                      uint32_t up = (uint32_t)L1 + (uint32_t)p;
+                      H1 += (int32_t)(up < (uint32_t)L1) + (int32_t)(p < 0 ? -1 : 0); L1 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k2[d];
+                      uint32_t up = (uint32_t)L2 + (uint32_t)p;
+                      H2 += (int32_t)(up < (uint32_t)L2) + (int32_t)(p < 0 ? -1 : 0); L2 = (int32_t)up; }
+                    { int32_t p = q0 * (int32_t)(int16_t)k3[d];
+                      uint32_t up = (uint32_t)L3 + (uint32_t)p;
+                      H3 += (int32_t)(up < (uint32_t)L3) + (int32_t)(p < 0 ? -1 : 0); L3 = (int32_t)up; }
+                }
+                g_attn_score[j+0] = ((int64_t)(int32_t)H0 << 32) | (uint32_t)L0;
+                if (H0 > maxH || (H0 == maxH && (uint32_t)L0 > (uint32_t)maxL)) { maxH = H0; maxL = L0; }
+                g_attn_score[j+1] = ((int64_t)(int32_t)H1 << 32) | (uint32_t)L1;
+                if (H1 > maxH || (H1 == maxH && (uint32_t)L1 > (uint32_t)maxL)) { maxH = H1; maxL = L1; }
+                g_attn_score[j+2] = ((int64_t)(int32_t)H2 << 32) | (uint32_t)L2;
+                if (H2 > maxH || (H2 == maxH && (uint32_t)L2 > (uint32_t)maxL)) { maxH = H2; maxL = L2; }
+                g_attn_score[j+3] = ((int64_t)(int32_t)H3 << 32) | (uint32_t)L3;
+                if (H3 > maxH || (H3 == maxH && (uint32_t)L3 > (uint32_t)maxL)) { maxH = H3; maxL = L3; }
             }
-            for (; d < TM_HD; d++) {
-                int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d];
-                uint32_t up = (uint32_t)L + (uint32_t)p;
-                H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
-                L = (int32_t)up;
+            for (; j < nj; j++) {
+                const int16_t* kj16 = kh + (size_t)j * TM_HD;
+                int32_t L = 0, H = 0;
+                int d = 0;
+                for (; d + 1 < TM_HD; d += 2) {
+                    int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d]
+                              + (int32_t)(int16_t)qi16[d+1] * (int32_t)kj16[d+1];
+                    uint32_t up = (uint32_t)L + (uint32_t)p;
+                    H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
+                    L = (int32_t)up;
+                }
+                for (; d < TM_HD; d++) {
+                    int32_t p = (int32_t)(int16_t)qi16[d] * (int32_t)kj16[d];
+                    uint32_t up = (uint32_t)L + (uint32_t)p;
+                    H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
+                    L = (int32_t)up;
+                }
+                g_attn_score[j] = ((int64_t)(int32_t)H << 32) | (uint32_t)L;
+                if (H > maxH || (H == maxH && (uint32_t)L > (uint32_t)maxL)) { maxH = H; maxL = L; }
             }
-            g_attn_score[j] = ((int64_t)(int32_t)H << 32) | (uint32_t)L;
-            if (H > maxH || (H == maxH && (uint32_t)L > (uint32_t)maxL)) { maxH = H; maxL = L; }
         }
         PE(P_ATTN_QK);
         const int64_t maxs = ((int64_t)(int32_t)maxH << 32) | (uint32_t)maxL;
@@ -317,21 +367,29 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
             while (t >= 1073741824.0f && sh > 1) { t *= 0.5f; sh--; }
             int32_t m = (int32_t)t;
             if (sh < 1) { m = (int32_t)(t * 0.5f); sh = 1; }
-            for (int db = 0; db < TM_HD; db += 4) {
-                int32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+            for (int db = 0; db < TM_HD; db += 8) {
+                int32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5 = 0, c6 = 0, c7 = 0;
                 for (int j = 0; j <= i; j++) {
                     const int16_t* vj = vh + (size_t)j * TM_HD;
                     int32_t p = g_p15[j];
-                    c0 += p * (int32_t)vj[db];
+                    c0 += p * (int32_t)vj[db+0];
                     c1 += p * (int32_t)vj[db+1];
                     c2 += p * (int32_t)vj[db+2];
                     c3 += p * (int32_t)vj[db+3];
+                    c4 += p * (int32_t)vj[db+4];
+                    c5 += p * (int32_t)vj[db+5];
+                    c6 += p * (int32_t)vj[db+6];
+                    c7 += p * (int32_t)vj[db+7];
                 }
                 int16_t* oq = g_ctxq + (size_t)i * TM_D + head * TM_HD + db;
                 oq[0] = (int16_t)(((int64_t)c0 * m + (1LL << (sh - 1))) >> sh);
                 oq[1] = (int16_t)(((int64_t)c1 * m + (1LL << (sh - 1))) >> sh);
                 oq[2] = (int16_t)(((int64_t)c2 * m + (1LL << (sh - 1))) >> sh);
                 oq[3] = (int16_t)(((int64_t)c3 * m + (1LL << (sh - 1))) >> sh);
+                oq[4] = (int16_t)(((int64_t)c4 * m + (1LL << (sh - 1))) >> sh);
+                oq[5] = (int16_t)(((int64_t)c5 * m + (1LL << (sh - 1))) >> sh);
+                oq[6] = (int16_t)(((int64_t)c6 * m + (1LL << (sh - 1))) >> sh);
+                oq[7] = (int16_t)(((int64_t)c7 * m + (1LL << (sh - 1))) >> sh);
             }
         } else {
             float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;

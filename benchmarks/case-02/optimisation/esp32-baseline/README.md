@@ -17,8 +17,8 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: ~2.45 s/forward**
-  (opt18; down from the 42.15 s starting implementation).
+  and biases are pre-quantized offline. **Measured on device: ~2.39 s/forward**
+  (opt19; down from the 42.15 s starting implementation).
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
 |a-b| <= 0.02*|b|): **0 failures over 25 random seeds** (seeds 1234..1258),
