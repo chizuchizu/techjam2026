@@ -277,40 +277,40 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
             int j = 0;
             const int nj = i + 1;
             for (; j + 3 < nj; j += 4) {
-                const int16_t* k0 = kh + (size_t)(j + 0) * TM_HD;
-                const int16_t* k1 = kh + (size_t)(j + 1) * TM_HD;
-                const int16_t* k2 = kh + (size_t)(j + 2) * TM_HD;
-                const int16_t* k3 = kh + (size_t)(j + 3) * TM_HD;
+                /* W10 26: single base pointer k with compile-time row offsets
+                 * (0/HD*2..3*HD*2 bytes), so the emitted d-loop needs 1 addi
+                 * per step instead of 4; same integer math, same dot order. */
+                const int16_t* k = kh + (size_t)j * TM_HD;
                 int32_t L0 = 0, H0 = 0, L1 = 0, H1 = 0, L2 = 0, H2 = 0, L3 = 0, H3 = 0;
                 int d = 0;
                 for (; d + 1 < TM_HD; d += 2) {
                     const int32_t q0 = (int32_t)(int16_t)qi16[d];
                     const int32_t q1 = (int32_t)(int16_t)qi16[d + 1];
-                    { int32_t p = q0 * (int32_t)(int16_t)k0[d] + q1 * (int32_t)(int16_t)k0[d+1];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[d] + q1 * (int32_t)(int16_t)k[d+1];
                       uint32_t up = (uint32_t)L0 + (uint32_t)p;
                       H0 += (int32_t)(up < (uint32_t)L0) + (int32_t)(p < 0 ? -1 : 0); L0 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k1[d] + q1 * (int32_t)(int16_t)k1[d+1];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[TM_HD + d] + q1 * (int32_t)(int16_t)k[TM_HD + d + 1];
                       uint32_t up = (uint32_t)L1 + (uint32_t)p;
                       H1 += (int32_t)(up < (uint32_t)L1) + (int32_t)(p < 0 ? -1 : 0); L1 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k2[d] + q1 * (int32_t)(int16_t)k2[d+1];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[2*TM_HD + d] + q1 * (int32_t)(int16_t)k[2*TM_HD + d + 1];
                       uint32_t up = (uint32_t)L2 + (uint32_t)p;
                       H2 += (int32_t)(up < (uint32_t)L2) + (int32_t)(p < 0 ? -1 : 0); L2 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k3[d] + q1 * (int32_t)(int16_t)k3[d+1];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[3*TM_HD + d] + q1 * (int32_t)(int16_t)k[3*TM_HD + d + 1];
                       uint32_t up = (uint32_t)L3 + (uint32_t)p;
                       H3 += (int32_t)(up < (uint32_t)L3) + (int32_t)(p < 0 ? -1 : 0); L3 = (int32_t)up; }
                 }
                 for (; d < TM_HD; d++) {
                     const int32_t q0 = (int32_t)(int16_t)qi16[d];
-                    { int32_t p = q0 * (int32_t)(int16_t)k0[d];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[d];
                       uint32_t up = (uint32_t)L0 + (uint32_t)p;
                       H0 += (int32_t)(up < (uint32_t)L0) + (int32_t)(p < 0 ? -1 : 0); L0 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k1[d];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[TM_HD + d];
                       uint32_t up = (uint32_t)L1 + (uint32_t)p;
                       H1 += (int32_t)(up < (uint32_t)L1) + (int32_t)(p < 0 ? -1 : 0); L1 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k2[d];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[2*TM_HD + d];
                       uint32_t up = (uint32_t)L2 + (uint32_t)p;
                       H2 += (int32_t)(up < (uint32_t)L2) + (int32_t)(p < 0 ? -1 : 0); L2 = (int32_t)up; }
-                    { int32_t p = q0 * (int32_t)(int16_t)k3[d];
+                    { int32_t p = q0 * (int32_t)(int16_t)k[3*TM_HD + d];
                       uint32_t up = (uint32_t)L3 + (uint32_t)p;
                       H3 += (int32_t)(up < (uint32_t)L3) + (int32_t)(p < 0 ? -1 : 0); L3 = (int32_t)up; }
                 }
@@ -395,19 +395,25 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
             while (t >= 1073741824.0f && sh > 1) { t *= 0.5f; sh--; }
             int32_t m = (int32_t)t;
             if (sh < 1) { m = (int32_t)(t * 0.5f); sh = 1; }
+            /* (case-10 W10 25) PV inner rewritten as a single advancing pointer
+             * with 8 const-offset lh loads -> emitted rv32 loop is 28 instr /
+             * 8 MAC (~3.5 cyc/MAC) vs ~7.5 before; same integer ops in the same
+             * per-c dot order, so bit-exact with the previous build.  The
+             * per-(db-tile) epilogue (rot m/2^sh on c) is unchanged. */
             for (int db = 0; db < TM_HD; db += 8) {
                 int32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5 = 0, c6 = 0, c7 = 0;
+                const int16_t* vj = vh + db;
                 for (int j = 0; j <= i; j++) {
-                    const int16_t* vj = vh + (size_t)j * TM_HD;
                     int32_t p = g_p15[j];
-                    c0 += p * (int32_t)vj[db+0];
-                    c1 += p * (int32_t)vj[db+1];
-                    c2 += p * (int32_t)vj[db+2];
-                    c3 += p * (int32_t)vj[db+3];
-                    c4 += p * (int32_t)vj[db+4];
-                    c5 += p * (int32_t)vj[db+5];
-                    c6 += p * (int32_t)vj[db+6];
-                    c7 += p * (int32_t)vj[db+7];
+                    c0 += p * (int32_t)vj[0];
+                    c1 += p * (int32_t)vj[1];
+                    c2 += p * (int32_t)vj[2];
+                    c3 += p * (int32_t)vj[3];
+                    c4 += p * (int32_t)vj[4];
+                    c5 += p * (int32_t)vj[5];
+                    c6 += p * (int32_t)vj[6];
+                    c7 += p * (int32_t)vj[7];
+                    vj += TM_HD;
                 }
                 int16_t* oq = g_ctxq + (size_t)i * TM_D + head * TM_HD + db;
                 oq[0] = (int16_t)(((int64_t)c0 * m + (1LL << (sh - 1))) >> sh);
