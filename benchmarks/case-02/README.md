@@ -23,7 +23,28 @@ ESP32-C3 at 160 MHz.
 | Initial hybrid baseline | 42.15 s | 1.00x | Pass, 5/5 device seeds |
 | Current optimised firmware | **1.996 s** | **21.1x** | Pass, 25/25 device seeds and 54/54 host checks |
 
-## Multiboard results
+The case-2 optimised firmware was also run against cases 1, 3, 4, and 5
+(same S/D/H/F/L geometry, batch variants). Measured batch totals and the
+unoptimized-baseline comparison are in
+[`../case2_code_on_cases_1_to_5.md`](../case2_code_on_cases_1_to_5.md).
+
+## Complete distributed result
+
+The whole four-layer body across two boards, same shape and same gate as the
+single-board rows above, measured on the same two boards in one session.
+
+| Build | Boards | Time/forward | Speedup | Validation |
+|---|---:|---:|---:|---|
+| Optimised single-board firmware (opt23) | 1 C3 | 1.990 s | 1.00x | Pass, 5/5 device seeds |
+| [`esp32-cluster-full`](multiboard/esp32-cluster-full/) | 2 C3s | **1.276 s** | **1.56x** | Pass, 25/25 host checks, 0 failing elements |
+
+The split is by token row (`i % 2`): every case-2 operator is per-token except
+causal attention, so the only inter-board traffic is one K/V exchange per layer
+— 131,200 bytes each way per forward, streamed per head over UDP and overlapped
+with arithmetic down to 5–88 ms of measured waiting. Details in
+[`multiboard/results/CASE2_FULL_E2E_RESULTS.md`](multiboard/results/CASE2_FULL_E2E_RESULTS.md).
+
+## Earlier partial-scope multiboard results
 
 These results use the case-2 shape but cover only the stated partial scope.
 
@@ -41,7 +62,5 @@ is a complete distributed case-2 time.
 
 ## Next case-specific step
 
-Complete one distributed layer by adding output projection, both residuals,
-the second LayerNorm, and FFN to the verified multiboard path. Only then extend
-the same partition across all four layers and report an end-to-end distributed
-case-2 result.
+Extend the row partition from two boards to four (`i % N`), and cut the
+replicated per-board weight streaming that stands between 1.56x and 2x.
