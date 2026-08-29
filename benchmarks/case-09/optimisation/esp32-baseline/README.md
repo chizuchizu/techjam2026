@@ -17,14 +17,14 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Not measurable on a single XIAO
-  ESP32-C3:** the firmware fails to link — `dram0_0_seg` overflows by
-  73,072 B (needs 394,424 B, have 321,296 B), so no on-device timing
-  is claimed.
+  and biases are pre-quantized offline.
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|). On-device: **not run** — no firmware image links
-(see above).
+|a-b| <= 0.02*|b|). On-device (XIAO ESP32-C3, board A, FAST mode,
+TM_PROFILE build): **5/5 seeds PASS, max_abs = 1.14e-3, 2.165 s/forward**
+(the SRAM fit that makes this possible is documented in
+`optimisations/24_sram_fit_sdk_patches.md`; a TM_PROFILE-off build is
+faster still).
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 

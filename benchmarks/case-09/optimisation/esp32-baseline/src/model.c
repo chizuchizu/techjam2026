@@ -70,12 +70,13 @@ static uint64_t prof_total_us = 0;
 #ifdef TM_PROFILE
 #include <stdio.h>
 #endif
+extern float g_buf2[TM_S * TM_D];
 void tm_profile_dump(void) {
 #ifdef TM_PROFILE
-    static char line[160];
+    char *line = (char *)g_buf2 + (TM_S * TM_D * 4 - 192);   /* reuse g_buf2 tail, no extra bss */
     for (int i = 0; i < TM_PROF_SLOTS; i++) {
         if (p_cnt[i] && p_acc[i]) {
-            (void)snprintf(line, sizeof line,
+            (void)snprintf(line, 192,
                 "%s  total_us=%llu n=%u avg_us=%.1f  (%.1f%%)\n",
                 p_name[i], (unsigned long long)p_acc[i], p_cnt[i],
                 (double)p_acc[i] / (double)p_cnt[i],
@@ -83,7 +84,7 @@ void tm_profile_dump(void) {
             tm_prof_emit(line);
         }
     }
-    (void)snprintf(line, sizeof line, "TOTAL ~ %llu us total_wall\n", prof_total_us);
+    (void)snprintf(line, 192, "TOTAL ~ %llu us total_wall\n", prof_total_us);
     tm_prof_emit(line);
 #endif
     extern void tm_kbench_dump(void);
@@ -106,11 +107,11 @@ int tm_get_mode(void) { return g_mode; }
 static union { float f[TM_S * TM_D]; int32_t s[TM_S * TM_D]; } g_x;
 static float g_res_sa = 1.0f;      /* value per Q15 LSB of the residual */
 static float g_buf1[TM_S * TM_D];
-static float g_buf2[TM_S * TM_D];
+float g_buf2[TM_S * TM_D];          /* non-static: kernels.c fuses LN scratch into its head */
 /* per-head Q/K/V stored as int16 (Q15) + a per-head-slice float scale,
  * dequantized on read inside attn_head. Halves the 3 head buffers
  * (48 -> 24 KB). fp32 staging during projection reuses g_buf2. */
-static int16_t g_qh[TM_S * TM_HD];
+int16_t g_qh[TM_S * TM_HD];         /* non-static: kernels.c aliases its a16 A-operand to this */
 /* FAST-only aliases, zero extra SRAM:
  *   g_ctxq  == g_buf2 int16 view  (attn Q15 ctx, interleaved [i][h*HD+d]);
  *             g_buf2 is free from end-of-qkv till oproj/reuse, and oproj writes g_buf1.
@@ -138,7 +139,6 @@ static float g_ctx_sa;               /* per-layer global ctx Q15 scale (FAST) */
 static float g_vs_h[TM_H];           /* per-head V scales (FAST phase A) */
 
 static int16_t g_kh[TM_S * TM_HD];
-static int16_t g_vh[TM_S * TM_HD];
 static float g_qs, g_ks, g_vs;   /* dequant scales (amax/32767) per head */
 
 float* tm_input(void)  { return g_x.f; }
@@ -245,15 +245,17 @@ static const int16_t g_exp_lut[513] = {
 };
 
 static float g_qkv_sa;                  /* its Q15 scale */
-static int64_t g_attn_score[TM_S];   /* per-row dot products (1 KB) */
+static int32_t g_attn_score_h[TM_S]; /* per-row dot products, hi limb (int32) */
+static int16_t g_attn_score_l[TM_S]; /* low 16 bits of the L limb (L>>16); pack loses <2^-16 rel. */
 
 static void attn_head(float* ctx, const int16_t* qh, float sq,
                       const int16_t* kh, float sk,
-                      const int16_t* vh, float sv, int head) {
+                      const int16_t* vh, float sv, int head,
+                      const float* vf32) {  /* vf32!=NULL -> fp32 V-direct PV (EXACT H==1) */
     const float gsc = sq * sk * TM_ATTN_SCALE;   /* > 0 */
     const uint64_t g_exp_c = (uint64_t)(gsc * 6553.5f * 4294967296.0f + 0.5f); /* *2^32 */
     const int fast = (g_mode == TM_MODE_FAST);
-    static int32_t g_p15[TM_S];
+    static int16_t g_p15[TM_S];   /* Q15 probs: 0..32767 both modes */
     const float g_sctx = fast ? g_ctx_sa : 0.0f;
     for (int i = 0; i < TM_S; i++) {
         const int16_t* qi16 = qh + (size_t)i * TM_HD;
@@ -303,13 +305,13 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                       uint32_t up = (uint32_t)L3 + (uint32_t)p;
                       H3 += (int32_t)(up < (uint32_t)L3) + (int32_t)(p < 0 ? -1 : 0); L3 = (int32_t)up; }
                 }
-                g_attn_score[j+0] = ((int64_t)(int32_t)H0 << 32) | (uint32_t)L0;
+                g_attn_score_h[j+0] = H0; g_attn_score_l[j+0] = (int16_t)((uint32_t)L0 >> 16);
                 if (H0 > maxH || (H0 == maxH && (uint32_t)L0 > (uint32_t)maxL)) { maxH = H0; maxL = L0; }
-                g_attn_score[j+1] = ((int64_t)(int32_t)H1 << 32) | (uint32_t)L1;
+                g_attn_score_h[j+1] = H1; g_attn_score_l[j+1] = (int16_t)((uint32_t)L1 >> 16);
                 if (H1 > maxH || (H1 == maxH && (uint32_t)L1 > (uint32_t)maxL)) { maxH = H1; maxL = L1; }
-                g_attn_score[j+2] = ((int64_t)(int32_t)H2 << 32) | (uint32_t)L2;
+                g_attn_score_h[j+2] = H2; g_attn_score_l[j+2] = (int16_t)((uint32_t)L2 >> 16);
                 if (H2 > maxH || (H2 == maxH && (uint32_t)L2 > (uint32_t)maxL)) { maxH = H2; maxL = L2; }
-                g_attn_score[j+3] = ((int64_t)(int32_t)H3 << 32) | (uint32_t)L3;
+                g_attn_score_h[j+3] = H3; g_attn_score_l[j+3] = (int16_t)((uint32_t)L3 >> 16);
                 if (H3 > maxH || (H3 == maxH && (uint32_t)L3 > (uint32_t)maxL)) { maxH = H3; maxL = L3; }
             }
             for (; j < nj; j++) {
@@ -329,7 +331,7 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                     H += (int32_t)(up < (uint32_t)L) + (int32_t)(p < 0 ? -1 : 0);
                     L = (int32_t)up;
                 }
-                g_attn_score[j] = ((int64_t)(int32_t)H << 32) | (uint32_t)L;
+                g_attn_score_h[j] = H; g_attn_score_l[j] = (int16_t)((uint32_t)L >> 16);
                 if (H > maxH || (H == maxH && (uint32_t)L > (uint32_t)maxL)) { maxH = H; maxL = L; }
             }
         }
@@ -339,7 +341,8 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
         int32_t lsum15 = 0;
         PB(P_ATTN_EXP);
         for (int j = 0; j <= i; j++) {
-            int64_t diff = g_attn_score[j] - maxs;   /* <= 0 */
+            int64_t diff = ((int64_t)g_attn_score_h[j] << 32) | (uint32_t)((uint16_t)g_attn_score_l[j] << 16);
+            diff -= maxs;   /* <= 0 */
             int32_t p15;
             if (fast) {
                 /* all-integer LUT index.  y16 = trunc(diff*gsc*6553.5) with a
@@ -358,7 +361,7 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                 float p = expf((float)diff * gsc);
                 p15 = (int32_t)(p * 32768.0f + 0.5f);
             }
-            g_p15[j] = p15;
+            g_p15[j] = (int16_t)(p15 > 32767 ? 32767 : p15);  /* EXACT diagonal p=1 -> 32768; clamp (rel err 3e-5) */
             lsum15 += p15;
         }
         PE(P_ATTN_EXP);
@@ -409,21 +412,41 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                 oq[7] = (int16_t)(((int64_t)c7 * m + (1LL << (sh - 1))) >> sh);
             }
         } else {
-            float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;
-            for (int db = 0; db < TM_HD; db += 4) {
-                int64_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
-                for (int j = 0; j <= i; j++) {
-                    const int16_t* vj = vh + (size_t)j * TM_HD;
-                    int32_t p = g_p15[j];
-                    a0 += (int64_t)p * (int32_t)vj[db];
-                    a1 += (int64_t)p * (int32_t)vj[db+1];
-                    a2 += (int64_t)p * (int32_t)vj[db+2];
-                    a3 += (int64_t)p * (int32_t)vj[db+3];
+            float inv = (lsum15 > 0) ? ((vf32 ? 1.0f : sv) / (float)lsum15) : 0.0f;
+            if (vf32) {
+                /* EXACT H==1: V kept fp32 in g_buf2 (no g_vh): -32 KB SRAM.
+                 * identical softmax int weights, fp32 V rows instead of int16+sv. */
+                for (int db = 0; db < TM_HD; db += 4) {
+                    float a0 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+                    for (int j = 0; j <= i; j++) {
+                        const float* vj = vf32 + (size_t)j * TM_HD;
+                        int32_t p = g_p15[j];
+                        a0 += (float)p * vj[db];
+                    a1 += (float)p * vj[db+1];
+                    a2 += (float)p * vj[db+2];
+                    a3 += (float)p * vj[db+3];
+                    }
+                    o[db]   = a0 * inv;
+                    o[db+1] = a1 * inv;
+                    o[db+2] = a2 * inv;
+                    o[db+3] = a3 * inv;
                 }
-                o[db]   = (float)a0 * inv;
-                o[db+1] = (float)a1 * inv;
-                o[db+2] = (float)a2 * inv;
-                o[db+3] = (float)a3 * inv;
+            } else {
+                for (int db = 0; db < TM_HD; db += 4) {
+                    int64_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+                    for (int j = 0; j <= i; j++) {
+                        const int16_t* vj = vh + (size_t)j * TM_HD;
+                        int32_t p = g_p15[j];
+                        a0 += (int64_t)p * (int32_t)vj[db];
+                        a1 += (int64_t)p * (int32_t)vj[db+1];
+                        a2 += (int64_t)p * (int32_t)vj[db+2];
+                        a3 += (int64_t)p * (int32_t)vj[db+3];
+                    }
+                    o[db]   = (float)a0 * inv;
+                    o[db+1] = (float)a1 * inv;
+                    o[db+2] = (float)a2 * inv;
+                    o[db+3] = (float)a3 * inv;
+                }
             }
         }
         PE(P_ATTN_PV);
@@ -522,7 +545,7 @@ void tm_forward(const float* xin, float* yout,
                 g_qs = tm_gemm_head_q15(tm_gemm_a16(), sainv,
                                     q12->q[l][0] + (size_t)h * TM_HD * TM_D,
                                     q12->ws[l][0], W + woff(l, TM_W_BLK_QB) + h * TM_HD,
-                                    g_acc, g_qh, TM_D);
+                                    g_acc, (int16_t *)g_buf1 + TM_S * TM_HD, TM_D);
                 PE(P_QUANT);
                 PB(P_QUANT);
                 g_ks = tm_gemm_head_q15(tm_gemm_a16(), sainv,
@@ -532,8 +555,8 @@ void tm_forward(const float* xin, float* yout,
                 PE(P_QUANT);
                 PE(P_QKV);
                 PB(P_ATTN);
-                attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks,
-                          v_all + (size_t)h * TM_S * TM_HD, g_vs_h[h], h);
+                attn_head(g_buf2, (int16_t *)g_buf1 + TM_S * TM_HD, g_qs, g_kh, g_ks,
+                          v_all + (size_t)h * TM_S * TM_HD, g_vs_h[h], h, NULL);
                 PE(P_ATTN);
             }
         } else {
@@ -556,12 +579,11 @@ void tm_forward(const float* xin, float* yout,
                 tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_VW) + (size_t)h * TM_HD * TM_D,
                             W + woff(l, TM_W_BLK_VB) + h * TM_HD,
                             g_buf2 + h * TM_HD, TM_S, TM_D, TM_HD, TM_D);
-                PB(P_QUANT);
-                g_vs = quant_head(g_buf2 + h * TM_HD, TM_D, g_vh);
-                PE(P_QUANT);
+                /* H==1: V kept fp32 in g_buf2 (no quantized g_vh) -> -32 KB SRAM. */
                 PE(P_QKV);
                 PB(P_ATTN);
-                attn_head(g_buf2, g_qh, g_qs, g_kh, g_ks, g_vh, g_vs, h);
+                attn_head(g_buf1, g_qh, g_qs, g_kh, g_ks,
+                          NULL, 0.0f, h, g_buf2 + (size_t)h * TM_HD);
                 PE(P_ATTN);
             }
         }
@@ -575,14 +597,14 @@ void tm_forward(const float* xin, float* yout,
                           W + woff(l, TM_W_BLK_OB), g_x.s, g_res_sa,
                           TM_S, TM_D, TM_D, TM_D);
         } else {
-            tm_gemm_f32(g_buf2, W + woff(l, TM_W_BLK_OW),
-                        W + woff(l, TM_W_BLK_OB), g_buf1, TM_S, TM_D, TM_D, TM_D);
+            tm_gemm_f32(g_buf1, W + woff(l, TM_W_BLK_OW),
+                        W + woff(l, TM_W_BLK_OB), g_buf2, TM_S, TM_D, TM_D, TM_D);
         }
         PE(P_OPROJ);
 
         /* ---- residual ---- */
         PB(P_RES1);
-        if (!fast) tm_add_inplace(g_buf1, g_x.f, TM_S * TM_D);   /* R1: fused into core */
+        if (!fast) tm_add_inplace(g_buf2, g_x.f, TM_S * TM_D);   /* R1: oproj out in g_buf2 now */
         PE(P_RES1);
 
         /* ---- norm2 (FAST: fused LN -> a16 Q15 via tight amax bound; the
