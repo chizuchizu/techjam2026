@@ -1,10 +1,63 @@
-# Case 10
+# Case 10 — 2-head ESP32 Transformer
 
-Configuration: `B=64, S=128, D=128, H=2, F=128, L=4`, causal.
+Case 10 is a head-count variant of the case-2 ESP32 Transformer body:
+`B=64, S=128, D=128, H=2, F=128, L=4`, causal. Two heads of width 64
+(`TM_HD = D/H = 64`) keep the full-D projection work unchanged while
+halving the per-head attention rows relative to case 2.
 
-Status: **not implemented on ESP32**. No physical timing or accuracy result is
-claimed.
+## Configuration
 
-Likely focus: at most two whole-head shards per sample, combined with batch
-parallelism across additional boards. Compare this hybrid assignment with pure
-batch sharding under identical communication accounting.
+| Parameter | Value |
+|---|---|
+| Batch size `B` | 64 |
+| Sequence length `S` | 128 |
+| Hidden size `D` | 128 |
+| Heads `H` | 2 |
+| Head width `D/H` | 64 |
+| FFN width `F` | 128 |
+| Layers `L` | 4 |
+| Causal | yes |
+| Board | Seeed XIAO ESP32-C3, 160 MHz (RV32IMC, no FPU) |
+| Numeric modes | EXACT (reference-quality hybrid) and FAST (Q15xQ12 integer GEMM) |
+
+## Directory ownership
+
+| Directory | Contents |
+|---|---|
+| [`baseline/`](baseline/) | Host gate evidence, SRAM-limit record and review |
+| [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+
+## Comparable complete-forward result
+
+> **SRAM anomaly — not measurable on a single XIAO ESP32-C3.**
+> The canonical case-2 workspace is verified correct on host
+> (25/25 seeds, both modes) but **the firmware does not link on the
+> board**: the linker reports that region `dram0_0_seg` is overfull by
+> **23,920 bytes** at `H=2`. The per-head Q/K/V/context buffers scale as
+> `S * HD` (inverse of `H`); even with `D` fixed, reducing head count
+> balloons the working set. No physical device measurement is possible
+> without firmware changes outside the mechanical baseline mandate. See
+> [`baseline/`](baseline/) for the full record, region budget, and the
+> three hardware alternatives.
+
+| Build | Time/forward | Speedup | Validation |
+|---|---:|---:|---|
+| Current implementation (first physical capture) | not measurable — linker `dram0_0_seg` overflowed by 23,920 B | — | Pass, 25/25 host checks both modes; device build does not fit SRAM |
+
+Host validation is complete and conclusive: 50/50 seed-runs (25 seeds x
+FAST + EXACT) all PASS with worst absolute error 1.0885e-03 (FAST) and
+9.1493e-05 (EXACT). The device measurement is physically impossible on
+this board with the current workspace.
+
+## Next case-specific step
+
+`H=2` is (with `H=1`) the SRAM dead end of whole-head parallelism on
+the ESP32-C3: head width 64 needs larger per-head staging than the
+32-width case-2 reference. Follow-ups are (a) a reduced-memory head
+path (streaming Q/K/V rows, fused context write-back, no 128x128
+per-head copies) that stays bit-compatible with the baseline's host
+output and would bring H=2 within the 321,296-byte dram segment, or
+(b) the multiboard split, where H=2 is a two-head shard of width 64 —
+one peer runs the full-D projections (the C3 can, as case-11 shows),
+the other carries the 128x64 attention. Worth doing only if (a) is
+impossible.

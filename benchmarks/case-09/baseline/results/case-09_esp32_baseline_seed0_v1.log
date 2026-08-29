@@ -1,0 +1,81 @@
+# case-09 ESP32 baseline — host gate (25 seeds x FAST+EXACT) + device build failure capture
+# geometry: B=64 S=128 D=128 H=1 F=128 L=4 (TM_HD=128) | board: Seeed XIAO ESP32-C3 (PORT B)
+# date: 2026-08-29 | seeds exported with tools/export_case2.py --seeds 25 --H 1
+
+## Host gate (FAST + EXACT, both modes, 25 seeds)
+$ cd tools && make host_test && ./host_test all --both
+
+make: `host_test' is up to date.
+weights: 398592 floats; q12 blob loaded
+seed= 0 mode=FAST fails=    0 max_abs=8.7607e-04 ok
+seed= 0 mode=EXACT fails=    0 max_abs=5.8413e-05 ok
+seed= 1 mode=FAST fails=    0 max_abs=1.0049e-03 ok
+seed= 1 mode=EXACT fails=    0 max_abs=5.5790e-05 ok
+seed= 2 mode=FAST fails=    0 max_abs=8.5944e-04 ok
+seed= 2 mode=EXACT fails=    0 max_abs=5.9828e-05 ok
+seed= 3 mode=FAST fails=    0 max_abs=9.8181e-04 ok
+seed= 3 mode=EXACT fails=    0 max_abs=5.7191e-05 ok
+seed= 4 mode=FAST fails=    0 max_abs=8.4163e-04 ok
+seed= 4 mode=EXACT fails=    0 max_abs=7.2718e-05 ok
+seed= 5 mode=FAST fails=    0 max_abs=9.5712e-04 ok
+seed= 5 mode=EXACT fails=    0 max_abs=7.2479e-05 ok
+seed= 6 mode=FAST fails=    0 max_abs=1.0101e-03 ok
+seed= 6 mode=EXACT fails=    0 max_abs=5.3018e-05 ok
+seed= 7 mode=FAST fails=    0 max_abs=8.7082e-04 ok
+seed= 7 mode=EXACT fails=    0 max_abs=6.3270e-05 ok
+seed= 8 mode=FAST fails=    0 max_abs=9.5773e-04 ok
+seed= 8 mode=EXACT fails=    0 max_abs=6.3390e-05 ok
+seed= 9 mode=FAST fails=    0 max_abs=1.0327e-03 ok
+seed= 9 mode=EXACT fails=    0 max_abs=7.5936e-05 ok
+seed=10 mode=FAST fails=    0 max_abs=9.2375e-04 ok
+seed=10 mode=EXACT fails=    0 max_abs=6.2108e-05 ok
+seed=11 mode=FAST fails=    0 max_abs=8.7047e-04 ok
+seed=11 mode=EXACT fails=    0 max_abs=6.6042e-05 ok
+seed=12 mode=FAST fails=    0 max_abs=8.9633e-04 ok
+seed=12 mode=EXACT fails=    0 max_abs=6.8925e-05 ok
+seed=13 mode=FAST fails=    0 max_abs=9.0188e-04 ok
+seed=13 mode=EXACT fails=    0 max_abs=6.8367e-05 ok
+seed=14 mode=FAST fails=    0 max_abs=9.4074e-04 ok
+seed=14 mode=EXACT fails=    0 max_abs=5.2646e-05 ok
+seed=15 mode=FAST fails=    0 max_abs=1.0280e-03 ok
+seed=15 mode=EXACT fails=    0 max_abs=6.3360e-05 ok
+seed=16 mode=FAST fails=    0 max_abs=1.0738e-03 ok
+seed=16 mode=EXACT fails=    0 max_abs=6.1363e-05 ok
+seed=17 mode=FAST fails=    0 max_abs=1.0058e-03 ok
+seed=17 mode=EXACT fails=    0 max_abs=6.6042e-05 ok
+seed=18 mode=FAST fails=    0 max_abs=8.0395e-04 ok
+seed=18 mode=EXACT fails=    0 max_abs=6.4701e-05 ok
+seed=19 mode=FAST fails=    0 max_abs=9.1219e-04 ok
+seed=19 mode=EXACT fails=    0 max_abs=7.7963e-05 ok
+seed=20 mode=FAST fails=    0 max_abs=9.3293e-04 ok
+seed=20 mode=EXACT fails=    0 max_abs=5.4836e-05 ok
+seed=21 mode=FAST fails=    0 max_abs=9.5856e-04 ok
+seed=21 mode=EXACT fails=    0 max_abs=6.3360e-05 ok
+seed=22 mode=FAST fails=    0 max_abs=8.9109e-04 ok
+seed=22 mode=EXACT fails=    0 max_abs=6.4060e-05 ok
+seed=23 mode=FAST fails=    0 max_abs=9.4509e-04 ok
+seed=23 mode=EXACT fails=    0 max_abs=5.7936e-05 ok
+seed=24 mode=FAST fails=    0 max_abs=8.8151e-04 ok
+seed=24 mode=EXACT fails=    0 max_abs=7.4983e-05 ok
+done: 50 seed-runs, 0 failed ==> ALL PASS
+
+## Device build attempt (fails at link: SRAM overflow)
+$ pio run
+
+/Users/karthikgangula/.platformio/packages/toolchain-riscv32-esp/bin/../lib/gcc/riscv32-esp-elf/8.4.0/../../../../riscv32-esp-elf/bin/ld: .pio/build/esp32-baseline/firmware.elf section `.dram0.bss' will not fit in region `dram0_0_seg'
+/Users/karthikgangula/.platformio/packages/toolchain-riscv32-esp/bin/../lib/gcc/riscv32-esp-elf/8.4.0/../../../../riscv32-esp-elf/bin/ld: DRAM segment data does not fit.
+/Users/karthikgangula/.platformio/packages/toolchain-riscv32-esp/bin/../lib/gcc/riscv32-esp-elf/8.4.0/../../../../riscv32-esp-elf/bin/ld: DRAM segment data does not fit.
+/Users/karthikgangula/.platformio/packages/toolchain-riscv32-esp/bin/../lib/gcc/riscv32-esp-elf/8.4.0/../../../../riscv32-esp-elf/bin/ld: region `dram0_0_seg' overflowed by 73072 bytes
+collect2: error: ld returned 1 exit status
+*** [.pio/build/esp32-baseline/firmware.elf] Error 1
+========================== [FAILED] Took 0.93 seconds ==========================
+
+Environment     Status    Duration
+--------------  --------  ------------
+esp32-baseline  FAILED    00:00:00.931
+==================== 1 failed, 0 succeeded in 00:00:00.931 ====================
+## Conclusion
+Firmware does not link on the C3 for H=1 (region 'dram0_0_seg' overflowed by 73072 bytes);
+host gate is 50/50 PASS. No physical device_time is possible for this geometry with the
+canonical workspace. See TEAMMATE_BASELINE_REVIEW.md and baseline/README.md for the SRAM
+budget and hardware alternatives.
