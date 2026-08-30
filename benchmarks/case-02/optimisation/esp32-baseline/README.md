@@ -27,11 +27,13 @@ EXACT <= 7.8e-5). On-device: **25/25 seeds pass**, worst max_abs 1.24e-3,
 
 ## Repository layout
 
-    platformio.ini        two espressif32 envs (XIAO C3 + generic devkit)
+    platformio.ini        default, devkit, servo, and tiled-WiFi envs
     src/tm_config.h       model geometry, numeric modes, weight layout
     src/kernels.h/.c      fp32 GEMM, Q15xQ12 GEMM, LayerNorm, GELU, fast exp
     src/model.h/.c        forward pass + streaming causal attention
+    src/model_tiled.c     opt-in 16-row FAST forward with reduced workspace
     src/main.cpp          Arduino firmware (serial protocol, timing)
+    src/main_wifi.cpp     opt-in USB + persistent WiFi/TCP command transport
     tools/export_case2.py torch artifact exporter (system python3)
     tools/host_test.c     host validation vs torch references (25 seeds)
     tools/compare.py      verify a raw device output dump vs torch refs
@@ -65,6 +67,34 @@ See `TM_W_BLK_*` / `woff()` in src. `weights_q12.bin` is 24 matrices
 Serial protocol (main.cpp): `M` prints mode; `R` reads 16384 floats,
 runs one forward, streams 16384 output floats then `END`; `T <n>` does
 n timed forwards and prints `TM <mode> <us>...`.
+
+## Optional: tiled full forward with WiFi
+
+The `esp32-wifi-tiled` environment replaces the default forward with a
+FAST-only, 16-row schedule and exposes the same command protocol over both USB
+and a persistent TCP server on port 5000:
+
+```bash
+make -C tools host_test_tiled
+./tools/host_test_tiled all --fast
+cp secrets.example.h secrets.h       # fill in the benchmark-LAN credentials
+pio run -e esp32-wifi-tiled -t upload
+```
+
+The tile schedule keeps the full int32 residual and Q15 context, processes one
+head's K/V at a time, streams Q by row tile, then applies norm2/FFN per tile.
+It uses **173,060 B static DRAM with the real WiFi path linked**, versus
+274,564 B for the default non-WiFi image. All 25 host seeds pass, worst
+`max_abs=1.0778e-3`; the default FAST/EXACT gate remains unchanged.
+
+`secrets.h` is ignored by Git. If it is absent, the image deliberately skips
+`WiFi.begin()` and remains available over USB. Two physical boards associated
+with 98,380 B free heap each. The distributed 25-seed TCP gate passed 25/25
+with worst `max_abs=1.2370e-3` and median 4.214 s/forward. A B=4 data-parallel
+run completed 4/4 inputs with zero failures, 2.00x compute scaling, and 9.9 s
+end-to-end. This schedule fits case 2 (`S=128`); its residual, context, and
+current-head K/V still scale with S, so it is not the long-sequence solution
+for cases 13/14.
 
 ## Numbers
 

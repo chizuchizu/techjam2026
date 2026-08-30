@@ -1,0 +1,114 @@
+[
+  {
+    "batch": 4,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 4,
+    "per_board_inputs": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "per_board_compute_s": [
+      4.214,
+      4.215,
+      4.215,
+      4.214
+    ],
+    "compute_wall_s": 4.215,
+    "one_board_compute_s": 16.858,
+    "speedup": 4.0,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 5.0,
+    "serial_wall_s": 5.0,
+    "per_forward_s": 4.2145,
+    "fails": 0,
+    "max_abs": 0.0010499358177185059
+  },
+  {
+    "batch": 16,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 16,
+    "per_board_inputs": [
+      4,
+      4,
+      4,
+      4
+    ],
+    "per_board_compute_s": [
+      16.851,
+      16.853,
+      16.851,
+      16.851
+    ],
+    "compute_wall_s": 16.853,
+    "one_board_compute_s": 67.406,
+    "speedup": 4.0,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 19.8,
+    "serial_wall_s": 19.8,
+    "per_forward_s": 4.2129,
+    "fails": 0,
+    "max_abs": 0.0010994672775268555
+  },
+  {
+    "batch": 64,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 64,
+    "per_board_inputs": [
+      16,
+      16,
+      16,
+      16
+    ],
+    "per_board_compute_s": [
+      67.462,
+      67.462,
+      67.457,
+      67.465
+    ],
+    "compute_wall_s": 67.465,
+    "one_board_compute_s": 269.845,
+    "speedup": 4.0,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 80.8,
+    "serial_wall_s": 80.8,
+    "per_forward_s": 4.2156,
+    "fails": 0,
+    "max_abs": 0.0013030171394348145
+  },
+  {
+    "batch": 128,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 128,
+    "per_board_inputs": [
+      32,
+      32,
+      32,
+      32
+    ],
+    "per_board_compute_s": [
+      134.883,
+      134.877,
+      134.877,
+      134.887
+    ],
+    "compute_wall_s": 134.887,
+    "one_board_compute_s": 539.524,
+    "speedup": 4.0,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 157.7,
+    "serial_wall_s": 157.7,
+    "per_forward_s": 4.2147,
+    "fails": 0,
+    "max_abs": 0.0013030171394348145
+  }
+]

@@ -1,9 +1,11 @@
-# Brief: getting WiFi onto a compute node
+# Challenge and solution: fitting WiFi beside a full C3 forward
 
-**Status: blocked, measured.** A board can host either a full-sequence forward
-or the TCP/IP stack, not both. This document states the problem, the numbers,
-what has already been tried, and the directions that remain, so the work can be
-picked up without repeating any of it.
+**Status: implemented and physically verified on two ESP32-C3 boards.** The
+opt-in `esp32-wifi-tiled` build hosts both a complete FAST forward and the
+Arduino WiFi/TCP stack. It row-tiles the projection/FFN work and processes
+attention heads sequentially, reducing the working arena enough to associate
+with WiFi and execute repeated forwards. The default published firmware is
+unchanged.
 
 ---
 
@@ -20,11 +22,13 @@ needed only for flashing. Secondary win: the paced USB CDC frame (1 KB / 20 ms,
 ~1.3 s per 64 KB input) is **about half the end-to-end wall time** of a batch
 run, and it is also the single flakiest component in the whole harness.
 
-Target: 8 boards, `ceil(B/N) * 1.99 s`, i.e. B=128 in ~31.8 s.
+The original latency target assumed the 1.99 s untiled forward. The
+memory-saving forward is slower at 4.214 s median on device, so WiFi solves
+host connectivity but does not preserve that latency target.
 
 ---
 
-## 2. The blocker, with numbers
+## 2. The original blocker and the implemented result
 
 Board: Seeed XIAO ESP32-C3. 400 KB SRAM, of which **`dram0_0_seg` = 327,680 B**
 is available to us. 4 MB flash. No PSRAM.
@@ -33,8 +37,9 @@ is available to us. 4 MB flash. No PSRAM.
 |---|---:|---:|
 | Full-sequence node, no WiFi (`esp32-baseline`) | 274,564 B | 53,116 B |
 | Half-sequence node **with** WiFi (`esp32-cluster`) | 221,916 B | 105,764 B |
+| Tiled full-forward node **with real WiFi path linked** (`esp32-wifi-tiled`) | **173,060 B** | **154,620 B nominal** |
 
-Adding WiFi to the full-sequence node fails to link:
+Adding WiFi to the original full-sequence node failed to link:
 
 ```
 region `dram0_0_seg' overflowed by 32384 bytes
@@ -44,14 +49,21 @@ From that overflow, **the WiFi + lwIP stack costs ~85,500 B of static DRAM**.
 At runtime it wants more: the cluster firmware reports 105,764 B free before
 `WiFi.begin()` and **~36,800 B after**, so **~69 KB of heap** on top.
 
-So a full-sequence node needs roughly `274,564 + 85,500 + 69,000 = 429 KB`
-against 328 KB available — **short by about 100 KB**, out of a 274 KB arena.
-This is not a tuning problem; it is a quarter of the model's working memory.
+So the original full-sequence node needed roughly
+`274,564 + 85,500 + 69,000 = 429 KB` against 328 KB available — **short by
+about 100 KB**, out of a 274 KB arena.
+
+The tiled build cuts static DRAM by **101,504 B even after linking the active
+WiFi code**. PlatformIO reports 154,620 B free for heap. Physical boot capture
+on both boards measured 145,004 B before enabling WiFi, 100,048 B after station
+mode, 99,808 B after `WiFi.begin()`, and **98,380 B after association and TCP
+server startup**. The associated radio therefore consumes 46,624 B of the
+available heap on this image, leaving a large measured margin.
 
 **Why the cluster firmware gets away with it:** it holds only half the sequence
 (64 of 128 token rows), so its arena is 127 KB instead of 274 KB. WiFi on a
-*sharded* node is proven and works today. WiFi on a *full-forward* node is the
-open problem — and data parallelism needs the full forward on every board.
+*sharded* node was already proven. WiFi on a *full-forward* node was the open
+problem — and data parallelism needs the full forward on every board.
 
 ### Where the 274 KB goes
 
@@ -100,24 +112,38 @@ alias `g_buf2`; `v_all` aliases `g_buf1`. Do not propose these as savings.
 
 ---
 
-## 5. Directions that remain
+## 5. Implemented design and follow-ons
 
-Ranked by expected value. None is proven; the numbers are estimates and should
-be measured, not trusted.
+### A. Row-tiled, head-sequential FAST forward — implemented
 
-### A. Sequence tiling of the forward — *most promising*
-Process the forward in row tiles so activation memory scales with the tile, not
-with `S=128`. Attention still needs all K and V resident (~64 KB), but the rest
-could drop to a tile's worth. Plausible arena: **~120 KB**, which leaves room
-for WiFi untrimmed.
+`src/model_tiled.c` uses 16-row tiles and retains only the current attention
+head's K/V. The major model workspaces are:
 
-The real argument for it is not WiFi: **cases 13 and 14 (S=1024 and
-S=100,000) are impossible without it**, and they are on the roadmap. Adjacent
-work already exists — see case-09's "5-slot union" and case-10's "overlay
-per-head Q/K buffers onto dead scratch" commits.
+| Workspace | Bytes |
+|---|---:|
+| input / residual / final-output union | 65,536 |
+| full Q15 attention context | 32,768 |
+| current-head K + V | 16,384 |
+| tile accumulator + head output | 9,216 |
+| attention scores/probabilities | 1,536 |
+| shared kernel Q15 tile | 4,096 |
 
-Cost: a week-ish, touches the validated kernel path, needs the full gate at
-every step.
+The forward first sweeps V tiles to choose one safe context scale. It then
+builds K/V for one head, streams Q by tile through causal attention, and moves
+to the next head. Only after all four heads have filled the context does the O
+projection mutate the residual. Norm2, FFN1, GELU, and FFN2 then run one tile
+at a time.
+
+This is deliberately FAST-only and opt-in. The full host gate passes **25/25**
+seeds with worst maximum absolute error **1.0778e-3**. The default FAST/EXACT
+build still passes 50/50 seed-runs. The physical two-board TCP gate also passes
+**25/25** seeds with zero failing elements and worst maximum absolute error
+**1.2370e-3**.
+
+Scope limit: this solves the `S=128` WiFi fit, but it is **not O(tile) in
+sequence length**. The residual, context, and current-head K/V remain O(S).
+Cases 13 and 14 still require external storage/recomputation plus a genuinely
+streaming or FlashAttention-style schedule.
 
 ### B. Custom `sdkconfig` — necessary but not sufficient
 Requires migrating to `framework = espidf` with Arduino as a component; the
@@ -127,10 +153,9 @@ reachable. Then: `ESP_WIFI_STATIC_RX_BUFFER_NUM` 10 -> 3 (~11 KB),
 off, `LWIP_IPV6` off (~10 KB), ESP-MESH off (it is compiled in — `g_mesh_*`
 symbols are in the map), `LWIP_MAX_SOCKETS` 10 -> 4.
 
-Estimated **40-60 KB off 85 KB**. Combined with a FAST-only build (shrinking
-`g_buf1` from 64 KB to the 32 KB `v_all` actually needs) it lands at roughly
-**327 KB against 328 KB** — passing by nothing, on optimistic assumptions,
-having given up EXACT mode. Do not pursue alone; only as a multiplier on A.
+Estimated **40-60 KB off 85 KB**. It is no longer required for case 2 because
+the tiled Arduino build has adequate margin. It may still be useful together
+with a future long-sequence streaming design.
 
 ### C. Different hardware
 ESP32-S3: 512 KB SRAM plus PSRAM. Fits both comfortably. Worth pricing before
@@ -156,26 +181,102 @@ spending a week on A.
 
 ---
 
-## 6. How to check a proposal quickly
+## 6. Physical multi-board results
+
+Both boards joined the same 2.4 GHz WPA2 LAN and served persistent TCP on port
+5000. A case-3 `B=4` run assigned two independent forwards to each board:
+
+| Measurement | Result |
+|---|---:|
+| Inputs completed | 4/4, none missing |
+| Accuracy failures | 0 elements |
+| Worst maximum absolute error | 1.050e-3 |
+| Median forward | 4.218 s |
+| One-board compute equivalent | 16.870 s |
+| Two-board compute wall | 8.437 s |
+| Compute speedup | **2.00x** |
+| End-to-end including WiFi TCP | 9.9 s |
+
+The complete 25-seed case-2 device gate was then distributed across the same
+two nodes: **25/25 passed**, worst max-absolute error `1.2370e-3`, median
+forward `4.214 s`, wall time `64.5 s`. The reproducible B=4 result is stored in
+[`../benchmarks/batch-dp/results_two_c3_wifi_tiled.json`](../benchmarks/batch-dp/results_two_c3_wifi_tiled.json).
+
+Two additional C3s were then flashed with the identical image. With B=4 and
+one forward assigned to each of four boards, all 4/4 outputs passed with no
+losses. Compute wall fell to **4.215 s**, exactly **4.00x** versus the measured
+16.859 s single-board equivalent; WiFi-inclusive wall time was 6.5 s. See
+[`../benchmarks/batch-dp/results_four_c3_wifi_tiled.json`](../benchmarks/batch-dp/results_four_c3_wifi_tiled.json).
+
+The important tradeoff is visible: tiling removes the memory blocker and WiFi
+transport gives exact 2-board scaling, but repeated normalization/projection
+sweeps increase a forward from ~1.99 s to ~4.21 s. Future optimization should
+recover that compute cost without restoring the full arena.
+
+### Fair comparison with the original optimized forward
+
+The original opt23 forward measures 1.9904 s; the tiled forward measures
+4.2147 s. Tiling is therefore **2.12x slower per forward** (+111.7% latency,
+47.2% of the original throughput). The reported 4.00x result is scaling versus
+one *tiled* node, not versus the faster opt23 firmware.
+
+For the same B=4 workload:
+
+| Configuration | Compute wall | End-to-end |
+|---|---:|---:|
+| Original opt23, 1 board | 7.962 s | not measured in this run |
+| Original opt23, 2 boards over USB | **3.981 s** | 8.1 s |
+| Tiled WiFi, 2 boards | 8.437 s | 9.9 s |
+| Tiled WiFi, 4 boards | **4.215 s** | **6.5 s** |
+
+Thus four tiled boards are 1.89x faster in compute than one original board for
+B=4. Against two original USB boards, four tiled boards are 5.9% slower in
+compute but 19.8% faster end-to-end because WiFi removes the paced USB cost.
+A hypothetical four-board opt23 setup using a powered USB hub would still win
+on compute at about 1.99 s; the tiled design's value is wireless scalability
+and SRAM feasibility, not single-board speed.
+
+In competition terms: the WiFi-capable design pays a substantial per-node
+overhead, primarily from the tiled schedule needed to make WiFi fit. Once the
+batch contains enough independent inputs, compute throughput scales linearly
+with node count—verified at 2.00x on two nodes and 4.00x on four. Steady-state
+aggregate throughput exceeds one original opt23 board from three tiled nodes
+onward (`N / 4.214 > 1 / 1.990`); for the discrete B=4 case, four nodes are
+needed because three nodes leave one node executing two forwards. End-to-end
+scaling may eventually be limited by shared AP bandwidth, so linearity beyond
+the measured four nodes should be tested rather than assumed.
+
+## 7. How to check a proposal quickly
 
 ```bash
 # memory budget of any env (watch the RAM line, and the overflow message)
 cd benchmarks/case-02/optimisation/esp32-baseline && pio run -e <env>
 
 # host accuracy gate — do this before flashing
-make -C tools host_test && ./tools/host_test all          # 25/25 expected
+make -C tools host_test_tiled && ./tools/host_test_tiled all --fast
 cd ../../multiboard/esp32-cluster-full
 make -C tools shard_host_test && ./tools/shard_host_test all
+
+# build the real WiFi path (without secrets.h it intentionally builds USB-only)
+cd ../../optimisation/esp32-baseline
+cp secrets.example.h secrets.h       # fill in benchmark-LAN credentials
+pio run -e esp32-wifi-tiled
 ```
 
 Largest static symbols come from `.pio/build/<env>/firmware.map`.
 
-## 7. Key files
+## 8. Key files
 
 | Path | What |
 |---|---|
 | `benchmarks/case-02/optimisation/esp32-baseline/src/model.c` | the arena; opt23 FAST path |
+| `.../src/model_tiled.c` | opt-in row-tiled/head-sequential FAST forward |
+| `.../src/main_wifi.cpp` | persistent TCP server and shared USB/TCP command protocol |
 | `.../src/kernels.c` | `a16` scratch, asm GEMM cores |
 | `benchmarks/case-02/multiboard/esp32-cluster-full/src/link.cpp` | working WiFi on a *sharded* node: SoftAP, UDP + NAK, async exchange |
 | `benchmarks/case-02/multiboard/esp32-cluster-full/src/model_shard.c` | half-sequence arena, 127 KB |
 | `benchmarks/batch-dp/tools/run_batch_dp.py` | N-board data-parallel runner |
+
+Case 2 is now host-, linker-, heap-, accuracy-, transport-, and four-board
+scaling-verified. Remaining work is the 8-board run and the separate
+long-sequence design for cases 13/14.

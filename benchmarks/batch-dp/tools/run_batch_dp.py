@@ -14,19 +14,21 @@ Reported per run:
   compute wall   max over boards of the summed device forward times - the
                  batch time the cluster achieves, excluding host transfer,
                  which is the same convention the single-board number uses
-  serial wall    measured end to end including the 64 KB in / 64 KB out per
-                 input over USB, for context
+  transport wall measured end to end including the 64 KB in / 64 KB out per
+                 input over USB CDC or WiFi TCP, for context
   speedup        (sum of every forward's device time) / compute wall, i.e.
                  against one board doing all B inputs
 
 Usage:
   python3 tools/run_batch_dp.py --batch 4 16 64 128 [--boards /dev/ttyACM0 ...]
+  python3 tools/run_batch_dp.py --batch 4 16 64 128 --wifi 192.168.1.41 192.168.1.42
 """
 import argparse
 import glob
 import json
 import pathlib
 import re
+import socket
 import statistics
 import subprocess
 import sys
@@ -80,9 +82,11 @@ class Board:
         self.buf = bytearray()
         self.lock = threading.Lock()
         self.stop = False
+        self.rx_error = None
         self._open()
 
     def _open(self):
+        self.rx_error = None
         self.ser = serial.Serial(self.port, self.baud, timeout=0.05)
         self.rx = threading.Thread(target=self._pump, daemon=True)
         self.rx.start()
@@ -91,7 +95,8 @@ class Board:
         while not self.stop:
             try:
                 c = self.ser.read(4096)
-            except Exception:
+            except Exception as exc:
+                self.rx_error = exc
                 return
             if c:
                 with self.lock:
@@ -135,6 +140,9 @@ class Board:
                     del self.buf[:n]
                     return d
                 have = len(self.buf)
+            if self.rx_error is not None:
+                raise ConnectionError(f"{self.name}: receive stream failed") \
+                    from self.rx_error
             if time.time() - t0 > timeout:
                 raise TimeoutError(f"{self.name}: {have}/{n} bytes")
             time.sleep(0.02)
@@ -148,6 +156,9 @@ class Board:
                     line = bytes(self.buf[:i + 1])
                     del self.buf[:i + 1]
                     return line
+            if self.rx_error is not None:
+                raise ConnectionError(f"{self.name}: receive stream failed") \
+                    from self.rx_error
             if time.time() - t0 > timeout:
                 raise TimeoutError(f"{self.name}: no line in {timeout}s")
             time.sleep(0.02)
@@ -216,6 +227,83 @@ class Board:
         raise RuntimeError(f"{self.name}: forward failed after {tries} tries")
 
 
+class SocketStream:
+    """Small socket-to-Serial adapter used by the existing board protocol."""
+
+    def __init__(self, sock):
+        self.sock = sock
+
+    def read(self, n):
+        try:
+            data = self.sock.recv(n)
+        except socket.timeout:
+            return b""
+        if not data:
+            raise ConnectionError("TCP peer closed the connection")
+        return data
+
+    def write(self, data):
+        self.sock.sendall(data)
+        return len(data)
+
+    def close(self):
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.sock.close()
+
+
+class TcpBoard(Board):
+    """A full-forward node reached over the tiled firmware's TCP server."""
+
+    def _open(self):
+        host, sep, port = self.port.rpartition(":")
+        if not sep:
+            host, port = self.port, "5000"
+        elif not host:
+            raise ValueError(f"invalid WiFi endpoint: {self.port!r}")
+        sock = socket.create_connection((host, int(port)), timeout=10)
+        sock.settimeout(0.05)
+        self.rx_error = None
+        self.ser = SocketStream(sock)
+        self.rx = threading.Thread(target=self._pump, daemon=True)
+        self.rx.start()
+
+    def recycle(self):
+        self.stop = True
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+        time.sleep(0.4)
+        self.stop = False
+        for _ in range(20):
+            try:
+                self._open()
+                return
+            except Exception:
+                time.sleep(0.5)
+        raise RuntimeError(f"{self.name}: TCP endpoint did not come back")
+
+    def resync(self):
+        # A dead TCP stream cannot be repaired by the USB-specific `kick`
+        # sequence. Reconnect and require a clean mode reply instead.
+        try:
+            self.recycle()
+            self.clear()
+            self.ser.write(b"M")
+            line = self.read_line(8).decode(errors="replace")
+            return "TM " in line
+        except Exception:
+            return False
+
+    def send_paced(self, data):
+        # TCP has flow control. The 1 KiB/20 ms pacing is specific to the
+        # native-USB CDC queue and would erase WiFi's transport gain.
+        self.ser.write(data)
+
+
 def kick(b):
     """Complete a half-delivered input frame.
 
@@ -259,7 +347,7 @@ def wait_idle(b):
     raise RuntimeError(f"{b.name}: unresponsive")
 
 
-def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL):
+def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL, transport="usb-cdc"):
     d = root / "testdata" / f"B{batch}"
     inputs = [(d / f"input_{i}.bin").read_bytes() for i in range(batch)]
     refs = [np.fromfile(d / f"ref_{i}.bin", dtype="<f4").astype(np.float64)
@@ -320,6 +408,9 @@ def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL):
         one_board_compute_s=round(total_compute, 3),
         speedup=(round(total_compute / compute_wall, 3)
                  if compute_wall and not missing else None),
+        transport=transport,
+        end_to_end_wall_s=round(serial_wall, 1),
+        # Kept for compatibility with the existing two-board result JSON.
         serial_wall_s=round(serial_wall, 1),
         per_forward_s=round(statistics.median(all_us) / 1e6, 4) if all_us else 0,
         fails=fails,
@@ -331,31 +422,38 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", nargs="+", type=int, default=[4, 16, 64, 128])
     ap.add_argument("--boards", nargs="*", default=None)
+    ap.add_argument("--wifi", nargs="+", default=None,
+                    metavar="HOST[:PORT]",
+                    help="tiled full-forward nodes over TCP (default port 5000)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--root", default=str(ROOT))
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
-    ports = args.boards or sorted(glob.glob("/dev/ttyACM*"))
+    if args.wifi and args.boards:
+        ap.error("use either --wifi or --boards, not both")
+    ports = args.wifi or args.boards or sorted(glob.glob("/dev/ttyACM*"))
     if not ports:
         print("no boards found; run ../case-02/multiboard/esp32-cluster-full/"
               "tools/attach_boards.sh")
         return 2
     print(f"[boards] {', '.join(ports)}")
 
-    boards = [Board(p, args.baud, f"b{k}") for k, p in enumerate(ports)]
+    board_cls = TcpBoard if args.wifi else Board
+    boards = [board_cls(p, args.baud, f"b{k}") for k, p in enumerate(ports)]
     time.sleep(0.8)
     for b in boards:
         print(f"[{b.name}] {wait_idle(b)}")
 
     root = pathlib.Path(args.root)
+    transport = "wifi-tcp" if args.wifi else "usb-cdc"
     rows = []
     for B in args.batch:
         if B < len(boards):
             print(f"B={B}: fewer inputs than boards, skipping")
             continue
         print(f"\n=== B={B} on {len(boards)} boards ===")
-        r = run_batch(boards, B, root)
+        r = run_batch(boards, B, root, transport=transport)
         rows.append(r)
         head = (f"B={B:4d} boards={r['boards']} inputs/board={r['per_board_inputs']}\n"
                 f"      per-forward {r['per_forward_s']:.3f}s | ")
@@ -364,8 +462,9 @@ def main():
                      f"cluster {r['compute_wall_s']:.1f}s = {r['speedup']:.2f}x")
         else:
             head += (f"INCOMPLETE: {len(r['missing'])} of {B} inputs lost to the "
-                     f"USB bridge {r['missing']}; no speedup reported")
-        print(head + f"\n      end-to-end incl. USB {r['serial_wall_s']:.1f}s | "
+                     f"{transport} link {r['missing']}; no speedup reported")
+        print(head + f"\n      end-to-end incl. {transport} "
+                     f"{r['end_to_end_wall_s']:.1f}s | "
                      f"fails={r['fails']} max_abs={r['max_abs']:.3e} "
                      f"{'PASS' if r['fails'] == 0 else 'FAIL'} "
                      f"({r['checked']}/{B} forwards checked)")

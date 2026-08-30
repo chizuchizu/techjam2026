@@ -18,9 +18,11 @@ does.
 
 Two consequences make this cheap:
 
-* **No new firmware.** Each board runs the maintained single-board build from
-  [`../case-02/optimisation/esp32-baseline`](../case-02/optimisation/esp32-baseline)
-  unchanged. This directory is a host coordinator and an exporter.
+* **One maintained model, two transports.** USB nodes run the default
+  single-board build from
+  [`../case-02/optimisation/esp32-baseline`](../case-02/optimisation/esp32-baseline).
+  WiFi nodes use its opt-in `esp32-wifi-tiled` environment; the default image
+  and published results remain unchanged.
 * **No new weights.** The reference model is constructed from `(D, H, F, L)`
   under a fixed seed before any input is drawn, so the weights are byte-identical
   across all five cases. The boards keep case-2's `weights.bin` /
@@ -41,7 +43,7 @@ and report under `case-0N/multiboard/results/`.
 | one board | what a single board would take for all B inputs |
 | cluster | max over boards of its summed device forward times |
 | speedup | one board / cluster |
-| end-to-end | measured wall clock including the 64 KB in / 64 KB out per input over USB |
+| end-to-end | measured wall clock including the 64 KB in / 64 KB out per input over USB CDC or WiFi TCP |
 
 The speedup uses device forward time on both sides, which is the same
 convention the single-board and case-2 cluster numbers use — host serial
@@ -68,3 +70,41 @@ python3 tools/run_batch_dp.py --batch 4 16 64 128
 ```
 
 `testdata/` is generated, not committed (B=128 alone is 16 MB).
+
+### WiFi nodes
+
+The 16-row tiled FAST forward leaves enough DRAM for the Arduino WiFi/lwIP
+stack. Each node exposes the same `M`/`R` protocol on a persistent TCP server
+at port 5000, so the accuracy gate, retry handling, incomplete-run rule, and
+speedup calculation are shared with the USB path.
+
+```bash
+cd ../case-02/optimisation/esp32-baseline
+cp secrets.example.h secrets.h       # replace with the benchmark-LAN values
+pio run -e esp32-wifi-tiled -t upload --upload-port /dev/ttyACM0
+
+# Repeat the upload for each node, note the IP printed over USB, then:
+cd ../../../batch-dp
+python3 tools/run_batch_dp.py --batch 4 16 64 128 \
+  --wifi 192.168.1.41 192.168.1.42
+```
+
+`HOST:PORT` is accepted when port 5000 is unavailable. `secrets.h` is ignored
+by Git. A build without it remains usable over USB but intentionally does not
+start WiFi, preventing placeholder credentials from being deployed silently.
+
+Measured on two physical C3s for B=4: 4/4 forwards passed with no losses,
+`2.00x` compute scaling, 4.218 s median forward, and 9.9 s end-to-end over
+WiFi TCP. See
+[`results_two_c3_wifi_tiled.json`](results_two_c3_wifi_tiled.json).
+
+Measured on four physical C3s for B=4: one input per board, 4/4 forwards
+passed, no losses, **4.00x** compute scaling, 4.215 s compute wall, and 6.5 s
+end-to-end. See
+[`results_four_c3_wifi_tiled.json`](results_four_c3_wifi_tiled.json).
+
+The complete four-node sweep also passed cases 1, 3, 4 and 5: all 212/212
+forwards passed with no losses, and compute scaling remained exactly 4.00x for
+B=4, 16, 64 and 128. See
+[`RESULTS_FOUR_C3_WIFI.md`](RESULTS_FOUR_C3_WIFI.md) and
+[`results_cases_1_3_4_5_four_c3_wifi.json`](results_cases_1_3_4_5_four_c3_wifi.json).

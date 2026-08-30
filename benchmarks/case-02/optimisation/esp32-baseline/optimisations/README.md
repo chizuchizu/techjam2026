@@ -30,6 +30,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | **+ integer-residual FAST path (opt 21)** | **2.386 → 2.122** | **19.8×** | host 50/50 (worst 1.03e-3); device 25/25 test seeds PASS (worst 1.24e-3), ExScore 0.267 → 5.30 |
 | **+ KB0 head-GEMM asm on R1 (opt 22)** | **2.122 → 2.056** | **20.5×** | host 50/50 (worst 1.03e-3); device 25/25 PASS (worst 1.24e-3, kb0 bit-exact), ExScore 5.48 |
 | **+ core5 4×2 asm fix (opt 23, col1 product-reuse)** | **2.056 → 1.996** | **21.1×** | host 54/54 (worst 1.03e-3); device 25/25 PASS (worst 1.24e-3); probe bad=0; ExScore 5.65 |
+| + row-tiled/head-sequential FAST + WiFi (opt 24, opt-in) | **4.214 s** | memory-first | host + device 25/25; 98,380 B free after WiFi association |
 
 ## Files
 | file | contents |
@@ -43,6 +44,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 12_gemm_jtile2.md | core4_v2 GEMM: j-tile-2 + K-pair prefetch, bit-exact vs core4 |
 | 18_kb1_core5_qkv2.md | KB1 int32 bias-fold + asm requant; core5 bias-fold epilogue; int32-limb QK |
 | 23_core5_asm_fix.md | core5 4×2 asm col1 product-reuse fix + probe `1:` label repair (2.056 → 1.996 s) |
+| 24_sequence_tiled_wifi.md | 16-row FAST schedule: full-forward WiFi image at 173,060 B static DRAM; host/link verified |
 | 19_attn_qk_unroll_pv8.md | attention QK j-unroll-4 (3.25 instr/MAC) + PV 8 accumulators; core5-flash & IRAM negative results |
 | 21_integer_residual_fast_path.md | int32 exact residual + fused fixed-point epilogues + integer-stats norms (R1): 2.386 → 2.122 s, −11%, no new RAM |
 | 22_r1_kb0_composition.md | R1 + kb0 head-GEMM asm merge: 2.122 → 2.056 s, device 25/25 PASS |

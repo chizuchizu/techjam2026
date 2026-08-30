@@ -26,6 +26,12 @@
 #include <string.h>
 #define TM_PROFILE 1
 
+/* The tiled FAST build supplies the same public API from model_tiled.c.
+ * Keep the default translation unit unchanged unless that opt-in flag is set;
+ * PlatformIO compiles every source in src/, so selecting only one file is not
+ * sufficient for the firmware build. */
+#ifndef TM_TILED_FORWARD
+
 /* may be overridden (device: Serial.print per line) */
 __attribute__((weak)) void tm_prof_emit(const char* line) { (void)line; }
 
@@ -619,3 +625,5 @@ void tm_forward(const float* xin, float* yout,
     PE(P_FINAL);
     PET();
 }
+
+#endif /* !TM_TILED_FORWARD */

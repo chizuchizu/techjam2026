@@ -5,6 +5,9 @@ testdata/
 manifest.json
 # host build
 tools/host_test
+tools/host_test_tiled
 # platformio
 .pio/
 .pioenvs/
+# local LAN credentials for the opt-in esp32-wifi-tiled environment
+secrets.h

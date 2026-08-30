@@ -32,32 +32,39 @@ experiments that are not official cases are isolated in
 
 ## Official case status
 
-| Case | Shape `(B,S,D,H,F,L)` | Baseline, 1 board | Optimised, 1 board | 2 boards | vs baseline | Status |
-|---:|---|---:|---:|---:|---:|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | 2,697.6 s * | 127.36 s | **63.7 s** | **42.3x** | Single- and two-board verified (data parallel, 2.00x) |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | 42.15 s | 1.990 s | **1.276 s** | **33.0x** | Single- and two-board verified (token-row split, 1.56x) |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | 168.6 s * | 7.96 s | **4.0 s** | **42.1x** | Single- and two-board verified (data parallel, 2.00x) |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **42.4x** | Single- and two-board verified (data parallel, 2.00x) |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **42.3x** | Single- and two-board verified (data parallel, 2.00x) |
-| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | Not implemented - streaming batch execution |
-| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | - | - | - | Not implemented - narrow-kernel overhead and fusion |
-| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | Not implemented - weight and feature sharding |
-| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | Not implemented - sequence/model sharding |
-| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | Not implemented - two head shards plus batch parallelism |
-| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | Not implemented - fine-grained head parallelism |
-| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | - | - | - | Not implemented - short-sequence launch overhead |
-| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | Not implemented - online attention and KV sharding |
-| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | Not implemented - extreme sequence streaming |
+| Case | Shape `(B,S,D,H,F,L)` | Baseline, 1 board | Optimised, 1 board | 2 boards | 4-node WiFi DP | vs baseline | Status |
+|---:|---|---:|---:|---:|---:|---:|---|
+| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | 2,697.6 s * | 127.36 s | **63.7 s** | **67.465 s** | **42.3x** | Four-node WiFi DP verified, 64/64 PASS |
+| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | 42.15 s | 1.990 s | **1.276 s** | **4.2137 s †** | **33.0x** | WiFi full-forward verified; B=1 activates one DP node |
+| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | 168.6 s * | 7.96 s | **4.0 s** | **4.215 s** | **42.1x** | Four-node WiFi DP verified, 4/4 PASS |
+| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **16.853 s** | **42.4x** | Four-node WiFi DP verified, 16/16 PASS |
+| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **134.887 s** | **42.3x** | Four-node WiFi DP verified, 128/128 PASS |
+| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | - | Not implemented - streaming batch execution |
+| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | - | - | - | - | Not implemented - narrow-kernel overhead and fusion |
+| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | Not implemented - weight and feature sharding |
+| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | - | Not implemented - sequence/model sharding |
+| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | - | Not implemented - two head shards plus batch parallelism |
+| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | - | Not implemented - fine-grained head parallelism |
+| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | - | - | - | - | Not implemented - short-sequence launch overhead |
+| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | - | Not implemented - online attention and KV sharding |
+| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | - | Not implemented - extreme sequence streaming |
 
 All times cover the **whole case**: one forward for case 2, the full batch of B
 inputs for the others. Every figure is the device's own measurement of the
-complete four-layer body, with host serial transfer excluded from all three
+complete four-layer body, with host serial transfer excluded from all timing
 columns alike.
 
 `*` Cases 1, 3, 4 and 5 were never run on the pre-optimisation firmware, so
 their baseline is **estimated** as `B x 42.15 s` from case 2's measured
-starting point. Only case 2's baseline is a measurement; the optimised and
-two-board columns are measured everywhere.
+starting point. Only case 2's baseline is a measurement. The optimised,
+two-board, and four-node WiFi columns are measured for cases 1–5.
+
+**4-node WiFi DP** means four full-forward replicas receiving independent
+batch inputs over persistent TCP. The column reports compute wall, excluding
+transport like the other timing columns; measured WiFi-inclusive wall times
+are in [`benchmarks/batch-dp/RESULTS_FOUR_C3_WIFI.md`](benchmarks/batch-dp/RESULTS_FOUR_C3_WIFI.md).
+`†` Case 2 has B=1, so only one of the four available data-parallel nodes can
+run; 4.2137 s is the tiled WiFi single-forward time, not a four-board speedup.
 
 Cases 1, 3, 4 and 5 are batches of independent forwards, so two boards run B/2
 inputs each and exchange nothing - exactly 2.00x. Case 2 is a single forward
@@ -108,15 +115,17 @@ See
 - [x] Validate every output of every batch against the torch reference.
 - [x] Compare with one board and save the raw results.
 
-Result: **2.00x on two boards for B = 4, 16, 64 and 128** (cases 3, 4, 1, 5),
-all 212 forwards gated individually with zero failing elements. These cases are
-independent forwards over shared weights, so the boards exchange nothing. See
+Result: **2.00x on two boards and 4.00x on four WiFi nodes for B = 4, 16, 64
+and 128** (cases 3, 4, 1, 5). The four-node sweep gated all 212 forwards
+individually with zero missing inputs and zero failing elements. These cases
+are independent forwards over shared weights, so the boards exchange nothing. See
 [`benchmarks/batch-dp/`](benchmarks/batch-dp/).
 
 #### Benchmark four boards, then scale to eight
 
-- [ ] Run and validate the same end-to-end path on four boards.
-- [ ] Save the four-board speedup, efficiency, median, and p90.
+- [x] Run and validate the same end-to-end path on four boards.
+- [x] Save the four-board speedup, efficiency, median, and raw results.
+- [ ] Record per-forward samples and p90 for the four-board run.
 - [ ] Choose an eight-board split beyond the four available attention heads.
 - [ ] Add stable board IDs, discovery, timeouts, retries, and failure handling.
 - [ ] Validate the eight-board output against the official reference.
