@@ -73,6 +73,12 @@ has complete four- and eight-node runs. See each `multiboard/` directory for
 the raw JSON. Cases 8 and 13 have no consumable firmware in this workspace and
 remain not implemented.
 
+An independent single-board repeat audit for cases 9, 10, and 11 reproduced
+their complete B=64 compute totals within **0.53%**, with every output passing.
+Their similar ~39% MFU is expected because head count partitions the same
+total attention work. Method and raw repeat JSON:
+[`SINGLE_BOARD_REPEAT_CASES_09_11.md`](SINGLE_BOARD_REPEAT_CASES_09_11.md).
+
 
 **Multiboard split** names which decomposition the two-board column used. Cases
 1, 3, 4 and 5 are batches of independent forwards, so the boards run

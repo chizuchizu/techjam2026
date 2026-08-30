@@ -4,7 +4,8 @@ Firmware: TinyStories baseline, 4 layers, D=128, S=128, 4 heads.
 Weights are embedded in flash (weights.bin fp32, weights_q12.bin Q12).
 
 ## Prerequisites
-- PlatformIO (`pio`) 6.x, env `esp32-baseline`.
+- PlatformIO with Espressif32 platform 7.0.1 (pinned in `platformio.ini`), env
+  `esp32-baseline`.
 - The XIAO ESP32-C3 attached via USB (native USB-CDC).
 - Device empty/held in bootloader? Normal `pio upload` handles it.
 

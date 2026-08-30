@@ -47,6 +47,10 @@ PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,162,329 / 2,162,943 /
 including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
+An independent repeat measured **139.264 s** (+0.526% versus v1) and passed
+64/64 with zero failing elements. See
+[`../SINGLE_BOARD_REPEAT_CASES_09_11.md`](../SINGLE_BOARD_REPEAT_CASES_09_11.md).
+
 ## WiFi data parallelism
 
 The opt-in WiFi worker uses a 16-row sequential tile schedule. Its activation

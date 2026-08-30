@@ -34,9 +34,9 @@ attention/projection path has no head loop at all.
 The earlier baseline report stated the firmware could not link on one XIAO
 ESP32-C3 (`dram0_0_seg` overflowed at `H=1`). The maintained
 `optimisation/esp32-baseline` firmware fixed that: the `H==1` `g_kh` alias was
-reverted to a real buffer, and current framework libs were minimised
-(`xIsrStack`, coredump stack, `prstatus`) in `patched_sdk_libs_current/`. The
-firmware now links (RAM 273,180 / 327,680 B, 83.4%) and runs on the board.
+reverted to a real buffer, and framework libs were minimised (`xIsrStack`,
+coredump stack, `prstatus`) in `patched_sdk_libs/`. The PlatformIO
+Espressif32 7.0.1 build links at 274,904 / 327,680 B RAM and runs on the board.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
@@ -49,6 +49,10 @@ PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,154,695 / 2,155,128 /
 `us=` counters over all 64 streamed frames) and **262.073 s** wall time
 including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
+
+A later pair of independent single-board repeats measured **138.600 s on each
+physical board** (+0.415% versus v1); both 64-frame runs passed 64/64 with zero failing elements.
+See [`../SINGLE_BOARD_REPEAT_CASES_09_11.md`](../SINGLE_BOARD_REPEAT_CASES_09_11.md).
 
 ## WiFi data parallelism
 

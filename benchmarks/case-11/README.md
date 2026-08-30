@@ -51,6 +51,10 @@ overhead yet the projection-dominated forward lands at ~2.17 s, and the full B=6
 lands at 138.6104 s of device compute. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
+An independent repeat measured **139.107 s** (+0.358% versus v1) and passed
+64/64 with zero failing elements. See
+[`../SINGLE_BOARD_REPEAT_CASES_09_11.md`](../SINGLE_BOARD_REPEAT_CASES_09_11.md).
+
 ## WiFi data parallelism
 
 The opt-in WiFi worker uses a 16-row sequential tile schedule. Its activation

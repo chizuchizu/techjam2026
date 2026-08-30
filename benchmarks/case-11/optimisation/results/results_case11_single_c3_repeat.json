@@ -1,0 +1,26 @@
+[
+  {
+    "batch": 64,
+    "seq_len": 128,
+    "d_model": 128,
+    "boards": 1,
+    "missing": [],
+    "complete": true,
+    "checked": 64,
+    "per_board_inputs": [
+      64
+    ],
+    "per_board_compute_s": [
+      139.107
+    ],
+    "compute_wall_s": 139.107,
+    "one_board_compute_s": 139.107,
+    "speedup": 1.0,
+    "transport": "usb-cdc",
+    "end_to_end_wall_s": 268.6,
+    "serial_wall_s": 268.6,
+    "per_forward_s": 2.1735,
+    "fails": 0,
+    "max_abs": 0.0013076066970825195
+  }
+]
