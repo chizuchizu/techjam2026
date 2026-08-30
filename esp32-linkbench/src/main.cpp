@@ -90,6 +90,9 @@
 #define FT_STREAM_ACK 0x04
 #define FT_RESET_ST  0xF0
 #define FT_STREAM_END 0xFF
+#define FT_RELAY     0x11        // PC -> A -> (WiFi) -> B: generic payload relay
+#define FT_RELAY_ACK 0x12        // B -> A echo of the relayed payload
+#define RELAY_MAX    240         // max relay payload bytes (5 + N <= 250 ESP-NOW limit)
 
 static const uint8_t BROADCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const uint8_t MAGIC[4] = {'L','F','B','N'};
@@ -131,7 +134,8 @@ static void format_mac(char* out, const uint8_t* m) {
 
 static uint8_t g_server_mac[6];
 
-static void IRAM_ATTR OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
+static void IRAM_ATTR OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+    const uint8_t *mac = info->src_addr;
     static volatile uint32_t rx_pkts = 0, rx_bytes = 0;
     static uint8_t peer_known = 0;
     rx_pkts++; rx_bytes += (uint32_t)len;
@@ -173,6 +177,17 @@ static void IRAM_ATTR OnDataRecv(const uint8_t *mac, const uint8_t *data, int le
             Serial.printf("SERVER|rx|pkts=%lu|bytes=%lu\n",
                           (unsigned long)rx_pkts, (unsigned long)rx_bytes);
             break;
+        case FT_RELAY: {
+            // PC-master relay: echo the whole frame back unchanged (data[0]
+            // flips to FT_RELAY_ACK by the client; here we only bounce the
+            // payload/suffix so the client can verify bit-exact integrity).
+            static uint8_t ack[5 + RELAY_MAX];
+            int n = (len <= (int)sizeof(ack)) ? len : (int)sizeof(ack);
+            memcpy(ack, data, (size_t)n);
+            ack[0] = FT_RELAY_ACK;
+            esp_now_send(mac, ack, n);
+            break;
+        }
         default: break;
     }
     if (!peer_known) return;
@@ -191,7 +206,7 @@ void setup() {
     if (esp_now_init() != ESP_OK) { Serial.println("ESP_NOW_INIT_FAIL"); for(;;) delay(10); }
     add_broadcast_peer(WIFI_IF_AP);
     esp_now_register_recv_cb(OnDataRecv);
-    esp_read_mac(g_server_mac, ESP_MAC_WIFI_SOFTAP);
+    esp_wifi_get_mac(WIFI_IF_AP, g_server_mac);
     char macs[18]; format_mac(macs, g_server_mac);
     Serial.printf("LINKFW|role=SERVER|mac=%s|ch=%d|mode=%s|if=AP\n",
                   macs, LF_CHANNEL, MODE_STR);
@@ -220,13 +235,19 @@ static volatile uint32_t g_sent_ok=0, g_send_fail=0, g_acked=0;
 static volatile uint32_t g_ack_seq = 0xFFFFFFFFu;
 static volatile uint32_t g_ack_t3  = 0;
 static volatile uint8_t  g_ack_has = 0;
+static volatile uint32_t g_relay_seq   = 0xFFFFFFFFu;
+static volatile uint32_t g_relay_t3    = 0;
+static volatile uint8_t  g_relay_ok    = 0;
+static volatile uint8_t  g_relay_has   = 0;
+static uint8_t g_relay_tx[RELAY_MAX];
 static uint32_t g_ping_t0_hold=0, g_ping_t1_hold=0, g_ping_t2_hold=0;
 
 static void IRAM_ATTR OnDataSent(const uint8_t *mac, esp_now_send_status_t status) {
     if (status == ESP_NOW_SEND_SUCCESS) g_sent_ok++; else g_send_fail++;
 }
 
-static void IRAM_ATTR OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
+static void IRAM_ATTR OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+    const uint8_t *mac = info->src_addr;
     if (len < 1) return;
     switch (data[0]) {
         case FT_PROBE_ACK: {
@@ -253,6 +274,19 @@ static void IRAM_ATTR OnDataRecv(const uint8_t *mac, const uint8_t *data, int le
             if (len < 9) return;
             uint32_t seq; memcpy(&seq, data+1, 4);
             g_ack_seq = seq; g_ack_t3 = now_us(); g_ack_has = 1;
+            break;
+        }
+        case FT_RELAY_ACK: {
+            if (len < 5) return;
+            uint32_t seq; memcpy(&seq, data+1, 4);
+            int n = len - 5;
+            if (n < 0 || n > RELAY_MAX) return;
+            uint8_t okc = 1;
+            for (int i = 0; i < n; i++) {
+                if (((const uint8_t*)data)[5 + i] != g_relay_tx[i]) { okc = 0; break; }
+            }
+            g_relay_seq = seq; g_relay_t3 = now_us();
+            g_relay_ok  = okc; g_relay_has = 1;
             break;
         }
         default: break;
@@ -384,6 +418,39 @@ static void run_stream() {
     Serial.println("STREAM|done");
 }
 
+// ---- PC-master relay: computer -> A ->(WiFi)-> B -> A -> computer ----
+// Sends N bytes of a deterministic pattern, asks the SERVER to echo them
+// back bit-exact, then verifies integrity and reports the round-trip time
+// (including the serial hop into this board, not the host-side serial time).
+static void run_relay(int N) {
+    if (N < 1) N = 1;
+    if (N > RELAY_MAX) N = RELAY_MAX;
+    uint8_t frame[5 + RELAY_MAX];
+    frame[0] = FT_RELAY;
+    uint32_t seq = (uint32_t)(esp_timer_get_time() & 0xFFFFFFFFu);
+    memcpy(frame + 1, &seq, 4);
+    for (int i = 0; i < N; i++) {
+        uint8_t v = (uint8_t)((i * 31u + 7u) & 0xFFu);
+        frame[5 + i] = v;
+        g_relay_tx[i] = v;
+    }
+    g_relay_has = 0; g_relay_ok = 0;
+    uint32_t t0 = now_us();
+    if (!send_frame(frame, 5 + N, true)) {
+        Serial.printf("RELAY|fail|N=%d|send_queue_full\n", N);
+        return;
+    }
+    uint32_t spin = 0;
+    while (!g_relay_has && spin < PING_TIMEOUT_US / 10) { delayMicroseconds(10); spin++; }
+    if (!g_relay_has) {
+        Serial.printf("RELAY|lost|N=%d|us=%lu\n", N, (unsigned long)(now_us() - t0));
+        return;
+    }
+    uint32_t rtt = (g_relay_t3 >= t0) ? (g_relay_t3 - t0) : 0;
+    Serial.printf("RELAY|s|N=%d|rtt_us=%lu|ok=%d|seq=%lu\n",
+                  N, (unsigned long)rtt, (int)g_relay_ok, (unsigned long)g_relay_seq);
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("LINKFW|boot|role=CLIENT|stage=serial");
@@ -403,7 +470,7 @@ void setup() {
     add_broadcast_peer(WIFI_IF_STA);
     esp_now_register_send_cb(OnDataSent);
     esp_now_register_recv_cb(OnDataRecv);
-    esp_read_mac(g_client_mac, ESP_MAC_WIFI_STA);
+    esp_wifi_get_mac(WIFI_IF_STA, g_client_mac);
     char macs[18]; format_mac(macs, g_client_mac);
     Serial.printf("LINKFW|role=CLIENT|mac=%s|ch=%d|mode=%s|ap=%s|rssi=%ld\n",
                   macs, WiFi.channel(), MODE_STR, LF_SSID, (long)g_wifi_rssi);
@@ -444,6 +511,11 @@ void loop() {
         if (c == 'B' || c == 'b') { run_ping(); run_stream(); Serial.println("CLIENT|DONE"); }
         else if (c == 'P' || c == 'p') { run_ping(); Serial.println("CLIENT|DONE"); }
         else if (c == 'S' || c == 's') { run_stream(); Serial.println("CLIENT|DONE"); }
+        else if (c == 'W' || c == 'w') {
+            int n = Serial.parseInt();          // "W N<newline>" from the PC master
+            run_relay(n);
+            Serial.println("CLIENT|DONE");
+        }
     }
     delay(100);
 }

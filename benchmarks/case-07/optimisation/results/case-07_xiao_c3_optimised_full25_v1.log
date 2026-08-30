@@ -1,0 +1,87 @@
+=== case-07 full25 start Sun 30 Aug 2026 00:33:21 +08 port=/dev/cu.usbmodem101 ===
+esptool.py v4.8.1.1
+Serial port /dev/cu.usbmodem101
+Connecting...
+Chip is ESP32-C3 (QFN32) (revision v0.4)
+Features: WiFi, BLE, Embedded Flash 4MB (XMC)
+Crystal is 40MHz
+MAC: 64:e8:33:8a:5a:e8
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 460800
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00000000 to 0x00004fff...
+Flash will be erased from 0x00008000 to 0x00008fff...
+Flash will be erased from 0x0000e000 to 0x0000ffff...
+Flash will be erased from 0x00010000 to 0x0007ffff...
+Compressed 18688 bytes to 12099...
+Writing at 0x00000000... (100 %)
+Wrote 18688 bytes (12099 compressed) at 0x00000000 in 0.3 seconds (effective 564.1 kbit/s)...
+Hash of data verified.
+Compressed 3072 bytes to 137...
+Writing at 0x00008000... (100 %)
+Wrote 3072 bytes (137 compressed) at 0x00008000 in 0.0 seconds (effective 528.1 kbit/s)...
+Hash of data verified.
+Compressed 8192 bytes to 47...
+Writing at 0x0000e000... (100 %)
+Wrote 8192 bytes (47 compressed) at 0x0000e000 in 0.1 seconds (effective 774.8 kbit/s)...
+Hash of data verified.
+Compressed 456944 bytes to 307836...
+Writing at 0x00010000... (5 %)
+Writing at 0x00014725... (10 %)
+Writing at 0x00018d3e... (15 %)
+Writing at 0x0001d450... (21 %)
+Writing at 0x00021a71... (26 %)
+Writing at 0x0002609d... (31 %)
+Writing at 0x0002a7b8... (36 %)
+Writing at 0x0002f234... (42 %)
+Writing at 0x00033cba... (47 %)
+Writing at 0x0003c529... (52 %)
+Writing at 0x00046feb... (57 %)
+Writing at 0x0004ceec... (63 %)
+Writing at 0x000530c0... (68 %)
+Writing at 0x0005973b... (73 %)
+Writing at 0x0006069d... (78 %)
+Writing at 0x000666b9... (84 %)
+Writing at 0x0006c9c2... (89 %)
+Writing at 0x000727ee... (94 %)
+Writing at 0x00079a05... (100 %)
+Wrote 456944 bytes (307836 compressed) at 0x00010000 in 3.3 seconds (effective 1105.3 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting with RTC WDT...
+[device] frame = 4096 floats (16384 bytes) -> TM_S*TM_D from input file
+[device] boot: ''
+[device] TM 1 128 32
+seed 0: fails=    0 max_abs=1.1760e-03 0.481s fwd PASS
+seed 1: fails=    0 max_abs=8.6679e-04 0.475s fwd PASS
+seed 2: fails=    0 max_abs=1.4284e-03 0.475s fwd PASS
+seed 3: fails=    0 max_abs=1.1290e-03 0.475s fwd PASS
+seed 4: fails=    0 max_abs=1.2334e-03 0.475s fwd PASS
+seed 5: fails=    0 max_abs=9.8169e-04 0.475s fwd PASS
+seed 6: fails=    0 max_abs=9.9492e-04 0.475s fwd PASS
+seed 7: fails=    0 max_abs=1.0297e-03 0.475s fwd PASS
+seed 8: fails=    0 max_abs=1.1410e-03 0.475s fwd PASS
+seed 9: fails=    0 max_abs=1.0886e-03 0.475s fwd PASS
+seed 10: fails=    0 max_abs=1.0294e-03 0.475s fwd PASS
+seed 11: fails=    0 max_abs=1.0564e-03 0.476s fwd PASS
+seed 12: fails=    0 max_abs=9.6315e-04 0.475s fwd PASS
+seed 13: fails=    0 max_abs=1.4625e-03 0.475s fwd PASS
+seed 14: fails=    0 max_abs=1.0558e-03 0.475s fwd PASS
+seed 15: fails=    0 max_abs=1.2224e-03 0.475s fwd PASS
+seed 16: fails=    0 max_abs=1.1566e-03 0.475s fwd PASS
+seed 17: fails=    0 max_abs=1.1466e-03 0.475s fwd PASS
+seed 18: fails=    0 max_abs=1.1419e-03 0.475s fwd PASS
+seed 19: fails=    0 max_abs=1.3582e-03 0.475s fwd PASS
+seed 20: fails=    0 max_abs=1.0598e-03 0.475s fwd PASS
+seed 21: fails=    0 max_abs=9.3085e-04 0.475s fwd PASS
+seed 22: fails=    0 max_abs=8.6634e-04 0.475s fwd PASS
+seed 23: fails=    0 max_abs=1.3168e-03 0.475s fwd PASS
+seed 24: fails=    0 max_abs=1.0704e-03 0.475s fwd PASS
+[device] TM 1 475099 474979 475172
+ALL PASS
+rc=0
+=== case-07 end Sun 30 Aug 2026 00:34:04 +08 ===

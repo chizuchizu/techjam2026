@@ -21,6 +21,16 @@
 #include "model.h"
 #include "kernels.h"
 
+/* The in-repo binary-patched libfreertos.a (built against an older IDF)
+ * calls riscv_global_interrupts_enable(), which the current Arduino-ESP32
+ * 3.0.7 libs no longer export.  Provide the equivalent instruction: set the
+ * global interrupt-enable bit (MIE) in mstatus. */
+extern "C" __attribute__((weak)) void riscv_global_interrupts_enable(void) {
+    __asm__ __volatile__("csrs mstatus, %0" ::"r"(0x8));
+}
+
+
+
 /* embedded blobs from board_build.embed_files (project root) */
 extern const uint8_t _binary_weights_bin_start[] asm("_binary_weights_bin_start");
 extern const uint8_t _binary_weights_bin_end[]   asm("_binary_weights_bin_end");

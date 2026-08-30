@@ -39,13 +39,13 @@ projection and is not reported.
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
 | Current implementation (first physical capture) | **2.462 s** | 1.00x | Pass, 5/5 device seeds |
+| Optimised firmware, full 25-seed run (v1) | **2.166 s** | 1.14x | Pass, 25/25 device seeds |
 
-Single-input forward 2.462 s is the fresh physical capture on PORT B
-(`/dev/cu.usbmodem1101`; see the seed0_v1 log for the per-seed reps
-timing sweep). The 16 tiny heads add
-per-head loop/setup overhead in the hybrid attention path yet the
-projection-dominated forward stays close to the case-2 geometry's
-single-input time.
+The v1 row was measured on board B (`/dev/cu.usbmodem1101`), all 25 official
+device seeds PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,163,993 /
+2,164,242 / 2,164,130 us per forward. The 16 tiny heads add per-head loop/setup
+overhead yet the projection-dominated forward lands at ~2.17 s. Raw capture and
+summary: [`optimisation/results/`](optimisation/results/).
 
 ## Next case-specific step
 

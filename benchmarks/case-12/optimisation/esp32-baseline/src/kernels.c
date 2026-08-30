@@ -3,6 +3,7 @@
  */
 #define TM_PROFILE 1
 #include "kernels.h"
+#include "gelu_tab_2049.h"
 #pragma GCC optimize ("O3")
 #ifndef TM_IRAM
 #define TM_IRAM
@@ -80,7 +81,7 @@ static __inline__ uint32_t tm_kb_now_host(void) {
  * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_ccount();
+    return (uint64_t)esp_cpu_get_cycle_count();
 #else
     return 0;
 #endif
@@ -1651,21 +1652,48 @@ void tm_gelu_inplace(float* x, int n) {
  * err <0.1 Q15 units).  Output stays on the input Q15 grid (|gelu|<=|x|).
  */
 static int16_t g_gelu_lut[513];
+static const float GELU_ZMAX = 3.2f;
 void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
+    /* out = 0.5*x*(1+erf(x/(sa2*sqrt2))),  sa2 = TM_QACT_MAX/amax.
+     * erf via FIXED 2049-entry table over the argument z>=0 (generated
+     * constants, gelu_tab_2049.h) + per-layer integer index scale.
+     * index(x) = |x|/sqrt2/sa2 / ZSTEP.  Per layer: q = round(csc*2^S).
+     * Replaces the per-layer soft-float LUT rebuild (~50 ms/fwd) with
+     * ~7 integer ops/element (adds 4 KB flash .rodata, 0 RAM). */
     const float inv_sqrt2 = 0.70710677f;
-    float amr2 = amax * inv_sqrt2;
-    for (int k = 0; k <= 512; k++) {
-        float u = -1.0f + 2.0f * (float)k * (1.0f / 512.0f);
-        float p = tm_erf_poly(u * amr2);
-        float g = 0.5f * u * (1.0f + p);          /* gelu / amax */
-        g_gelu_lut[k] = (int16_t)(g * 32767.0f + (g >= 0.0f ? 0.5f : -0.5f));
+    const float ZSTEP = GELU_ZMAX / 2048.0f;
+    /* c = 1/(sa2*sqrt2) = amax/(QMAX*sqrt2)  ->  index = ax * c / ZSTEP */
+    const float csc = (amax / (32767.0f * inv_sqrt2)) / ZSTEP;
+    int S = 0;
+    int32_t q = 1;
+    if (csc < 2048.0f) {
+        while (S < 20) {
+            int32_t qtry = (int32_t)(csc * (float)(1 << S) + 0.5f);
+            if ((int64_t)32767 * (int64_t)qtry < ((int64_t)1 << 30)) { q = qtry; S++; }
+            else break;
+        }
     }
+    if (csc >= 2048.0f) {
+        /* erf saturated for every nonzero input: gelu(x)=x (x>0), 0 (x<0) */
+        for (int i = 0; i < n; i++) x[i] = x[i] > 0 ? x[i] : (int16_t)0;
+        return;
+    }
+    const int32_t half = 1 << (S - 1);
+    const int32_t mask = (1 << S) - 1;
     for (int i = 0; i < n; i++) {
-        int32_t p = (int32_t)x[i] + 32768;        /* 0..65535 */
-        int32_t idx = p >> 7;                     /* 0..511 */
-        int32_t off = p & 127;
-        x[i] = (int16_t)((int32_t)g_gelu_lut[idx] +
-                         ((((int32_t)g_gelu_lut[idx+1] - (int32_t)g_gelu_lut[idx]) * off + 64) >> 7));
+        int32_t v = x[i];
+        if (v == 0) continue;
+        int32_t ax = v < 0 ? -v : v;
+        int64_t avq = (int64_t)ax * q;
+        int32_t idx = (int32_t)(avq >> S);
+        if (idx >= 2048) { x[i] = v > 0 ? v : (int16_t)0; continue; }
+        int32_t e0 = g_erf_tab[idx], e1 = g_erf_tab[idx + 1];
+        int32_t off = (int32_t)(avq & mask);
+        int32_t ev = e0 + (((e1 - e0) * off + half) >> S);
+        float g;
+        if (v > 0) g = 0.5f * (float)ax * (32767.0f + (float)ev) / 32767.0f;
+        else       g = 0.5f * (float)ax * ((float)ev - 32767.0f) / 32767.0f;
+        x[i] = (int16_t)(g + (g >= 0.0f ? 0.5f : -0.5f));
     }
 }
 

@@ -138,6 +138,10 @@ static inline int32_t* tm_acc_scratch(void) {
 static float g_ctx_sa;               /* per-layer global ctx Q15 scale (FAST) */
 static float g_vs_h[TM_H];           /* per-head V scales (FAST phase A) */
 
+/* case-09 H==1: g_kh must stay a separate buffer.  In FAST mode the
+ * int32 projection scratch (g_acc == g_buf2 for H==1) covers all of
+ * g_buf2, so aliasing g_kh onto the upper int16 half corrupts the K-head
+ * accumulator.  Keep the static S*HD Q15 buffer. */
 static int16_t g_kh[TM_S * TM_HD];
 static float g_qs, g_ks, g_vs;   /* dequant scales (amax/32767) per head */
 

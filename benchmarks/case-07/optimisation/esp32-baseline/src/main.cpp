@@ -27,13 +27,32 @@ extern const uint8_t _binary_weights_bin_end[]   asm("_binary_weights_bin_end");
 extern const uint8_t _binary_weights_q12_bin_start[] asm("_binary_weights_q12_bin_start");
 extern const uint8_t _binary_weights_q12_bin_end[]   asm("_binary_weights_q12_bin_end");
 
+/* W07 r1 (case-07): stage the whole weight blobs into SRAM once at boot.
+ * case-07 weights are tiny: q12 = 49,344 B, fp32 = 103,680 B.  On the C3 the
+ * embedded blobs live in external SPI flash (XIP through the 16 KB uniform
+ * cache); keeping them in SRAM removes every flash-data miss and frees the
+ * whole cache for code fetch, and gives the asm GEMM cores 2-cycle loads. */
+/* q12 blob bytes = L * (6*8 header + 2*(4*D*D + F*D + D*F) data) */
+#define TM_Q12_BLOB_BYTES \
+    ((size_t)TM_L * (6u * 8u + 2u * (4u * (size_t)TM_D * TM_D + \
+                       2u * (size_t)TM_F * TM_D)))
+static uint8_t g_q12_sram[TM_Q12_BLOB_BYTES] __attribute__((aligned(32)));
+static float g_w_sram[TM_W_TOTAL] __attribute__((aligned(32)));
 static const float* g_wf32 = (const float*)_binary_weights_bin_start;
 static TMQ12Weights g_q12;
 static bool g_q12_scanned = false;
 
 static void ensure_q12(void) {
     if (!g_q12_scanned) {
-        tm_scan_q12(_binary_weights_q12_bin_start, &g_q12);
+        size_t q12_n = (size_t)(_binary_weights_q12_bin_end - _binary_weights_q12_bin_start);
+        if (q12_n <= sizeof g_q12_sram) {
+            memcpy(g_q12_sram, _binary_weights_q12_bin_start, q12_n);
+            memcpy(g_w_sram, _binary_weights_bin_start, sizeof g_w_sram);
+            tm_scan_q12(g_q12_sram, &g_q12);
+            g_wf32 = g_w_sram;
+        } else {
+            tm_scan_q12(_binary_weights_q12_bin_start, &g_q12);
+        }
         g_q12_scanned = true;
     }
 }

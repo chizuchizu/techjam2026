@@ -1,0 +1,209 @@
+=== case-10 full25 start Sun 30 Aug 2026 00:34:04 +08 port=/dev/cu.usbmodem101 ===
+esptool.py v4.8.1.1
+Serial port /dev/cu.usbmodem101
+Connecting...
+Chip is ESP32-C3 (QFN32) (revision v0.4)
+Features: WiFi, BLE, Embedded Flash 4MB (XMC)
+Crystal is 40MHz
+MAC: 64:e8:33:8a:5a:e8
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 460800
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00000000 to 0x00004fff...
+Flash will be erased from 0x00008000 to 0x00008fff...
+Flash will be erased from 0x0000e000 to 0x0000ffff...
+Flash will be erased from 0x00010000 to 0x0029ffff...
+Compressed 18688 bytes to 12099...
+Writing at 0x00000000... (100 %)
+Wrote 18688 bytes (12099 compressed) at 0x00000000 in 0.3 seconds (effective 590.2 kbit/s)...
+Hash of data verified.
+Compressed 3072 bytes to 137...
+Writing at 0x00008000... (100 %)
+Wrote 3072 bytes (137 compressed) at 0x00008000 in 0.0 seconds (effective 544.9 kbit/s)...
+Hash of data verified.
+Compressed 8192 bytes to 47...
+Writing at 0x0000e000... (100 %)
+Wrote 8192 bytes (47 compressed) at 0x0000e000 in 0.1 seconds (effective 781.5 kbit/s)...
+Hash of data verified.
+Compressed 2686576 bytes to 2306316...
+Writing at 0x00010000... (0 %)
+Writing at 0x000149b6... (1 %)
+Writing at 0x00018f57... (2 %)
+Writing at 0x0001d507... (2 %)
+Writing at 0x00021ac6... (3 %)
+Writing at 0x0002607d... (4 %)
+Writing at 0x0002a62c... (4 %)
+Writing at 0x0002ebdc... (5 %)
+Writing at 0x0003319a... (6 %)
+Writing at 0x0003774b... (7 %)
+Writing at 0x0003bcf2... (7 %)
+Writing at 0x000402a4... (8 %)
+Writing at 0x0004484a... (9 %)
+Writing at 0x00048dbb... (9 %)
+Writing at 0x0004d360... (10 %)
+Writing at 0x00051d1b... (11 %)
+Writing at 0x000562c8... (12 %)
+Writing at 0x0005a883... (12 %)
+Writing at 0x0005ee36... (13 %)
+Writing at 0x000633f8... (14 %)
+Writing at 0x000679c0... (14 %)
+Writing at 0x0006bf78... (15 %)
+Writing at 0x00070519... (16 %)
+Writing at 0x00074eb9... (17 %)
+Writing at 0x00079482... (17 %)
+Writing at 0x0007da4a... (18 %)
+Writing at 0x00081faa... (19 %)
+Writing at 0x00086562... (19 %)
+Writing at 0x0008ab06... (20 %)
+Writing at 0x0008f0ce... (21 %)
+Writing at 0x0009368c... (21 %)
+Writing at 0x00097c30... (22 %)
+Writing at 0x0009c1d6... (23 %)
+Writing at 0x000a0790... (24 %)
+Writing at 0x000a4d59... (24 %)
+Writing at 0x000a9302... (25 %)
+Writing at 0x000ad8b4... (26 %)
+Writing at 0x000b1e68... (26 %)
+Writing at 0x000b67e9... (27 %)
+Writing at 0x000bad84... (28 %)
+Writing at 0x000bf324... (29 %)
+Writing at 0x000c38df... (29 %)
+Writing at 0x000c7e81... (30 %)
+Writing at 0x000cc41a... (31 %)
+Writing at 0x000d09ab... (31 %)
+Writing at 0x000d5346... (32 %)
+Writing at 0x000d98f4... (33 %)
+Writing at 0x000ddeb4... (34 %)
+Writing at 0x000e2464... (34 %)
+Writing at 0x000e6a16... (35 %)
+Writing at 0x000eafc0... (36 %)
+Writing at 0x000ef51e... (36 %)
+Writing at 0x000f3ad1... (37 %)
+Writing at 0x000f8078... (38 %)
+Writing at 0x000fc638... (39 %)
+Writing at 0x00100bf1... (39 %)
+Writing at 0x001051ba... (40 %)
+Writing at 0x0010975e... (41 %)
+Writing at 0x0010dd21... (41 %)
+Writing at 0x001122ce... (42 %)
+Writing at 0x00116c78... (43 %)
+Writing at 0x0011b225... (43 %)
+Writing at 0x0011f7da... (44 %)
+Writing at 0x00123d92... (45 %)
+Writing at 0x001282ed... (46 %)
+Writing at 0x0012c8a3... (46 %)
+Writing at 0x00130e55... (47 %)
+Writing at 0x001357f2... (48 %)
+Writing at 0x00139da3... (48 %)
+Writing at 0x0013e368... (49 %)
+Writing at 0x00142924... (50 %)
+Writing at 0x00146edc... (51 %)
+Writing at 0x0014b499... (51 %)
+Writing at 0x0014fa5d... (52 %)
+Writing at 0x0015400c... (53 %)
+Writing at 0x001585c2... (53 %)
+Writing at 0x0015cb26... (54 %)
+Writing at 0x001610d8... (55 %)
+Writing at 0x0016569c... (56 %)
+Writing at 0x00169c38... (56 %)
+Writing at 0x0016e1f5... (57 %)
+Writing at 0x001727a1... (58 %)
+Writing at 0x0017714e... (58 %)
+Writing at 0x0017b70a... (59 %)
+Writing at 0x0017fcc0... (60 %)
+Writing at 0x0018427c... (60 %)
+Writing at 0x0018882d... (61 %)
+Writing at 0x0018cde6... (62 %)
+Writing at 0x0019138e... (63 %)
+Writing at 0x00195c86... (63 %)
+Writing at 0x0019a71d... (64 %)
+Writing at 0x0019f1a3... (65 %)
+Writing at 0x001a3c2c... (65 %)
+Writing at 0x001a86b5... (66 %)
+Writing at 0x001ad156... (67 %)
+Writing at 0x001b1bda... (68 %)
+Writing at 0x001b665c... (68 %)
+Writing at 0x001bb0c1... (69 %)
+Writing at 0x001bfb47... (70 %)
+Writing at 0x001c45bf... (70 %)
+Writing at 0x001c9044... (71 %)
+Writing at 0x001cdac8... (72 %)
+Writing at 0x001d2546... (73 %)
+Writing at 0x001d6fd4... (73 %)
+Writing at 0x001dba6a... (74 %)
+Writing at 0x001e04ae... (75 %)
+Writing at 0x001e4f35... (75 %)
+Writing at 0x001e99bb... (76 %)
+Writing at 0x001ee464... (77 %)
+Writing at 0x001f2ef4... (78 %)
+Writing at 0x001f797a... (78 %)
+Writing at 0x001fc419... (79 %)
+Writing at 0x00200e9a... (80 %)
+Writing at 0x002058ce... (80 %)
+Writing at 0x0020a370... (81 %)
+Writing at 0x0020edf1... (82 %)
+Writing at 0x0021386e... (82 %)
+Writing at 0x00218301... (83 %)
+Writing at 0x0021cd96... (84 %)
+Writing at 0x0022183f... (85 %)
+Writing at 0x002262c4... (85 %)
+Writing at 0x0022ad16... (86 %)
+Writing at 0x0022f7a6... (87 %)
+Writing at 0x00234233... (87 %)
+Writing at 0x00238cd3... (88 %)
+Writing at 0x0023d761... (89 %)
+Writing at 0x00242206... (90 %)
+Writing at 0x00246c93... (90 %)
+Writing at 0x0024b72c... (91 %)
+Writing at 0x0025017c... (92 %)
+Writing at 0x00254ab5... (92 %)
+Writing at 0x0025d4dd... (93 %)
+Writing at 0x00267f18... (94 %)
+Writing at 0x0026dce6... (95 %)
+Writing at 0x002737bf... (95 %)
+Writing at 0x00279f73... (96 %)
+Writing at 0x00280c0f... (97 %)
+Writing at 0x00286d27... (97 %)
+Writing at 0x0028d0fe... (98 %)
+Writing at 0x00292dc6... (99 %)
+Writing at 0x0029a49f... (100 %)
+Wrote 2686576 bytes (2306316 compressed) at 0x00010000 in 20.3 seconds (effective 1059.7 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting with RTC WDT...
+[device] frame = 16384 floats (65536 bytes) -> TM_S*TM_D from input file
+[device] boot: ''
+[device] TM 1 128 128
+seed 0: fails=    0 max_abs=1.1283e-03 2.165s fwd PASS
+seed 1: fails=    0 max_abs=1.1991e-03 2.164s fwd PASS
+seed 2: fails=    0 max_abs=1.0271e-03 2.165s fwd PASS
+seed 3: fails=    0 max_abs=1.0554e-03 2.165s fwd PASS
+seed 4: fails=    0 max_abs=1.0479e-03 2.165s fwd PASS
+seed 5: fails=    0 max_abs=9.7889e-04 2.165s fwd PASS
+seed 6: fails=    0 max_abs=9.4676e-04 2.165s fwd PASS
+seed 7: fails=    0 max_abs=9.1235e-04 2.165s fwd PASS
+seed 8: fails=    0 max_abs=1.0409e-03 2.165s fwd PASS
+seed 9: fails=    0 max_abs=1.0204e-03 2.165s fwd PASS
+seed 10: fails=    0 max_abs=1.0427e-03 2.164s fwd PASS
+seed 11: fails=    0 max_abs=9.6568e-04 2.165s fwd PASS
+seed 12: fails=    0 max_abs=1.0117e-03 2.165s fwd PASS
+seed 13: fails=    0 max_abs=1.0715e-03 2.165s fwd PASS
+seed 14: fails=    0 max_abs=9.9641e-04 2.165s fwd PASS
+seed 15: fails=    0 max_abs=1.1132e-03 2.164s fwd PASS
+seed 16: fails=    0 max_abs=9.9012e-04 2.165s fwd PASS
+seed 17: fails=    0 max_abs=9.5820e-04 2.165s fwd PASS
+seed 18: fails=    0 max_abs=1.2367e-03 2.165s fwd PASS
+seed 19: fails=    0 max_abs=1.0114e-03 2.165s fwd PASS
+seed 20: fails=    0 max_abs=1.1908e-03 2.165s fwd PASS
+seed 21: fails=    0 max_abs=9.6303e-04 2.165s fwd PASS
+seed 22: fails=    0 max_abs=9.9611e-04 2.165s fwd PASS
+seed 23: fails=    0 max_abs=1.1258e-03 2.165s fwd PASS
+seed 24: fails=    0 max_abs=1.0048e-03 2.164s fwd PASS
+[device] TM 1 2162329 2162943 2162547
+ALL PASS
+rc=0
+=== case-10 end Sun 30 Aug 2026 00:36:28 +08 ===

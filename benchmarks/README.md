@@ -31,12 +31,12 @@ Measured cross-case run of the case-2 optimised firmware on cases 1–5:
 | [04](case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **42.4x** | data parallel, 2.00x | 16/16 forwards PASS |
 | [05](case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **42.3x** | data parallel, 2.00x | 128/128 forwards PASS |
 | [06](case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | Not implemented | - |
-| [07](case-07/) | `(64,128,32,4,32,4)` | - | - | - | - | Not implemented | - |
+| [07](case-07/) | `(64,128,32,4,32,4)` | - | **0.475 s/fwd** | - | - | - | 25/25 PASS (worst 1.46e-03) |
 | [08](case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | Not implemented | - |
-| [09](case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | Not implemented | - |
-| [10](case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | Not implemented | - |
-| [11](case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | Not implemented | - |
-| [12](case-12/) | `(64,32,128,4,128,4)` | - | - | - | - | Not implemented | - |
+| [09](case-09/) | `(64,128,128,1,128,4)` | - | **2.157 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03; SRAM fixed) |
+| [10](case-10/) | `(64,128,128,2,128,4)` | - | **2.165 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03) |
+| [11](case-11/) | `(64,128,128,16,128,4)` | - | **2.166 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03) |
+| [12](case-12/) | `(64,32,128,4,128,4)` | - | **0.529 s/fwd** | - | - | - | 25/25 PASS (worst 1.14e-03) |
 | [13](case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | Not implemented | - |
 | [14](case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | Not implemented | - |
 
@@ -49,6 +49,15 @@ three columns alike.
 their baseline is **estimated** as `B x 42.15 s` from case 2's measured
 starting point. Only case 2's baseline is a measurement. The optimised and
 two-board columns are measured everywhere.
+
+Cases 7, 9, 10, 11 and 12 each stream `B=64` independent inputs, so the
+"Optimised, 1 board" figure above is **one complete four-layer forward** as
+measured by the device (0.475 / 2.157 / 2.165 / 2.166 / 0.529 s). The
+whole-case totals are the derived `B x` projection — 30.4 / 138.1 / 138.6 /
+138.6 / 33.9 s — and are intentionally not reported as measurements; see each
+case README for the raw 25-seed captures. Cases 8 and 13 have no consumable
+firmware in this workspace and remain not implemented.
+
 
 **Multiboard split** names which decomposition the two-board column used. Cases
 1, 3, 4 and 5 are batches of independent forwards, so the boards run

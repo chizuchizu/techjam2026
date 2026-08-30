@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ================= fp32 GEMM =================
  * C[M,N] = A[M,K]*W[N,K]^T + bias. Row-major A, W stored as N*K rows
@@ -80,7 +81,7 @@ static __inline__ uint32_t tm_kb_now_host(void) {
  * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_ccount();
+    return (uint64_t)esp_cpu_get_cycle_count();
 #else
     return 0;
 #endif
@@ -2157,9 +2158,12 @@ extern const uint8_t _binary_weights_q12_bin_start[];
 
 void tm_kbench3(char* out, size_t outsz) {
 #if defined(__riscv)
-    enum { M=128, K=128, N=128, HD=32 };
+    enum { M=128, K=128, N=16, HD=32 };
+    /* dedicated SRAM weight buffer: static BSS is full (~640 B headroom),
+     * so grab the small window from the heap; cyc/MAC is size-independent. */
+    int16_t* Ws = (int16_t*)malloc((size_t)K * N * 2u);
+    if (!Ws) { snprintf(out,outsz,"kbench3: malloc fail\n"); return; }
     int16_t* A  = tm_gemm_a16();
-    int16_t* Ws = A + M*K;
     const int16_t* Wf = (const int16_t*)(const void*)_binary_weights_q12_bin_start;
     uint32_t st = 909;
     for (int i=0;i<M*K;i++){ st=st*1664525u+1013904223u; A[i]=(int16_t)(st>>16); }
@@ -2237,6 +2241,7 @@ void tm_kbench3(char* out, size_t outsz) {
     snprintf(out,outsz,
       "K3b verbCinner_SRAM=%.2f verbCinner_FLASH=%.2f j1k128_SRAM=%.2f (cyc/8MAC) sink=%d\n",
       e,f,gg,(int)sink);
+    free(Ws);
 #else
     snprintf(out,outsz,"K3 host\n");
 #endif

@@ -47,6 +47,21 @@ for the client's periodic `CLIENT|READY`, sends `B`, and cross-checks server
 ground truth. No router, no serial break-out needed.
 
 
+## PC-master bridge (computer master, 2x ESP32 slaves)
+
+Serial command `W <N>` on `link-client` sends N bytes (1..240) over the ESP-NOW
+WiFi link to `link-server`, which echoes them back bit-exact; the client then
+reports `RELAY|s|N=...|rtt_us=...|ok=1`. This is the computer-as-master
+topology: computer -> USB-CDC -> board A -> ESP-NOW -> board B -> back.
+
+Measured relay round-trip: 1153 / 1226 / 1263 / 1342 us for N=1/16/64/240,
+all bit-exact. Footprint (Arduino 3.0.7): server RAM 10.4% (34,028 B),
+client RAM 12.8% (42,084 B) — ~280 KB of SRAM left for compute.
+Direct-WiFi alternative (computer joins the boards' AP and is the UDP master):
+`tools/wifi_master.py discover|ping|sum|bench`.
+Details: [docs/PC_MASTER_WIFI_BRIDGE.md](docs/PC_MASTER_WIFI_BRIDGE.md),
+research: [research/computer_master_wifi_research.md](research/computer_master_wifi_research.md).
+
 ## Same-WiFi IP mode (`link-station`) — boards find each other over a router/hotspot
 
 For when every board joins the **same WiFi network** (e.g. a venue hotspot or

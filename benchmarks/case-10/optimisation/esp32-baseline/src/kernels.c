@@ -81,7 +81,7 @@ static __inline__ uint32_t tm_kb_now_host(void) {
  * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_ccount();
+    return (uint64_t)esp_cpu_get_cycle_count();
 #else
     return 0;
 #endif

@@ -30,22 +30,21 @@ attention/projection path has no head loop at all.
 
 ## Comparable complete-forward result
 
-> **SRAM anomaly — not measurable on a single XIAO ESP32-C3.**
-> **The firmware does not link on the board**: the linker reports that
-> region `dram0_0_seg` is overfull by
-> **73,072 bytes** at `H=1`. The per-head Q/K/V/context buffers scale as
-> `S * HD` (inverse of `H`), so the single-head configuration has the
-> largest working set of all eight head-count cases. No physical device
-> measurement is possible without firmware changes outside the
-> mechanical baseline mandate. See [`baseline/`](baseline/) for the
-> full record, region budget, and the three hardware alternatives.
+The earlier baseline report stated the firmware could not link on one XIAO
+ESP32-C3 (`dram0_0_seg` overflowed at `H=1`). The maintained
+`optimisation/esp32-baseline` firmware fixed that: the `H==1` `g_kh` alias was
+reverted to a real buffer, and current framework libs were minimised
+(`xIsrStack`, coredump stack, `prstatus`) in `patched_sdk_libs_current/`. The
+firmware now links (RAM 273,180 / 327,680 B, 83.4%) and runs on the board.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
-| Current implementation (first physical capture) | not measurable — linker `dram0_0_seg` overflowed by 73,072 B | — | not run (no firmware image) |
+| Optimised firmware, full 25-seed run (v1) | **2.157 s** | 1.00x | Pass, 25/25 device seeds |
 
-The device measurement is physically impossible on this board with the
-current workspace.
+Measured on board B (`/dev/cu.usbmodem1101`), all 25 official device seeds
+PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,154,695 / 2,155,128 /
+2,155,441 us per forward. Raw capture and summary:
+[`optimisation/results/`](optimisation/results/).
 
 ## Next case-specific step
 

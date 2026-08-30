@@ -30,11 +30,15 @@ ESP32-C3 at 160 MHz, one forward per input frame.
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
 | Current implementation (first physical capture) | **0.491 s** | 1.00x | Pass, 5/5 device seeds |
+| Optimised firmware, full 25-seed run (v1) | **0.475 s** | 1.03x | Pass, 25/25 device seeds |
 
-The 0.491 s/forward was measured on board A (`/dev/cu.usbmodem101`) with 5/5
-device seeds passing the benchmark gate and is reused here per the case spec
-(no reflash). A complete-batch total would be a derived projection and is
-not reported; only real on-board measurements appear here.
+The 0.475 s/forward v1 row was measured on board A (`/dev/cu.usbmodem101`)
+with all 25 official device seeds passing the benchmark gate (worst
+`abs_err` 1.46e-03), plus a firmware `TM` sweep of 475,099 / 474,979 /
+475,172 us per forward. Raw capture and summary live in
+[`optimisation/results/`](optimisation/results/). A complete-batch total
+would be a derived projection and is not reported; only real on-board
+measurements appear here.
 
 ## Likely next step
 

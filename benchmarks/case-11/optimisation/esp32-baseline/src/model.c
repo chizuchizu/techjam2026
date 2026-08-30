@@ -247,6 +247,26 @@ static const int16_t g_exp_lut[513] = {
 static float g_qkv_sa;                  /* its Q15 scale */
 static int64_t g_attn_score[TM_S];   /* per-row dot products (1 KB) */
 
+/* ((v + (1LL << (sh-1))) >> sh) for 1 <= sh <= 30, fully inlined (no
+ * __ashrdi3/__ashldi3 libcalls). v is an int32xint32 product (|v| < 2^62) and
+ * the rounded result fits in int16, so only the low 32 bits of the shifted
+ * 64-bit word are needed. */
+static inline int32_t tm_round_shift_i64(int64_t v, int sh) {
+    uint32_t lo = (uint32_t)v;
+    uint32_t hi = (uint32_t)((uint64_t)v >> 32);
+    if (sh < 32) {
+        uint32_t rnd = (1u << (sh - 1));
+        uint32_t sum = lo + rnd;
+        uint32_t h2 = hi + (uint32_t)(sum < rnd);
+        return (int32_t)((sum >> sh) | (h2 << (32 - sh)));
+    } else {
+        uint32_t h2;
+        if (sh == 32) { uint32_t sum = lo + 0x80000000u; h2 = hi + (sum < 0x80000000u); }
+        else { h2 = hi + (uint32_t)((uint64_t)1 << (sh - 33)); }
+        return (int32_t)((int32_t)h2 >> (sh - 32));
+    }
+}
+
 static void attn_head(float* ctx, const int16_t* qh, float sq,
                       const int16_t* kh, float sk,
                       const int16_t* vh, float sv, int head) {
@@ -255,6 +275,18 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
     const int fast = (g_mode == TM_MODE_FAST);
     static int32_t g_p15[TM_S];
     const float g_sctx = fast ? g_ctx_sa : 0.0f;
+    /* PV ctx scale (m, sh) is fixed for the whole head call (sv and g_sctx
+     * are loop-invariant); hoist the fp32 normalize search and the rounding
+     * out of the 128-row loop. Bit-identical to the per-row computation. */
+    int32_t m = 0, sh = 1;
+    if (fast) {
+        float t = sv * g_sctx / TM_QACT_MAX;
+        sh = 0;
+        while (t < 268435456.0f && sh < 63) { t += t; sh++; }
+        while (t >= 1073741824.0f && sh > 1) { t *= 0.5f; sh--; }
+        m = (int32_t)t;
+        if (sh < 1) { m = (int32_t)(t * 0.5f); sh = 1; }
+    }
     for (int i = 0; i < TM_S; i++) {
         const int16_t* qi16 = qh + (size_t)i * TM_HD;
         int32_t maxL = INT32_MIN, maxH = INT32_MIN;
@@ -377,13 +409,8 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                 g_p15[j] = ((int64_t)g_p15[j] * f15 + 0x4000) >> 15;
             /* integer ctx epilogue: ctx_q = round(c0 * rot) with rot = m/2^sh,
              * m in [2^28, 2^30) -> exact int64 product, no fp32 per element.
+             * (m, sh) were hoisted out of the row loop above (loop-invariant).
              * |real_ctx| <= ctxmax => |ctx_q| <= QACT, so sh >= 1 in practice. */
-            float t = sv * g_sctx / TM_QACT_MAX;
-            int sh = 0;
-            while (t < 268435456.0f && sh < 63) { t += t; sh++; }
-            while (t >= 1073741824.0f && sh > 1) { t *= 0.5f; sh--; }
-            int32_t m = (int32_t)t;
-            if (sh < 1) { m = (int32_t)(t * 0.5f); sh = 1; }
             for (int db = 0; db < TM_HD; db += 8) {
                 int32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5 = 0, c6 = 0, c7 = 0;
                 for (int j = 0; j <= i; j++) {
@@ -399,14 +426,14 @@ static void attn_head(float* ctx, const int16_t* qh, float sq,
                     c7 += p * (int32_t)vj[db+7];
                 }
                 int16_t* oq = g_ctxq + (size_t)i * TM_D + head * TM_HD + db;
-                oq[0] = (int16_t)(((int64_t)c0 * m + (1LL << (sh - 1))) >> sh);
-                oq[1] = (int16_t)(((int64_t)c1 * m + (1LL << (sh - 1))) >> sh);
-                oq[2] = (int16_t)(((int64_t)c2 * m + (1LL << (sh - 1))) >> sh);
-                oq[3] = (int16_t)(((int64_t)c3 * m + (1LL << (sh - 1))) >> sh);
-                oq[4] = (int16_t)(((int64_t)c4 * m + (1LL << (sh - 1))) >> sh);
-                oq[5] = (int16_t)(((int64_t)c5 * m + (1LL << (sh - 1))) >> sh);
-                oq[6] = (int16_t)(((int64_t)c6 * m + (1LL << (sh - 1))) >> sh);
-                oq[7] = (int16_t)(((int64_t)c7 * m + (1LL << (sh - 1))) >> sh);
+                oq[0] = (int16_t)tm_round_shift_i64((int64_t)c0 * m, sh);
+                oq[1] = (int16_t)tm_round_shift_i64((int64_t)c1 * m, sh);
+                oq[2] = (int16_t)tm_round_shift_i64((int64_t)c2 * m, sh);
+                oq[3] = (int16_t)tm_round_shift_i64((int64_t)c3 * m, sh);
+                oq[4] = (int16_t)tm_round_shift_i64((int64_t)c4 * m, sh);
+                oq[5] = (int16_t)tm_round_shift_i64((int64_t)c5 * m, sh);
+                oq[6] = (int16_t)tm_round_shift_i64((int64_t)c6 * m, sh);
+                oq[7] = (int16_t)tm_round_shift_i64((int64_t)c7 * m, sh);
             }
         } else {
             float inv = (lsum15 > 0) ? sv / (float)lsum15 : 0.0f;
