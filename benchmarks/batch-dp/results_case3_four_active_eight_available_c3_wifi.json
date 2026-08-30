@@ -1,0 +1,30 @@
+[
+  {
+    "batch": 4,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 4,
+    "per_board_inputs": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "per_board_compute_s": [
+      4.218,
+      4.218,
+      4.216,
+      4.216
+    ],
+    "compute_wall_s": 4.218,
+    "one_board_compute_s": 16.867,
+    "speedup": 3.999,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 5.0,
+    "serial_wall_s": 5.0,
+    "per_forward_s": 4.2168,
+    "fails": 0,
+    "max_abs": 0.0010499358177185059
+  }
+]

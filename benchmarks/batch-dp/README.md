@@ -108,3 +108,11 @@ forwards passed with no losses, and compute scaling remained exactly 4.00x for
 B=4, 16, 64 and 128. See
 [`RESULTS_FOUR_C3_WIFI.md`](RESULTS_FOUR_C3_WIFI.md) and
 [`results_cases_1_3_4_5_four_c3_wifi.json`](results_cases_1_3_4_5_four_c3_wifi.json).
+
+Measured with eight physical C3s available, cases 1, 4 and 5 used all eight
+nodes and retained **8.00x** compute scaling. Case 3 correctly saturated at
+four active nodes and case 2 at one, because data parallelism cannot use more
+workers than independent inputs. All 213/213 forwards across cases 1–5 passed
+with no losses and zero failing elements. See
+[`RESULTS_EIGHT_C3_WIFI.md`](RESULTS_EIGHT_C3_WIFI.md) for the complete timing
+table, utilization limits, and raw-result links.
