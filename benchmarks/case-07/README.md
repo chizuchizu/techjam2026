@@ -45,16 +45,17 @@ now a measured number as well: streaming all B=64 frames on-board took
 **70.227 s** of wall time including host USB pacing — see
 `case-07_xiao_c3_optimised_full_case_v1.md` in the same directory.
 
-## Two-board WiFi data parallelism
+## WiFi data parallelism
 
 After reconfirming the official-shape host gate (50/50 FAST + EXACT seed-runs)
-and a fresh optimized one-board physical batch (31.006 s, 64/64 PASS), two
-WiFi ESP32-C3 workers ran 32 inputs each:
+and a fresh optimized one-board physical batch (31.006 s, 64/64 PASS), direct
+WiFi ESP32-C3 replicas ran the batch on two and four boards:
 
 | Active boards | Compute wall | End-to-end wall | Scaling | Validation |
 |---:|---:|---:|---:|---|
 | 1 optimized USB | 31.006 s | 203.7 s * | 1.00x | 64/64 PASS |
 | 2 WiFi replicas | **15.822 s** | **28.6 s** | **2.00x vs one WiFi worker** | 64/64 PASS |
+| 4 WiFi replicas | **7.922 s** | **17.9 s** | **4.00x vs one WiFi worker** | 64/64 PASS |
 
 `*` The fresh USB run recovered one short output frame, inflating only its
 transport-inclusive wall. No input was omitted; device compute and all 64
@@ -70,6 +71,6 @@ raw JSON, and reproduction commands:
 
 D and F of 32 make the projection and FFN matrices tiny, so dispatch, loop,
 and serialization overhead dominate the small GEMMs. Fuse the narrow
-projections and normalization. Data parallelism is already validated at 2.00x;
-the next hardware step is four/eight-node scaling after the same two-board
-evidence ladder is completed for case 12.
+projections and normalization. Data parallelism is now physically validated at
+4.00x; the next hardware step is the same eight-node scale-out already
+validated for case 12.
