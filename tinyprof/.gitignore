@@ -1,0 +1,4 @@
+# host capture drivers, rebuilt by `make -C tools host-profile host_profile_v0`
+tools/host_profile
+tools/host_profile_v0
+__pycache__/

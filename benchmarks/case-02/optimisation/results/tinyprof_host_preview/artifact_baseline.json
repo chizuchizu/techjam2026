@@ -1,0 +1,592 @@
+{
+ "tinyprof_artifact_version": 1,
+ "tag": "baseline-79f284a",
+ "device": "host",
+ "shape": {
+  "S": 128,
+  "D": 128,
+  "H": 4,
+  "F": 128,
+  "L": 4
+ },
+ "cpu_mhz": 160,
+ "tick_hz": 1000000000,
+ "tick_resolution_ns": 1.0,
+ "reps": 3,
+ "mode": 1,
+ "wall": {
+  "us_per_forward": 9696.0,
+  "s_per_forward": 0.009696,
+  "source": "driver total / reps",
+  "measured": true
+ },
+ "accuracy": {
+  "gate": "abs_err <= 0.002 OR rel_err <= 0.02, per output element",
+  "seeds": [
+   {
+    "seed": 0,
+    "fails": 0,
+    "max_abs": 0.0008124113,
+    "max_rel": 0.8181016,
+    "atol": 0.002,
+    "rtol": 0.02
+   }
+  ],
+  "all_pass": true
+ },
+ "ops": [
+  {
+   "index": 0,
+   "name": "norm1",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 132.983,
+   "exclusive_us_per_forward": 132.983,
+   "avg_us_per_call": 33.2457,
+   "share_of_forward_pct": 1.372,
+   "exclusive_us_per_forward_overhead_corrected": 132.897,
+   "inclusive_us_per_forward_overhead_corrected": 132.897,
+   "probe_overhead_pct_of_zone": 0.06,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 1,
+   "name": "qkv",
+   "parent": null,
+   "calls_per_forward": 16.0,
+   "inclusive_us_per_forward": 3387.224,
+   "exclusive_us_per_forward": 2725.169,
+   "avg_us_per_call": 211.7015,
+   "share_of_forward_pct": 28.106,
+   "exclusive_us_per_forward_overhead_corrected": 2724.826,
+   "inclusive_us_per_forward_overhead_corrected": 3385.852,
+   "probe_overhead_pct_of_zone": 0.01,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 2,
+   "name": "quant",
+   "parent": "qkv",
+   "calls_per_forward": 48.0,
+   "inclusive_us_per_forward": 662.055,
+   "exclusive_us_per_forward": 662.055,
+   "avg_us_per_call": 13.7928,
+   "share_of_forward_pct": 6.828,
+   "exclusive_us_per_forward_overhead_corrected": 661.026,
+   "inclusive_us_per_forward_overhead_corrected": 661.026,
+   "probe_overhead_pct_of_zone": 0.16,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 3,
+   "name": "attn",
+   "parent": null,
+   "calls_per_forward": 16.0,
+   "inclusive_us_per_forward": 4039.628,
+   "exclusive_us_per_forward": 4039.628,
+   "avg_us_per_call": 252.4768,
+   "share_of_forward_pct": 41.663,
+   "exclusive_us_per_forward_overhead_corrected": 4039.285,
+   "inclusive_us_per_forward_overhead_corrected": 4039.285,
+   "probe_overhead_pct_of_zone": 0.01,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 4,
+   "name": "oproj",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 461.053,
+   "exclusive_us_per_forward": 461.053,
+   "avg_us_per_call": 115.2632,
+   "share_of_forward_pct": 4.755,
+   "exclusive_us_per_forward_overhead_corrected": 460.967,
+   "inclusive_us_per_forward_overhead_corrected": 460.967,
+   "probe_overhead_pct_of_zone": 0.02,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 5,
+   "name": "res1",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 18.561,
+   "exclusive_us_per_forward": 18.561,
+   "avg_us_per_call": 4.6403,
+   "share_of_forward_pct": 0.191,
+   "exclusive_us_per_forward_overhead_corrected": 18.476,
+   "inclusive_us_per_forward_overhead_corrected": 18.476,
+   "probe_overhead_pct_of_zone": 0.46,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 6,
+   "name": "norm2",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 137.671,
+   "exclusive_us_per_forward": 137.671,
+   "avg_us_per_call": 34.4178,
+   "share_of_forward_pct": 1.42,
+   "exclusive_us_per_forward_overhead_corrected": 137.586,
+   "inclusive_us_per_forward_overhead_corrected": 137.586,
+   "probe_overhead_pct_of_zone": 0.06,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 7,
+   "name": "f1",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 489.681,
+   "exclusive_us_per_forward": 489.681,
+   "avg_us_per_call": 122.4202,
+   "share_of_forward_pct": 5.05,
+   "exclusive_us_per_forward_overhead_corrected": 489.595,
+   "inclusive_us_per_forward_overhead_corrected": 489.595,
+   "probe_overhead_pct_of_zone": 0.02,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 8,
+   "name": "gelu",
+   "parent": "f2",
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 502.331,
+   "exclusive_us_per_forward": 502.331,
+   "avg_us_per_call": 125.5827,
+   "share_of_forward_pct": 5.181,
+   "exclusive_us_per_forward_overhead_corrected": 502.245,
+   "inclusive_us_per_forward_overhead_corrected": 502.245,
+   "probe_overhead_pct_of_zone": 0.02,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 9,
+   "name": "f2",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 973.497,
+   "exclusive_us_per_forward": 471.166,
+   "avg_us_per_call": 243.3742,
+   "share_of_forward_pct": 4.859,
+   "exclusive_us_per_forward_overhead_corrected": 471.08,
+   "inclusive_us_per_forward_overhead_corrected": 973.325,
+   "probe_overhead_pct_of_zone": 0.01,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 10,
+   "name": "res2",
+   "parent": null,
+   "calls_per_forward": 4.0,
+   "inclusive_us_per_forward": 17.857,
+   "exclusive_us_per_forward": 17.857,
+   "avg_us_per_call": 4.4643,
+   "share_of_forward_pct": 0.184,
+   "exclusive_us_per_forward_overhead_corrected": 17.772,
+   "inclusive_us_per_forward_overhead_corrected": 17.772,
+   "probe_overhead_pct_of_zone": 0.48,
+   "resolution_limited": false,
+   "measured": true
+  },
+  {
+   "index": 11,
+   "name": "final",
+   "parent": null,
+   "calls_per_forward": 1.0,
+   "inclusive_us_per_forward": 32.786,
+   "exclusive_us_per_forward": 32.786,
+   "avg_us_per_call": 32.7857,
+   "share_of_forward_pct": 0.338,
+   "exclusive_us_per_forward_overhead_corrected": 32.764,
+   "inclusive_us_per_forward_overhead_corrected": 32.764,
+   "probe_overhead_pct_of_zone": 0.07,
+   "resolution_limited": false,
+   "measured": true
+  }
+ ],
+ "top_by_exclusive_time": [
+  "attn",
+  "qkv",
+  "quant",
+  "gelu",
+  "f1",
+  "f2",
+  "oproj",
+  "norm2",
+  "norm1",
+  "final"
+ ],
+ "top_by_calls": [
+  "quant",
+  "qkv",
+  "attn",
+  "norm1",
+  "oproj",
+  "res1",
+  "norm2",
+  "f1",
+  "gelu",
+  "f2"
+ ],
+ "traffic": {
+  "flash_xip_bytes_per_forward": 795648,
+  "sram_bytes_per_forward": 7340032,
+  "by_op": [
+   {
+    "op": "quant",
+    "calls_per_forward": 48.0,
+    "flash_xip_bytes_per_forward": 393216,
+    "sram_bytes_per_forward": 3145728,
+    "achieved_mb_s": 5345.39,
+    "confidence": "analytic_exact",
+    "why": "Each call is one tm_gemm_head_q15: it streams one head slice of a Q12 weight matrix, HD*D int16 = 32*128*2 = 8192 B from flash. 48 calls per forward = 4 layers x (4 V + 4 Q + 4 K) head projections. 48 x 8192 = 393,216 B, which is the 384 KB 'KB0' row of optimisations/20_profiling_memory_compute.md, here derived from a measured call count instead of assumed. SRAM term is the Q15 activation read, S*D int16 x 2 (read a16, write the head buffer).",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "oproj",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 131072,
+    "sram_bytes_per_forward": 393216,
+    "achieved_mb_s": 1137.15,
+    "confidence": "analytic_exact",
+    "why": "One core5 output projection per layer over the full D x D Q12 matrix: 128*128*2 = 32,768 B of flash. 4 calls = 131,072 B. SRAM: read S*D int16 context + write S*D fp32.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "f1",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 131072,
+    "sram_bytes_per_forward": 393216,
+    "achieved_mb_s": 1070.67,
+    "confidence": "analytic_exact",
+    "why": "First FFN GEMM, F x D Q12 = 128*128*2 = 32,768 B of flash per layer.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "f2",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 131072,
+    "sram_bytes_per_forward": 393216,
+    "achieved_mb_s": 1112.75,
+    "confidence": "analytic_exact",
+    "why": "Second FFN GEMM, D x F Q12 = 32,768 B of flash per layer. Note gelu is measured inside this zone, so f2's exclusive time excludes the activation but its weight traffic is unaffected.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "norm1",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 4096,
+    "sram_bytes_per_forward": 524288,
+    "achieved_mb_s": 3973.32,
+    "confidence": "analytic_exact",
+    "why": "LayerNorm reads S*D fp32 and writes S*D, 65,536 B each way. Flash term is the gain/bias pair, 2*D fp32 = 1,024 B.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "norm2",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 4096,
+    "sram_bytes_per_forward": 524288,
+    "achieved_mb_s": 3838.02,
+    "confidence": "analytic_exact",
+    "why": "As norm1, on the post-attention residual.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "final",
+    "calls_per_forward": 1.0,
+    "flash_xip_bytes_per_forward": 1024,
+    "sram_bytes_per_forward": 131072,
+    "achieved_mb_s": 4029.04,
+    "confidence": "analytic_exact",
+    "why": "The single trailing LayerNorm after the last layer.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "res1",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 0,
+    "sram_bytes_per_forward": 786432,
+    "achieved_mb_s": 42370.13,
+    "confidence": "analytic_exact",
+    "why": "Residual add: two S*D reads plus one S*D write, 3 x 65,536 B.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "res2",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 0,
+    "sram_bytes_per_forward": 786432,
+    "achieved_mb_s": 44040.54,
+    "confidence": "analytic_exact",
+    "why": "As res1.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "gelu",
+    "calls_per_forward": 4.0,
+    "flash_xip_bytes_per_forward": 0,
+    "sram_bytes_per_forward": 262144,
+    "achieved_mb_s": 521.86,
+    "confidence": "analytic_exact",
+    "why": "In-place over the S*F Q15 buffer: 32,768 B read + 32,768 B written. The LUT is 513 int16 and stays cache-resident.",
+    "closed_form": null,
+    "call_count_validated": true
+   },
+   {
+    "op": "qkv",
+    "calls_per_forward": 16.0,
+    "flash_xip_bytes_per_forward": 0,
+    "sram_bytes_per_forward": 0,
+    "achieved_mb_s": 0.0,
+    "confidence": "parent_only",
+    "why": "qkv is a bracket around quant calls plus the attention dispatch; its own traffic is attributed to quant, so counting it again here would double-count.",
+    "closed_form": null,
+    "call_count_validated": false
+   },
+   {
+    "op": "attn",
+    "calls_per_forward": 16.0,
+    "flash_xip_bytes_per_forward": 0,
+    "sram_bytes_per_forward": 0,
+    "achieved_mb_s": 0.0,
+    "confidence": "parent_only",
+    "why": "attn brackets attn_qk / attn_exp / attn_pv; traffic is attributed to those children.",
+    "closed_form": null,
+    "call_count_validated": true
+   }
+  ],
+  "validated": false,
+  "validation_notes": [
+   "qkv: measured 16 calls/forward, spec expects 20"
+  ],
+  "measured": false,
+  "method": "declared bytes-per-call from spec/case02.json multiplied by the MEASURED call count; each entry carries its derivation, and any op whose measured call count disagrees with the spec is listed in validation_notes and must not be trusted"
+ },
+ "memory": {
+  "arena_census": [
+   {
+    "name": "g_x",
+    "bytes": 65536,
+    "role": "fp32_activation"
+   },
+   {
+    "name": "g_buf1",
+    "bytes": 65536,
+    "role": "fp32_activation"
+   },
+   {
+    "name": "g_buf2",
+    "bytes": 65536,
+    "role": "fp32_activation"
+   },
+   {
+    "name": "g_out",
+    "bytes": 65536,
+    "role": "fp32_activation"
+   },
+   {
+    "name": "g_qh",
+    "bytes": 8192,
+    "role": "q15_head"
+   },
+   {
+    "name": "g_kh",
+    "bytes": 8192,
+    "role": "q15_head"
+   },
+   {
+    "name": "g_vh",
+    "bytes": 8192,
+    "role": "q15_head"
+   }
+  ],
+  "arena_census_total_bytes": 286720,
+  "runtime": {
+   "heap_free": null,
+   "heap_min_free_since_boot": null,
+   "heap_largest_free_block": null,
+   "heap_fragmentation_bytes": null,
+   "stack_hwm_bytes": null,
+   "stack_task": null,
+   "measured": false,
+   "note": "absent on a host capture: there is no FreeRTOS task or ESP heap to interrogate"
+  },
+  "static": {
+   "elf": "benchmarks/case-02/baseline/esp32-baseline-v0/.pio/build/esp32-tinyprof-v0/firmware.elf",
+   "sections": {
+    ".rtc.text": 16,
+    ".rtc.force_fast": 0,
+    ".rtc_noinit": 16,
+    ".rtc.force_slow": 0,
+    ".iram0.text": 45898,
+    ".dram0.dummy": 46080,
+    ".dram0.data": 7308,
+    ".noinit": 0,
+    ".dram0.bss": 260752,
+    ".flash.text": 147862,
+    ".flash_rodata_dummy": 196608,
+    ".flash.appdesc": 256,
+    ".flash.rodata": 2422560,
+    ".eh_frame": 11328,
+    ".flash.rodata_noload": 0,
+    ".iram0.text_end": 182,
+    ".iram0.data": 0,
+    ".iram0.bss": 0,
+    ".dram0.heap_start": 0,
+    ".debug_info": 2903118,
+    ".debug_abbrev": 270282,
+    ".debug_loc": 533313,
+    ".debug_aranges": 26056,
+    ".debug_ranges": 76256,
+    ".debug_line": 1103795,
+    ".debug_str": 302462,
+    ".comment": 93,
+    ".riscv.attributes": 55,
+    ".debug_frame": 69824
+   },
+   "dram": {
+    "data": 7308,
+    "bss": 260752,
+    "used": 268060,
+    "capacity": 321296,
+    "free": 53236,
+    "dummy_excluded": 46080,
+    "capacity_source": "firmware.map dram0_0_seg"
+   },
+   "iram": {
+    "used": 46080
+   },
+   "flash": {
+    "text": 147862,
+    "rodata": 2422560,
+    "used": 2570678,
+    "embedded_weights": {
+     "weights_bin": 1594368,
+     "weights_q12_bin": 786624
+    },
+    "embedded_weights_total": 2380992,
+    "code_and_data_excl_weights": 189686
+   },
+   "top_static": [
+    {
+     "symbol": "g_buf1",
+     "bytes": 65536,
+     "kind": "bss"
+    },
+    {
+     "symbol": "g_buf2",
+     "bytes": 65536,
+     "kind": "bss"
+    },
+    {
+     "symbol": "g_x",
+     "bytes": 65536,
+     "kind": "bss"
+    },
+    {
+     "symbol": "a16.3078",
+     "bytes": 32768,
+     "kind": "bss"
+    },
+    {
+     "symbol": "g_kh",
+     "bytes": 8192,
+     "kind": "bss"
+    },
+    {
+     "symbol": "g_qh",
+     "bytes": 8192,
+     "kind": "bss"
+    },
+    {
+     "symbol": "g_vh",
+     "bytes": 8192,
+     "kind": "bss"
+    },
+    {
+     "symbol": "xIsrStack",
+     "bytes": 2096,
+     "kind": "bss"
+    },
+    {
+     "symbol": "esp_err_msg_table",
+     "bytes": 1672,
+     "kind": "data"
+    },
+    {
+     "symbol": "s_coredump_stack",
+     "bytes": 1124,
+     "kind": "bss"
+    },
+    {
+     "symbol": "pxReadyTasksLists",
+     "bytes": 500,
+     "kind": "bss"
+    },
+    {
+     "symbol": "__default_global_locale",
+     "bytes": 364,
+     "kind": "data"
+    },
+    {
+     "symbol": "_ctype_",
+     "bytes": 257,
+     "kind": "data"
+    },
+    {
+     "symbol": "__chclass",
+     "bytes": 256,
+     "kind": "data"
+    },
+    {
+     "symbol": "s_intr_handlers",
+     "bytes": 256,
+     "kind": "bss"
+    }
+   ],
+   "measured": true,
+   "method": "riscv32-esp-elf-size -A and -nm on the linked ELF; DRAM capacity from the link map"
+  },
+  "census_vs_elf": {
+   "census_total": 286720,
+   "elf_dram_bss": 260752,
+   "unattributed_bytes": -25968,
+   "note": "the remainder is framework/driver static state, not model workspace. A sudden jump here means a buffer was added without being declared in the census."
+  }
+ },
+ "roofline": null,
+ "overhead": {
+  "ns_per_probe": 21.43,
+  "probes_per_forward": 226.0,
+  "estimated_us_per_forward": 4.84,
+  "estimated_pct_of_forward": 0.05,
+  "measured": true,
+  "method": "timed loop of 4096 back-to-back tick reads, executed on the device at dump time; two reads per zone. Reported, not subtracted - an overhead that differs between two builds is precisely what would inflate a speedup if folded in silently. A per-op first-order correction is provided alongside each raw figure so the reader can see both."
+ },
+ "kbench": [],
+ "cycbench": [],
+ "provenance": {},
+ "unparsed_lines": []
+}

@@ -23,7 +23,6 @@
 #include "tinyprof.h"
 #endif
 #include "kernels.h"
-#include "servo.h"
 
 /* embedded blobs from board_build.embed_files (project root) */
 extern const uint8_t _binary_weights_bin_start[] asm("_binary_weights_bin_start");
@@ -44,19 +43,18 @@ static void ensure_q12(void) {
 
 static long g_forward_counter = 0;
 
-/* device: route profile output to Serial (overrides weak model.c stub).
- * MUST have C linkage (declared in model.h's extern "C" block) so it
- * shadows the weak .C stub and not a mangled C++ sibling. */
-__attribute__((used)) void tm_prof_emit(const char* line) {
+#ifdef TINYPROF_LIB
+/* Overrides the weak stub in model.c. MUST have C linkage so it shadows the
+ * weak .c symbol rather than a mangled C++ sibling. */
+extern "C" __attribute__((used)) void tm_prof_emit(const char* line) {
     Serial.print(line);
 }
+#endif
 
 static void run_forward(void) {
     ensure_q12();
-    tm_servo_busy(1);            /* no-op unless TM_SERVO_PIN is defined */
     /* workspace lives in model.c: input = g_x, output = g_buf1 */
     tm_forward(tm_input(), tm_output(), g_wf32, &g_q12);
-    tm_servo_busy(0);
     g_forward_counter++;
 }
 
@@ -74,20 +72,8 @@ static void read_input(void) {
 
 void setup() {
     Serial.begin(115200);
-    /* Enlarge the native-USB CDC RX queue: the default (256 B) drops any
-     * host->device burst larger than the app's drain quantum when the host
-     * pushes the 64 KB 'R' input at USB speed. 8 KB + host-side 1 KB/20 ms
-     * pacing makes full-frame delivery lossless (tools/device_test.py). */
-    Serial.setRxBufferSize(8192);
     delay(200);
     tm_set_mode(TM_MODE_DEFAULT);
-#ifdef TM_SERVO_PIN
-    {
-        const int hz = tm_servo_begin(TM_SERVO_PIN);
-        Serial.printf("TM servo GPIO%d ledc=%dHz %s\n", TM_SERVO_PIN, hz,
-                      hz ? "ok" : "FAILED");
-    }
-#endif
     Serial.println("TM XIAO-ESP32C3 case2 baseline ready");
     Serial.printf("TM weights f32=%u bytes q12=%u bytes\n",
                   (unsigned)(_binary_weights_bin_end - _binary_weights_bin_start),
@@ -136,14 +122,12 @@ void loop() {
             Serial.println();
             break;
         }
-        case 'P': {
-            tm_profile_dump();
-            break;
-        }
 #ifdef TINYPROF_LIB
-        /* tinyprof: 'G' dumps the full TPROF| record set (same as 'P' on this
-         * build), 'Z' zeroes the counters so a capture covers exactly the
-         * forwards the host asked for and not the boot-time warm-up. */
+        /* tinyprof: 'G' dumps the full TPROF| record set, 'Z' zeroes the
+         * counters so a capture covers exactly the forwards the host asked for
+         * and not the boot-time warm-up. 'P' is the same dump, kept because
+         * that is the letter the optimised firmware already uses. */
+        case 'P':
         case 'G': {
             tm_profile_dump();
             break;
@@ -151,33 +135,6 @@ void loop() {
         case 'Z': {
             tp_reset();
             Serial.println("TPROF|reset|ok=1");
-            break;
-        }
-#endif
-        case 'K': {
-            char line[160]; tm_microbench(line, sizeof line);
-            Serial.print(line);
-            break;
-        }
-        case 'Q': {
-            char line[220]; tm_kbench2(line, sizeof line);
-            Serial.print(line);
-            break;
-        }
-#ifdef TM_SERVO_PIN
-        case 'V': {                 /* 'V' <deg 0..180>: park at one angle */
-            while (Serial.available() == 0) delay(2);
-            int deg = (int)Serial.read();
-            tm_servo_set_deg(deg);
-            Serial.printf("TM servo deg=%d\n", deg);
-            break;
-        }
-        case 'W': {                 /* sweep for ~6 s with no compute at all */
-            Serial.println("TM servo sweep 6s");
-            tm_servo_busy(1);
-            delay(6000);
-            tm_servo_busy(0);
-            Serial.println("TM servo sweep done");
             break;
         }
 #endif

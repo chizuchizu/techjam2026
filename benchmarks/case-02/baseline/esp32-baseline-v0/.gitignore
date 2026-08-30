@@ -1,0 +1,19 @@
+# generated weights (regenerate with: python3 tools/export_case2.py --outdir .)
+weights.bin
+weights_q12.bin
+testdata/
+manifest.json
+# host build
+tools/host_test
+# platformio
+.pio/
+.pioenvs/
+
+# tinyprof restore: weights, testdata and manifest are symlinks to the shared
+# blobs under ../../optimisation/esp32-baseline/ so both firmwares consume
+# byte-identical bits. They are generated artifacts and stay untracked.
+weights.bin
+weights_q12.bin
+manifest.json
+testdata
+host_test

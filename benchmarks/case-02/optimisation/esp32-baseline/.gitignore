@@ -11,3 +11,6 @@ tools/host_test_tiled
 .pioenvs/
 # local LAN credentials for the opt-in esp32-wifi-tiled environment
 secrets.h
+
+# tinyprof host build of the accuracy harness
+tools/host_test_tp

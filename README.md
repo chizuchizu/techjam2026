@@ -30,6 +30,14 @@ the repository root: [`COMPETITION_RULES.MD`](COMPETITION_RULES.MD) and
 experiments that are not official cases are isolated in
 [`benchmarks/experiments/`](benchmarks/experiments/).
 
+Two tools sit outside the case tree because they span several of them:
+[`esp32-linkbench/`](esp32-linkbench/) measures the board-to-board radio link,
+and [`tinyprof/`](tinyprof/) profiles the forward pass — per-op time and call
+counts, ELF-derived static memory, runtime heap and stack watermarks, memory
+traffic derived from measured call counts, and measured instrumentation
+overhead, rendered as a baseline-versus-optimised HTML report. What it does and
+does not claim is stated in [`tinyprof/PRIOR_ART.md`](tinyprof/PRIOR_ART.md).
+
 ## Official case status
 
 | Case | Shape `(B,S,D,H,F,L)` | Baseline, 1 board | Optimised, 1 board | 2 boards | 4-node WiFi DP | 8-node WiFi DP | vs baseline | Status |

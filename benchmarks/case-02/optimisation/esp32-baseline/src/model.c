@@ -37,7 +37,77 @@
 /* may be overridden (device: Serial.print per line) */
 __attribute__((weak)) void tm_prof_emit(const char* line) { (void)line; }
 
-/* ================= on-device per-kernel profiling (TM_PROFILE) ================= */
+/* ================= on-device per-kernel profiling =================
+ * Two implementations of the same 15 slots:
+ *   TINYPROF_LIB  - the shared tinyprof runtime (../../../../tinyprof/firmware),
+ *                   selected by [env:esp32-tinyprof]. Adds heap/stack
+ *                   watermarks, an arena census, measured probe overhead and a
+ *                   parseable TPROF| wire format on top of the same timers.
+ *   otherwise     - the original inline block, byte-for-byte as it was when it
+ *                   produced the published 1.996 s/forward. The benchmark envs
+ *                   keep compiling exactly this, so tinyprof cannot move the
+ *                   headline number.
+ * Both paths use the identical PB/PE/PBT/PET call sites below. */
+#ifdef TINYPROF_LIB
+
+#include "tinyprof.h"
+
+/* The call sites use the original P_* names; tinyprof's frozen vocabulary is
+ * the same fifteen slots in the same order under TP_* names. */
+#define P_NORM1    TP_NORM1
+#define P_QKV      TP_QKV
+#define P_QUANT    TP_QUANT
+#define P_ATTN     TP_ATTN
+#define P_OPROJ    TP_OPROJ
+#define P_RES1     TP_RES1
+#define P_NORM2    TP_NORM2
+#define P_F1       TP_F1
+#define P_GELU     TP_GELU
+#define P_F2       TP_F2
+#define P_RES2     TP_RES2
+#define P_FINAL    TP_FINAL
+#define P_ATTN_QK  TP_ATTN_QK
+#define P_ATTN_EXP TP_ATTN_EXP
+#define P_ATTN_PV  TP_ATTN_PV
+
+/* tinyprof emits through tp_emit(); route it at the transport this firmware
+ * already uses, so main.cpp's existing tm_prof_emit override stays the single
+ * place that knows about Serial. */
+void tp_emit(const char* line) { tm_prof_emit(line); }
+
+const char* tp_build_tag(void) { return TINYPROF_TAG; }
+
+static const tp_shape_t tm_shape = { TM_S, TM_D, TM_H, TM_F, TM_L, 160 };
+const tp_shape_t* tp_shape(void) { return &tm_shape; }
+
+/* Static arena census. `static const` so the table is flash .rodata and costs
+ * no DRAM. Sizes are computed from the same macros that declare the buffers,
+ * so this cannot drift from the real allocation the way a hand-maintained
+ * markdown table does - and the analyzer cross-checks the total against the
+ * ELF's .bss, which is what catches an omission here. */
+/* Mirrors the guard in kernels.c so the census tracks the actual build; the
+ * wifi-tiled and cluster envs override it on the command line. */
+#ifndef TM_A16_ROWS
+#define TM_A16_ROWS TM_S
+#endif
+static const tp_arena_t tm_arenas[] = {
+    { "g_x",    (uint32_t)(TM_S * TM_D * 4),   "fp32_activation" },
+    { "g_buf1", (uint32_t)(TM_S * TM_D * 4),   "fp32_activation" },
+    { "g_buf2", (uint32_t)(TM_S * TM_D * 4),   "fp32_activation" },
+    { "g_qh",   (uint32_t)(TM_S * TM_HD * 2),  "q15_head"        },
+    { "g_kh",   (uint32_t)(TM_S * TM_HD * 2),  "q15_head"        },
+    { "g_vh",   (uint32_t)(TM_S * TM_HD * 2),  "q15_head"        },
+    /* Lives in kernels.c, but it is model workspace and the ELF cross-check in
+     * tp_elf.py flags its absence - which is how this entry got added. */
+    { "a16",    (uint32_t)(TM_A16_ROWS * TM_D * 2), "q15_scratch"  },
+};
+const tp_arena_t* tp_arena_table(void) { return tm_arenas; }
+int tp_arena_count(void) { return (int)(sizeof tm_arenas / sizeof tm_arenas[0]); }
+
+void tm_profile_dump(void) { tp_dump(); }
+
+#else  /* original inline block */
+
 #ifdef TM_PROFILE
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_timer.h>
@@ -97,6 +167,8 @@ void tm_profile_dump(void) {
     extern void tm_kbench_dump(void);
     tm_kbench_dump();
 }
+
+#endif /* TINYPROF_LIB */
 
 
 static int g_mode = TM_MODE_DEFAULT;

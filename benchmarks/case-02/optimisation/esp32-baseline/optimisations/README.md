@@ -48,6 +48,7 @@ Every entry: what, why, host + device measurements, gate results, flash/RAM cost
 | 19_attn_qk_unroll_pv8.md | attention QK j-unroll-4 (3.25 instr/MAC) + PV 8 accumulators; core5-flash & IRAM negative results |
 | 21_integer_residual_fast_path.md | int32 exact residual + fused fixed-point epilogues + integer-stats norms (R1): 2.386 → 2.122 s, −11%, no new RAM |
 | 22_r1_kb0_composition.md | R1 + kb0 head-GEMM asm merge: 2.122 → 2.056 s, device 25/25 PASS |
+| 25_tinyprof.md | tinyprof: tick-resolution zones, ELF-derived memory, traffic from measured call counts; restored 42.15 s baseline firmware. No speed change — replaces how 00/20 were measured |
 | research.md | firecrawl/web literature skim (research/techniques, kept at /tmp/jam26_opt) |
 
 ## Key techniques applied (performance-engineer view)

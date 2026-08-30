@@ -1,0 +1,328 @@
+{
+ "tinyprof_comparison_version": 1,
+ "baseline": {
+  "tag": "baseline-79f284a",
+  "device": "host",
+  "s_per_forward": 0.009696
+ },
+ "optimised": {
+  "tag": "opt23",
+  "device": "host",
+  "s_per_forward": 0.01116
+ },
+ "shape": {
+  "S": 128,
+  "D": 128,
+  "H": 4,
+  "F": 128,
+  "L": 4
+ },
+ "speedup": 0.869,
+ "us_removed_per_forward": -1464.0,
+ "ops": [
+  {
+   "op": "attn",
+   "absent": null,
+   "baseline_us": 4039.628,
+   "optimised_us": 179.464,
+   "baseline_pct_of_wall": 41.663,
+   "optimised_pct_of_wall": 1.608,
+   "speedup": 22.51,
+   "baseline_calls": 16.0,
+   "optimised_calls": 16.0,
+   "calls_comparable": true,
+   "us_saved": 3860.16,
+   "share_shift_pct_points": -40.05
+  },
+  {
+   "op": "attn_exp",
+   "absent": "baseline",
+   "baseline_us": null,
+   "optimised_us": 342.803,
+   "baseline_pct_of_wall": null,
+   "optimised_pct_of_wall": 3.072,
+   "speedup": null,
+   "baseline_calls": null,
+   "optimised_calls": 2048.0,
+   "calls_comparable": null,
+   "us_saved": null
+  },
+  {
+   "op": "attn_pv",
+   "absent": "baseline",
+   "baseline_us": null,
+   "optimised_us": 4875.509,
+   "baseline_pct_of_wall": null,
+   "optimised_pct_of_wall": 43.687,
+   "speedup": null,
+   "baseline_calls": null,
+   "optimised_calls": 2048.0,
+   "calls_comparable": null,
+   "us_saved": null
+  },
+  {
+   "op": "attn_qk",
+   "absent": "baseline",
+   "baseline_us": null,
+   "optimised_us": 2809.482,
+   "baseline_pct_of_wall": null,
+   "optimised_pct_of_wall": 25.175,
+   "speedup": null,
+   "baseline_calls": null,
+   "optimised_calls": 2048.0,
+   "calls_comparable": null,
+   "us_saved": null
+  },
+  {
+   "op": "f1",
+   "absent": null,
+   "baseline_us": 489.681,
+   "optimised_us": 335.888,
+   "baseline_pct_of_wall": 5.05,
+   "optimised_pct_of_wall": 3.01,
+   "speedup": 1.46,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 153.79,
+   "share_shift_pct_points": -2.04
+  },
+  {
+   "op": "f2",
+   "absent": null,
+   "baseline_us": 471.166,
+   "optimised_us": 255.372,
+   "baseline_pct_of_wall": 4.859,
+   "optimised_pct_of_wall": 2.288,
+   "speedup": 1.85,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 215.79,
+   "share_shift_pct_points": -2.57
+  },
+  {
+   "op": "final",
+   "absent": null,
+   "baseline_us": 32.786,
+   "optimised_us": 28.491,
+   "baseline_pct_of_wall": 0.338,
+   "optimised_pct_of_wall": 0.255,
+   "speedup": 1.15,
+   "baseline_calls": 1.0,
+   "optimised_calls": 1.0,
+   "calls_comparable": true,
+   "us_saved": 4.3,
+   "share_shift_pct_points": -0.08
+  },
+  {
+   "op": "gelu",
+   "absent": null,
+   "baseline_us": 502.331,
+   "optimised_us": 98.226,
+   "baseline_pct_of_wall": 5.181,
+   "optimised_pct_of_wall": 0.88,
+   "speedup": 5.11,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 404.11,
+   "share_shift_pct_points": -4.3
+  },
+  {
+   "op": "norm1",
+   "absent": null,
+   "baseline_us": 132.983,
+   "optimised_us": 343.717,
+   "baseline_pct_of_wall": 1.372,
+   "optimised_pct_of_wall": 3.08,
+   "speedup": 0.39,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": -210.73,
+   "share_shift_pct_points": 1.71
+  },
+  {
+   "op": "norm2",
+   "absent": null,
+   "baseline_us": 137.671,
+   "optimised_us": 376.306,
+   "baseline_pct_of_wall": 1.42,
+   "optimised_pct_of_wall": 3.372,
+   "speedup": 0.37,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": -238.63,
+   "share_shift_pct_points": 1.95
+  },
+  {
+   "op": "oproj",
+   "absent": null,
+   "baseline_us": 461.053,
+   "optimised_us": 245.056,
+   "baseline_pct_of_wall": 4.755,
+   "optimised_pct_of_wall": 2.196,
+   "speedup": 1.88,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 216.0,
+   "share_shift_pct_points": -2.56
+  },
+  {
+   "op": "qkv",
+   "absent": null,
+   "baseline_us": 2725.169,
+   "optimised_us": 17.531,
+   "baseline_pct_of_wall": 28.106,
+   "optimised_pct_of_wall": 0.157,
+   "speedup": 155.45,
+   "baseline_calls": 16.0,
+   "optimised_calls": 20.0,
+   "calls_comparable": false,
+   "us_saved": 2707.64,
+   "share_shift_pct_points": -27.95
+  },
+  {
+   "op": "quant",
+   "absent": null,
+   "baseline_us": 662.055,
+   "optimised_us": 1161.838,
+   "baseline_pct_of_wall": 6.828,
+   "optimised_pct_of_wall": 10.411,
+   "speedup": 0.57,
+   "baseline_calls": 48.0,
+   "optimised_calls": 48.0,
+   "calls_comparable": true,
+   "us_saved": -499.78,
+   "share_shift_pct_points": 3.58
+  },
+  {
+   "op": "res1",
+   "absent": null,
+   "baseline_us": 18.561,
+   "optimised_us": 0.104,
+   "baseline_pct_of_wall": 0.191,
+   "optimised_pct_of_wall": 0.001,
+   "speedup": 178.47,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 18.46,
+   "share_shift_pct_points": -0.19
+  },
+  {
+   "op": "res2",
+   "absent": null,
+   "baseline_us": 17.857,
+   "optimised_us": 0.388,
+   "baseline_pct_of_wall": 0.184,
+   "optimised_pct_of_wall": 0.003,
+   "speedup": 46.02,
+   "baseline_calls": 4.0,
+   "optimised_calls": 4.0,
+   "calls_comparable": true,
+   "us_saved": 17.47,
+   "share_shift_pct_points": -0.18
+  }
+ ],
+ "ranked_by_time_removed": [
+  "attn",
+  "qkv",
+  "gelu",
+  "oproj",
+  "f2",
+  "f1",
+  "res1",
+  "res2",
+  "final",
+  "norm1"
+ ],
+ "accuracy": {
+  "baseline": {
+   "gate": "abs_err <= 0.002 OR rel_err <= 0.02, per output element",
+   "seeds": [
+    {
+     "seed": 0,
+     "fails": 0,
+     "max_abs": 0.0008124113,
+     "max_rel": 0.8181016,
+     "atol": 0.002,
+     "rtol": 0.02
+    }
+   ],
+   "all_pass": true
+  },
+  "optimised": {
+   "gate": "abs_err <= 0.002 OR rel_err <= 0.02, per output element",
+   "seeds": [
+    {
+     "seed": 0,
+     "fails": 0,
+     "max_abs": 0.000881061,
+     "max_rel": 2.396091,
+     "atol": 0.002,
+     "rtol": 0.02
+    }
+   ],
+   "all_pass": true
+  }
+ },
+ "memory": {
+  "baseline": {
+   "arena_census_total": 286720,
+   "dram_bss": 260752,
+   "dram_used": 268060,
+   "dram_free": 53236,
+   "dram_capacity": 321296,
+   "flash_used": 2570678,
+   "heap_min_free": null,
+   "stack_hwm_bytes": null
+  },
+  "optimised": {
+   "arena_census_total": 253952,
+   "dram_bss": 267032,
+   "dram_used": 274340,
+   "dram_free": 46956,
+   "dram_capacity": 321296,
+   "flash_used": 2590588,
+   "heap_min_free": null,
+   "stack_hwm_bytes": null
+  }
+ },
+ "traffic": {
+  "baseline": {
+   "flash_xip_bytes_per_forward": 795648,
+   "sram_bytes_per_forward": 7340032,
+   "validated": false
+  },
+  "optimised": {
+   "flash_xip_bytes_per_forward": 795648,
+   "sram_bytes_per_forward": 24776704,
+   "validated": true
+  }
+ },
+ "overhead": {
+  "baseline": {
+   "ns_per_probe": 21.43,
+   "probes_per_forward": 226.0,
+   "estimated_us_per_forward": 4.84,
+   "estimated_pct_of_forward": 0.05,
+   "measured": true,
+   "method": "timed loop of 4096 back-to-back tick reads, executed on the device at dump time; two reads per zone. Reported, not subtracted - an overhead that differs between two builds is precisely what would inflate a speedup if folded in silently. A per-op first-order correction is provided alongside each raw figure so the reader can see both."
+  },
+  "optimised": {
+   "ns_per_probe": 60.56,
+   "probes_per_forward": 12522.0,
+   "estimated_us_per_forward": 758.38,
+   "estimated_pct_of_forward": 6.796,
+   "measured": true,
+   "method": "timed loop of 4096 back-to-back tick reads, executed on the device at dump time; two reads per zone. Reported, not subtracted - an overhead that differs between two builds is precisely what would inflate a speedup if folded in silently. A per-op first-order correction is provided alongside each raw figure so the reader can see both.",
+   "warning": "instrumentation accounts for 6.8% of the measured forward. The zone placement is too fine for this build: re-capture with coarser zones (for the baseline firmware, -DTINYPROF_ATTN_PHASES=0) before quoting these per-op times."
+  }
+ },
+ "warnings": [],
+ "note": "Exclusive time throughout: a zone's own time with nested zones subtracted. Call counts are compared but flagged when the two builds bracket differently, which is a structural difference, not a regression."
+}

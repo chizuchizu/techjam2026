@@ -1,0 +1,87 @@
+{
+  "spec_version": 1,
+  "case": "case-02",
+  "variant": "fast",
+  "shape": { "S": 128, "D": 128, "H": 4, "HD": 32, "F": 128, "L": 4 },
+  "note": [
+    "Bytes moved per zone call. Multiplied by the MEASURED call count, never by an",
+    "assumed one - that is the whole point. The analyzer also checks measured",
+    "calls-per-forward against `n_per_forward` below and marks the traffic figure",
+    "unvalidated if they disagree, so a code change that moves a zone cannot",
+    "silently invalidate the model the way a hand-maintained table would.",
+    "",
+    "Residency matters on this board: weights live in flash and are read through",
+    "the 16 KB XIP cache, activations live in SRAM. `flash_xip` and `sram` are",
+    "therefore reported separately rather than as one bandwidth number."
+  ],
+  "ops": {
+    "quant": {
+      "flash_xip_bytes_per_call": 8192,
+      "sram_bytes_per_call": 65536,
+      "n_per_forward": 48,
+      "confidence": "analytic_exact",
+      "why": "Each call is one tm_gemm_head_q15: it streams one head slice of a Q12 weight matrix, HD*D int16 = 32*128*2 = 8192 B from flash. 48 calls per forward = 4 layers x (4 V + 4 Q + 4 K) head projections. 48 x 8192 = 393,216 B, which is the 384 KB 'KB0' row of optimisations/20_profiling_memory_compute.md, here derived from a measured call count instead of assumed. SRAM term is the Q15 activation read, S*D int16 x 2 (read a16, write the head buffer)."
+    },
+    "oproj": {
+      "flash_xip_bytes_per_call": 32768,
+      "sram_bytes_per_call": 98304,
+      "n_per_forward": 4,
+      "confidence": "analytic_exact",
+      "why": "One core5 output projection per layer over the full D x D Q12 matrix: 128*128*2 = 32,768 B of flash. 4 calls = 131,072 B. SRAM: read S*D int16 context + write S*D fp32."
+    },
+    "f1": {
+      "flash_xip_bytes_per_call": 32768,
+      "sram_bytes_per_call": 98304,
+      "n_per_forward": 4,
+      "confidence": "analytic_exact",
+      "why": "First FFN GEMM, F x D Q12 = 128*128*2 = 32,768 B of flash per layer."
+    },
+    "f2": {
+      "flash_xip_bytes_per_call": 32768,
+      "sram_bytes_per_call": 98304,
+      "n_per_forward": 4,
+      "confidence": "analytic_exact",
+      "why": "Second FFN GEMM, D x F Q12 = 32,768 B of flash per layer. Note gelu is measured inside this zone, so f2's exclusive time excludes the activation but its weight traffic is unaffected."
+    },
+    "attn_qk": {
+      "flash_xip_bytes_per_call": 0,
+      "sram_bytes_per_call": 4128,
+      "n_per_forward": 2048,
+      "confidence": "analytic_averaged",
+      "closed_form": "mean over i of (i+1)*HD*2 bytes = (S+1)/2 * HD * 2",
+      "why": "Attention reads no weights - Q and K are activations already in SRAM. One call is one query row against the causal prefix, so bytes vary with the row index i and only the mean is meaningful: (S+1)/2 * HD * 2 = 64.5*32*2 = 4,128 B. Total over a forward is exact even though the per-call figure is an average, because the causal triangle S*(S+1)/2 is summed exactly. 2048 calls = 4 layers x 4 heads x 128 rows."
+    },
+    "attn_pv": {
+      "flash_xip_bytes_per_call": 0,
+      "sram_bytes_per_call": 4128,
+      "n_per_forward": 2048,
+      "confidence": "analytic_averaged",
+      "closed_form": "mean over i of (i+1)*HD*2 bytes = (S+1)/2 * HD * 2",
+      "why": "Same causal triangle as attn_qk, reading V rather than K."
+    },
+    "attn_exp": {
+      "flash_xip_bytes_per_call": 0,
+      "sram_bytes_per_call": 258,
+      "n_per_forward": 2048,
+      "confidence": "analytic_averaged",
+      "closed_form": "mean over i of (i+1)*2 bytes of int16 LUT-indexed scores",
+      "why": "The integer exp LUT is 513 int16 entries and stays resident; the traffic is the score row itself, (i+1) int16 on average (S+1)/2*2 = 129 B read plus the same written back."
+    },
+    "norm1": { "flash_xip_bytes_per_call": 1024, "sram_bytes_per_call": 131072, "n_per_forward": 4, "confidence": "analytic_exact",
+      "why": "LayerNorm reads S*D fp32 and writes S*D, 65,536 B each way. Flash term is the gain/bias pair, 2*D fp32 = 1,024 B." },
+    "norm2": { "flash_xip_bytes_per_call": 1024, "sram_bytes_per_call": 131072, "n_per_forward": 4, "confidence": "analytic_exact",
+      "why": "As norm1, on the post-attention residual." },
+    "final":  { "flash_xip_bytes_per_call": 1024, "sram_bytes_per_call": 131072, "n_per_forward": 1, "confidence": "analytic_exact",
+      "why": "The single trailing LayerNorm after the last layer." },
+    "res1":   { "flash_xip_bytes_per_call": 0, "sram_bytes_per_call": 196608, "n_per_forward": 4, "confidence": "analytic_exact",
+      "why": "Residual add: two S*D reads plus one S*D write, 3 x 65,536 B." },
+    "res2":   { "flash_xip_bytes_per_call": 0, "sram_bytes_per_call": 196608, "n_per_forward": 4, "confidence": "analytic_exact",
+      "why": "As res1." },
+    "gelu":   { "flash_xip_bytes_per_call": 0, "sram_bytes_per_call": 65536, "n_per_forward": 4, "confidence": "analytic_exact",
+      "why": "In-place over the S*F Q15 buffer: 32,768 B read + 32,768 B written. The LUT is 513 int16 and stays cache-resident." },
+    "qkv":    { "flash_xip_bytes_per_call": 0, "sram_bytes_per_call": 0, "n_per_forward": 20, "confidence": "parent_only",
+      "why": "qkv is a bracket around quant calls plus the attention dispatch; its own traffic is attributed to quant, so counting it again here would double-count." },
+    "attn":   { "flash_xip_bytes_per_call": 0, "sram_bytes_per_call": 0, "n_per_forward": 16, "confidence": "parent_only",
+      "why": "attn brackets attn_qk / attn_exp / attn_pv; traffic is attributed to those children." }
+  }
+}

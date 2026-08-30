@@ -1,0 +1,31 @@
+TPROF|env|device=host|mode=1|seed=0|reps=3
+TPROF|gate|seed=0|fails=0|max_abs=8.810610e-04|max_rel=2.396091e+00|atol=0.002|rtol=0.02
+TPROF|fwd|us=33481|reps=3|per_forward_us=11160
+TPROF|hdr|v=1|tag=opt23|slots=15|S=128|D=128|H=4|F=128|L=4|mhz=160|tick_hz=1000000000
+TPROF|op|i=0|name=norm1|ticks=1031151|n=12|parent=-1
+TPROF|op|i=1|name=qkv|ticks=3538105|n=60|parent=-1
+TPROF|op|i=2|name=quant|ticks=3485513|n=144|parent=1
+TPROF|op|i=3|name=attn|ticks=24621776|n=48|parent=-1
+TPROF|op|i=4|name=oproj|ticks=735167|n=12|parent=-1
+TPROF|op|i=5|name=res1|ticks=311|n=12|parent=-1
+TPROF|op|i=6|name=norm2|ticks=1128917|n=12|parent=-1
+TPROF|op|i=7|name=f1|ticks=1007664|n=12|parent=-1
+TPROF|op|i=8|name=gelu|ticks=294679|n=12|parent=9
+TPROF|op|i=9|name=f2|ticks=1060795|n=12|parent=-1
+TPROF|op|i=10|name=res2|ticks=1163|n=12|parent=-1
+TPROF|op|i=11|name=final|ticks=85473|n=3|parent=-1
+TPROF|op|i=12|name=attn_qk|ticks=8428447|n=6144|parent=3
+TPROF|op|i=13|name=attn_exp|ticks=1028409|n=6144|parent=3
+TPROF|op|i=14|name=attn_pv|ticks=14626528|n=6144|parent=3
+TPROF|wall|us=11739
+TPROF|ovh|milliticks_per_probe=60564|probes=37566|ticks=2275147
+TPROF|arena|name=g_x|bytes=65536|role=fp32_activation
+TPROF|arena|name=g_buf1|bytes=65536|role=fp32_activation
+TPROF|arena|name=g_buf2|bytes=65536|role=fp32_activation
+TPROF|arena|name=g_qh|bytes=8192|role=q15_head
+TPROF|arena|name=g_kh|bytes=8192|role=q15_head
+TPROF|arena|name=g_vh|bytes=8192|role=q15_head
+TPROF|arena|name=a16|bytes=32768|role=q15_scratch
+KB0 n=144 avg_us=17.2 tot_ms=2.5
+KB1 n=144 avg_us=6.9 tot_ms=1.0
+TPROF|end|ok=1

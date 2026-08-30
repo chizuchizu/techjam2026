@@ -1,0 +1,13 @@
+{
+  "name": "tinyprof",
+  "version": "1.0.0",
+  "description": "Operator-level transformer profiler for ESP32-C3: per-op time and call counts, runtime heap/stack watermarks, arena census, and measured instrumentation overhead, emitted as parseable TPROF| lines.",
+  "keywords": ["profiling", "esp32", "transformer", "benchmark"],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "build": {
+    "srcDir": ".",
+    "includeDir": "."
+  }
+}
