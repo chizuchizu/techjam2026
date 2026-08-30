@@ -37,11 +37,29 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
  * int16*int16 products are exact in int32; the K-term accumulation bound
  * (~ 6e-9 * K) keeps sums far below INT32 saturation for this model.
  */
-/* Shared Q15 activation scratch (32 KB).  Used by the FAST projection
- * GEMMs.  Sequential use: the QKV path quantizes g_buf1 ONCE per layer and
- * reuses this buffer across all heads; oproj/f1/f2 re-use it after.
- * The activation buffer a16 ALIASES model.c's g_qh (EXACT qh) - the two modes
- * never co-live (FAST uses a16, EXACT uses qh) -> -32 KB SRAM. */
+/* The default H=1 build aliases these workspaces onto model.c buffers to meet
+ * its tight SRAM limit. The tiled WiFi build has no model.c buffers, so it
+ * uses reduced standalone workspaces sized to TM_A16_ROWS. */
+#ifdef TM_TILED_FORWARD
+#ifndef TM_A16_ROWS
+#define TM_A16_ROWS TM_S
+#endif
+static int16_t a16[TM_A16_ROWS * TM_D];
+static int32_t tiled_s1[TM_S];
+static int64_t tiled_s2[TM_S];
+static int16_t tiled_mx[TM_S];
+static int32_t tiled_mx15[TM_S];
+static int32_t tiled_sh[TM_S];
+static int32_t tiled_fk[TM_D];
+static int32_t tiled_bk[TM_D];
+#define s1_ tiled_s1
+#define s2_ tiled_s2
+#define mx_ tiled_mx
+#define mx15_ tiled_mx15
+#define sh_ tiled_sh
+#define Fk_ tiled_fk
+#define Bk_ tiled_bk
+#else
 extern int16_t g_qh[TM_S * TM_HD];
 #define a16 g_qh
 
@@ -56,6 +74,7 @@ extern float g_buf2[TM_S * TM_D];
 #define sh_   ((int32_t *)((int32_t *)(g_buf2) + 5 * TM_S))
 #define Fk_   ((int32_t *)((int32_t *)(g_buf2) + 6 * TM_S + TM_D))
 #define Bk_   ((int32_t *)((int32_t *)(g_buf2) + 6 * TM_S + 2 * TM_D))
+#endif
 
 /* Accessor so model.c can share the same scratch (no duplicate 32 KB). */
 int16_t* tm_gemm_a16(void) { return a16; }
@@ -96,7 +115,7 @@ static __inline__ uint32_t tm_kb_now_host(void) {
  * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_cycle_count();
+    return (uint64_t)esp_cpu_get_ccount();
 #else
     return 0;
 #endif
@@ -268,9 +287,17 @@ void tm_gemm_core2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K) {
+    return tm_gemm_head_q15_m(Aq, sa_inv, Wq, w_scale, bias, acc, dst,
+                              TM_S, K);
+}
+
+/* Row-count-parameterised variant used by the sequential tile schedule. */
+float tm_gemm_head_q15_m(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias,
+                         int32_t* acc, int16_t* dst, int M, int K) {
     KPB(0);
     const float g = sa_inv * w_scale;
-    const int S = TM_S, HD = TM_HD;
+    const int S = M, HD = TM_HD;
     /* Pass 1: j-outer GEMM (sequential W columns, flash-cache friendly like
      * core4) straight into the int32 accumulator scratch.  Tracks per-column
      * min/max of the int32 accs so amax is EXACT but requires only 2*HD fp32

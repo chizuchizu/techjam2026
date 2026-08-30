@@ -26,6 +26,11 @@
 #include <string.h>
 #define TM_PROFILE 1
 
+/* The opt-in tiled FAST build supplies the same public API from
+ * model_tiled.c. Keep the established single-board implementation unchanged
+ * for the default environments. */
+#ifndef TM_TILED_FORWARD
+
 /* may be overridden (device: Serial.print per line) */
 __attribute__((weak)) void tm_prof_emit(const char* line) { (void)line; }
 
@@ -678,3 +683,5 @@ void tm_forward(const float* xin, float* yout,
     PE(P_FINAL);
     PET();
 }
+
+#endif /* !TM_TILED_FORWARD */

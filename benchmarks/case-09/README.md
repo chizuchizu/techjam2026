@@ -51,12 +51,10 @@ including host USB pacing. Raw captures and summaries:
 
 ## Next case-specific step
 
-`H=1` is the single-board dead end of whole-head parallelism on the
-ESP32-C3. The relevant follow-ups are (a) a reduced-memory head path
-(streaming Q/K/V rows, 16-bit residual, no full 128x128 context copies)
-that stays bit-compatible with the baseline's host output and would
-bring H=1/H=2 within the 321,296-byte dram segment, or (b) the
-multiboard split, where H=1 is trivially the single-board
-attention-subgraph primitives (per-head shards of width 128, all one
-node) — the C3 can carry the full-D projections while a peer carries
-attn. Worth doing only if (a) is impossible.
+The reduced-memory path is now implemented as an opt-in 16-row sequential
+tile schedule with a persistent WiFi/TCP endpoint. It links at **224,244 B**
+static RAM instead of the default build's 273,180 B. The tiled host gate passes
+25/25 seeds (worst `max_abs=1.1038e-3`), and the first two physical workers
+both passed a seed-0 TCP forward at 3.563 s device compute with zero failing
+elements. This is a worker-readiness smoke test, not yet a reported two-board
+case speedup; a complete 64/64 distributed batch is the next measurement.

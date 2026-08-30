@@ -1,7 +1,8 @@
-# ESP32-C3 case-02 single-board Transformer
+# ESP32-C3 case-09 Transformer
 
-Single-board C implementation of the case-2 transformer
-(B=1, S=128, D=128, H=4, HD=32, F=128, L=4, causal, ~399K params) tuned for the
+Single-board and opt-in WiFi implementation of the case-9 transformer
+(B=64 streamed inputs, S=128, D=128, H=1, HD=128, F=128, L=4, causal,
+~399K params) tuned for the
 **Seeed XIAO ESP32C3** (400 KB SRAM, 4 MB flash, 160 MHz RV32IMC, **no FPU**).
 
 The model is the reference `BaselineTransformer` from
@@ -30,11 +31,13 @@ Scores: not computed for this case (no full on-board scoring run); see baseline/
 
 ## Repository layout
 
-    platformio.ini        two espressif32 envs (XIAO C3 + generic devkit)
+    platformio.ini        default USB targets plus opt-in tiled WiFi target
     src/tm_config.h       model geometry, numeric modes, weight layout
     src/kernels.h/.c      fp32 GEMM, Q15xQ12 GEMM, LayerNorm, GELU, fast exp
     src/model.h/.c        forward pass + streaming causal attention
     src/main.cpp          Arduino firmware (serial protocol, timing)
+    src/model_tiled.c     16-row reduced-memory FAST forward
+    src/main_wifi.cpp     persistent WiFi/TCP command endpoint
     tools/export_case2.py torch artifact exporter (system python3)
     tools/host_test.c     host validation vs torch references (25 seeds)
     tools/compare.py      verify a raw device output dump vs torch refs
@@ -52,8 +55,10 @@ See `TM_W_BLK_*` / `woff()` in src. `weights_q12.bin` is 24 matrices
 
 ## Build & validate on the host
 
-    python3 tools/export_case2.py --outdir . --seeds 25   # torch artifacts
+    python3 tools/export_case2.py --outdir . --seeds 25 \
+      --B 64 --S 128 --D 128 --H 1 --F 128 --L 4
     make -C tools host_test && ./tools/host_test all --both --reps 5
+    make -C tools host_test_tiled && ./tools/host_test_tiled all --fast
 
 ## Build & run on the ESP32-C3
 
@@ -63,20 +68,29 @@ See `TM_W_BLK_*` / `woff()` in src. `weights_q12.bin` is 24 matrices
                                                # 'R' + 65536 input bytes,
                                                # 'T' + count (timing)
 
+For the memory-reduced WiFi worker, copy `secrets.example.h` to the ignored
+`secrets.h`, fill in the benchmark-LAN credentials, then run:
+
+    pio run -e esp32-wifi-tiled -t upload --upload-port /dev/ttyACM0
+
 Serial protocol (main.cpp): `M` prints mode; `R` reads 16384 floats,
 runs one forward, streams 16384 output floats then `END`; `T <n>` does
 n timed forwards and prints `TM <mode> <us>...`.
 
 ## Numbers
 
-Param count 398,592 = 1.59 MB fp32. XIAO build: **FAIL** —
-`dram0_0_seg` overflowed by 73,072 B (no firmware image).
+Param count 398,592 = 1.59 MB fp32. The optimized USB build links at
+273,180 / 327,680 B static RAM. The 16-row WiFi build links at
+**224,244 / 327,680 B** static RAM and 3,124,210 / 3,670,016 B flash, leaving
+enough runtime heap for WiFi/lwIP on the physical boards.
 
 ## Current measured execution (on-device, FAST mode)
 
-Device gate (FAST, 5 seeds): **not run** — no firmware image links
-(`dram0_0_seg` overflow, see above). Fine-grained per-phase and
-per-version profiles are in
+The optimized USB device gate passes 25/25 seeds at 2.157 s/forward. The tiled
+host gate passes 25/25 seeds (worst `max_abs=1.1038e-3`). Two physical tiled
+WiFi workers also completed a seed-0 TCP forward in 3.5633 / 3.5638 s with
+zero failing elements and `max_abs=1.2649e-3`. A full distributed batch has
+not yet been claimed. Fine-grained per-phase and per-version profiles are in
 [`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)
