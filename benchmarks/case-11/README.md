@@ -27,7 +27,7 @@ head-width-32 while the full `D=128` projection work is unchanged.
 |---|---|
 | [`baseline/`](baseline/) | First physical capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
-| [`multiboard/`](multiboard/) | Two- and four-node WiFi data-parallel results and reproduction steps |
+| [`multiboard/`](multiboard/) | Two-, four-, and eight-node WiFi data-parallel results and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -60,7 +60,7 @@ The default optimized USB build remains unchanged at 256,180 B.
 
 The tiled host gate passes 25/25 seeds (worst `max_abs=1.1135e-3`). Two
 physical workers passed a seed-0 TCP forward at 6.452 / 6.451 s. Complete
-B=64 runs on two and four physical workers produced:
+B=64 runs on two, four, and eight physical workers produced:
 
 | Build | Compute wall | End-to-end wall | Validation |
 |---|---:|---:|---|
@@ -68,11 +68,14 @@ B=64 runs on two and four physical workers produced:
 | 1 tiled WiFi worker (equivalent) | **412.707 s** | - | Derived from measured replica work |
 | 2 tiled WiFi replicas | **206.354 s** | **238.0 s** | **64/64 PASS**, zero failing elements |
 | 4 tiled WiFi replicas | **103.169 s** | **119.3 s** | **64/64 PASS**, zero failing elements |
+| 8 tiled WiFi replicas | **51.604 s** | **60.8 s** | **64/64 PASS**, zero failing elements |
 
 Two replicas scale exactly **2.00x** against one tiled worker, but remain
 **1.49x slower** than the best optimized USB compute total. H=16 performs
 sixteen causal softmaxes per layer, so the memory-saving tile schedule has
 more overhead here than in cases 9 and 10. Four replicas preserve **4.00x**
 compute scaling and cross over: their 103.169 s compute wall is **1.34x
-faster** than the optimized single-board USB result. Raw evidence and commands
-are in [`multiboard/README.md`](multiboard/README.md).
+faster** than the optimized single-board USB result. Eight replicas preserve
+**8.00x** scaling and reduce compute wall to 51.604 s, **2.69x faster** than
+optimized single-board USB. Raw evidence and commands are in
+[`multiboard/README.md`](multiboard/README.md).
