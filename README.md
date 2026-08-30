@@ -231,4 +231,6 @@ build directories.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — validation and result conventions.
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — milestones and acceptance gates.
 - [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — cluster decomposition and protocol design.
+- [`docs/WIFI_ON_A_COMPUTE_NODE.md`](docs/WIFI_ON_A_COMPUTE_NODE.md) — SRAM challenge, tiled TCP solution, physical results, and sidecar alternative.
+- [`esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md`](esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md) — what the ESP-NOW relay does and the full-protocol WiFi–UART sidecar.
 - [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — prior-art review and positioning.

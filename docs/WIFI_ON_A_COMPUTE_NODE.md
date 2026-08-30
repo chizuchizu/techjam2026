@@ -90,6 +90,8 @@ alias `g_buf2`; `v_all` aliases `g_buf1`. Do not propose these as savings.
 | TCP between boards for the cluster K/V exchange | **31–79 KB/s.** Arduino ships lwIP with a 5744-byte window and send buffer, unreachable from a project build, capping one connection at `window / RTT`. This is why the cluster's bulk transfer runs over **UDP with NAK recovery** instead. |
 | Disabling WiFi modem sleep (`WiFi.setSleep(false)`) | No help. The ceiling is the window, not the radio. |
 | ESP-NOW (measured on this bench, 2 boards) | **~60 KB/s.** A 64 KB input would take ~1 s — no better than the serial we are trying to escape. |
+| Teammate PC-master ESP-NOW relay | **Not a compute path.** The checked-in `W N` command generates and echoes one 1–240 B pattern between two link-only images. It has no arbitrary host payload, tensor fragmentation, retries, model invocation, or N-node routing. |
+| Dedicated WiFi–UART radio sidecar | **Implemented, build-verified, not yet physically measured.** One link-only C3 streams TCP port 5000 to one radio-free opt23 C3 over 2 Mbaud UART. It preserves the 1.99 s compute path but costs two boards per logical worker. See [`../esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md`](../esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md). |
 
 ---
 

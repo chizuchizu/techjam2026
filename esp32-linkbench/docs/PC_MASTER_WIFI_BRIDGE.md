@@ -1,7 +1,8 @@
 # WiFi setup & how it works — computer master, 2x ESP32-C3 slaves
 
-This page explains the WiFi layer used by the two-board ESP32-C3 benchmarks:
-the computer is the **master**, and the two ESP32-C3 boards are **slaves**.
+This page explains three transport experiments around the ESP32-C3 benchmarks.
+The computer is the **master**. Only Mode C below is wired to the full
+Transformer command protocol; Modes A and B are link/SUM16 microbenchmarks.
 
 Hardware: 2x Seeed XIAO ESP32-C3 (160 MHz, 320 KB SRAM, 4 MB flash), both
 plugged into the computer by USB-C.
@@ -10,13 +11,15 @@ plugged into the computer by USB-C.
 
 | Mode | When | Board↔board | Computer↔board |
 |---|---|---|---|
-| **A. Serial bridge (ESP-NOW)** | Lowest latency, no router, tiny RAM | ESP-NOW (~0.85 ms RTT) | USB-CDC serial to board A |
+| **A. ESP-NOW echo driver** | Lowest latency, no router, tiny RAM | ESP-NOW (~0.85 ms RTT) | USB-CDC to the client/driver |
 | **B. Direct-WiFi (UDP station)** | Computer must talk IP to boards | UDP (5–9 ms RTT) | UDP on the LINKNET Wi-Fi |
+| **C. WiFi–UART sidecar** | Preserve the 1.99 s radio-free forward | 2 Mbaud UART within each pair | TCP to a dedicated sidecar |
 
-Mode A is the default for benchmark work: it adds no lwIP/TCP to the
-compute build, and the link-only firmware itself uses only ~10-13% of SRAM
-(see footprint below). Mode B is for when the computer itself must send
-packets over Wi-Fi.
+Mode A is the default for link benchmark work: its link-only firmware uses
+only ~10-13% of SRAM. It is not a transformer worker and does not prove that
+ESP-NOW fits beside the original 274 KB model arena. Mode B is for small jobs
+when the computer itself must send packets over WiFi. Mode C is the feasible
+way to keep every radio allocation physically off the original compute board.
 
 Firecrawl research backing the transport choice:
 `research/computer_master_wifi_research.md`.
@@ -27,15 +30,17 @@ Firecrawl research backing the transport choice:
 
 ### Topology
 
-    computer (master) -- USB-CDC serial --> ESP32-A (bridge, "server")
+    computer (master) -- USB-CDC serial --> ESP32-B (client/driver)
                                                 |
                                                 |  ESP-NOW over WiFi, channel 1
                                                 |  no router, no password
                                                 v
-                                           ESP32-B (worker, "client")
+                                           ESP32-A (echo server)
 
-The computer sends short commands over USB to board A, board A relays payloads
-to board B over ESP-NOW, B replies, A returns the result to the computer.
+The computer sends a short benchmark command over USB to board B. Board B
+generates a deterministic payload locally, sends it to board A, and board A
+echoes it. Arbitrary host bytes and Transformer compute are not implemented in
+Mode A.
 
 ### Why ESP-NOW
 
@@ -72,9 +77,9 @@ Open board B's serial monitor (`pio device monitor -b 115200 --port
 | `B` | run PING + STREAM benchmarks and print results |
 | `P` | run PING latency profile only |
 | `S` | run STREAM bandwidth test only |
-| `W <N>` | **relay N bytes** (1..240) through board A to board B and back, verify bit-exactness, print `RELAY|s|N=...|rtt_us=...|ok=1` |
+| `W <N>` | generate N bytes (1..240), echo them through board A and back, verify bit-exactness, print `RELAY|s|N=...|rtt_us=...|ok=1` |
 
-Example `W` output (this is the computer-as-master data round-trip):
+Example `W` output (generated-payload wireless round-trip):
 
     RELAY|s|N=240|rtt_us=1342|ok=1|seq=30718155
     CLIENT|DONE
@@ -92,7 +97,7 @@ Frame types in `src/main.cpp`:
 | `FT_PROBE_ACK` | 0x82 | server replies with magic |
 | `FT_PING` / `FT_PING_ACK` | 0x01 / 0x02 | latency profile (seq + 3 timestamps) |
 | `FT_STREAM` / `FT_STREAM_ACK` | 0x03 / 0x04 | bandwidth test (seq + us timestamp) |
-| `FT_RELAY` / `FT_RELAY_ACK` | 0x11 / 0x12 | **generic PC-master payload relay** |
+| `FT_RELAY` / `FT_RELAY_ACK` | 0x11 / 0x12 | generated-pattern echo benchmark |
 | `FT_RESET_ST` / `FT_STREAM_END` | 0xF0 / 0xFF | stream counter reset / end marker |
 
 Relay flow (`W N`):
@@ -163,23 +168,86 @@ dependencies).
 
 ---
 
+## Mode C — WiFi–UART radio sidecar (full Transformer protocol)
+
+### Feasibility and cost
+
+This is the implemented bridge for the original, untiled opt23 forward:
+
+    computer -- WiFi/TCP --> sidecar C3 -- 2 Mbaud UART --> compute C3
+                             link-only                       opt23, radio off
+
+The sidecar streams bytes and never stores a 64 KB tensor. The compute board
+uses the existing `M`/`R`/`T` protocol and model buffers, so no WiFi, lwIP, or
+ESP-NOW allocations enter its 274 KB arena. This is feasible, but it costs
+**two C3s per data-parallel worker**. Four compute workers therefore require
+eight boards and four three-wire links. With only four boards, Mode C provides
+two compute workers; the existing tiled direct-TCP design provides four.
+
+The implementation is build-verified but not yet physically measured because
+the boards must be cross-wired. Do not report a speedup for it until a full
+output gate passes.
+
+### Wiring one pair
+
+| Sidecar | Compute worker |
+|---|---|
+| D6 / GPIO21 (TX) | D7 / GPIO20 (RX) |
+| D7 / GPIO20 (RX) | D6 / GPIO21 (TX) |
+| GND | GND |
+
+Power both boards by USB; connect grounds. Do not connect either 5 V pin to
+the other board.
+
+### Build and run
+
+```bash
+# Compute board: original opt23 forward, no radio linked
+cd benchmarks/case-02/optimisation/esp32-baseline
+pio run -e esp32-uart-worker -t upload --upload-port <COMPUTE_PORT>
+
+# Sidecar: copy credentials for a shared 2.4 GHz LAN, then flash
+cd ../../../../esp32-linkbench
+cp secrets.example.h secrets.h
+pio run -e pc-master-uart-bridge -t upload --upload-port <SIDECAR_PORT>
+
+# The sidecar prints BRIDGE|ready|ip=...|port=5000 over USB.
+cd ../benchmarks/batch-dp
+../../.venv/bin/python tools/run_batch_dp.py --batch 4 --wifi <SIDECAR_IP>
+```
+
+If `secrets.h` is absent, the sidecar hosts a single-client fallback AP named
+`TM-BRIDGE-xxxx`; that is convenient for one pair but not a multi-sidecar
+fleet. For N pairs, put all N sidecars on the same private 2.4 GHz LAN and
+pass every IP to `--wifi`.
+
+The UART wire time for one 65,536-byte input plus output is 0.655 s at 2 Mbaud
+(8-N-1 framing). This is a lower bound, not a measured end-to-end result. TCP,
+queueing, and software overhead must be included in the physical benchmark.
+
+---
+
 ## Footprint (Arduino core 3.0.7 / ESP-IDF 5.1.0)
 
 | env | RAM | Flash (app image) |
 |---|---:|---:|
 | link-server | 34,028 B (10.4% of 327,680 B) | 926,328 B |
 | link-client | 42,084 B (12.8% of 327,680 B) | 928,858 B |
+| pc-master-uart-bridge | **40,940 B (12.5%)** | 739,838 B |
+| paired esp32-uart-worker (includes model arena) | **274,308 B (83.7%)** | 2,663,200 B |
 
-RAM is the scarce resource on the C3. These figures are the **link-only**
-firmware: it carries no transformer compute, so its total RAM is tiny. WiFi does
-**not** fit inside the full-forward compute node — measured on this bench, the
+RAM is the scarce resource on the C3. The first three rows are **link-only**
+firmware and carry no Transformer compute; the final row is the separate,
+radio-free compute image. WiFi does **not** fit inside the original full-forward
+compute node — measured on this bench, the
 full-sequence build uses ~274 KB, WiFi+lwIP adds ~85 KB static plus ~69 KB heap,
 and the combined image overflows `dram0_0_seg` (see
 [`docs/WIFI_ON_A_COMPUTE_NODE.md`](../../docs/WIFI_ON_A_COMPUTE_NODE.md)).
-That is exactly why the topology here keeps WiFi **out** of the compute
-firmware: boards run this small link firmware when they act as transport, and
-the compute builds keep their existing USB/serial path. Flash is dominated by
-the prebuilt Wi-Fi + ESP-NOW + USB-CDC driver blobs, not by our code.
+Mode C keeps WiFi **out** of the compute firmware by putting this small link
+image on a physically separate sidecar. Modes A and B replace the compute
+image with a link demo; their small footprint must not be added to the original
+arena as evidence that the combined runtime fits. Flash is dominated by the
+prebuilt WiFi + ESP-NOW + USB-CDC driver blobs, not by our code.
 
 ## Troubleshooting
 

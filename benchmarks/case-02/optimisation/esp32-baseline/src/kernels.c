@@ -82,11 +82,11 @@ static __inline__ uint32_t tm_kb_now_host(void) {
 #define KB_NOW() tm_kb_now_host()
 #endif
 
-/* RISC-V cycle counter to separate CPU-bound vs flash-XIP stalls
- * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
+/* RISC-V cycle counter to separate CPU-bound vs flash-XIP stalls. Arduino's
+ * pinned ESP-IDF exposes the official helper as esp_cpu_get_ccount(). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_cycle_count();
+    return (uint64_t)esp_cpu_get_ccount();
 #else
     return 0;
 #endif

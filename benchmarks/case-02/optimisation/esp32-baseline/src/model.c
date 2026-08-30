@@ -24,7 +24,9 @@
 
 #include <math.h>
 #include <string.h>
+#ifndef TM_NO_MODEL_PROFILE
 #define TM_PROFILE 1
+#endif
 
 /* The tiled FAST build supplies the same public API from model_tiled.c.
  * Keep the default translation unit unchanged unless that opt-in flag is set;

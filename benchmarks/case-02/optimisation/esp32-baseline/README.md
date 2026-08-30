@@ -96,6 +96,28 @@ end-to-end. This schedule fits case 2 (`S=128`); its residual, context, and
 current-head K/V still scale with S, so it is not the long-sequence solution
 for cases 13/14.
 
+## Optional: original opt23 forward behind a radio sidecar
+
+`esp32-uart-worker` keeps the faster original arena and command protocol but
+moves its endpoint from USB CDC to UART1 at 2 Mbaud. Pair it with the
+link-only `pc-master-uart-bridge` image in
+[`../../../../esp32-linkbench/`](../../../../esp32-linkbench/):
+
+```bash
+pio run -e esp32-uart-worker
+```
+
+Wire sidecar D6/TX to worker D7/RX, sidecar D7/RX to worker D6/TX, and GND to
+GND. The sidecar exposes TCP port 5000, so `run_batch_dp.py --wifi <IP>` needs
+no new host protocol. This design physically keeps all radio memory off the
+274 KB compute board and preserves opt23 compute, but costs two boards per
+logical node. The build uses 274,308 B static DRAM; it disables the model-level
+profiling accumulators to make room for the UART driver, while the outer
+per-forward timer and numerical path are unchanged. It is build-verified and
+must not be reported as a speedup until the physical 25-seed accuracy and
+end-to-end gates pass. See
+[`../../../../esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md`](../../../../esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md).
+
 ## Numbers
 
 Param count 398,592 = 1.59 MB fp32. Live SRAM ~272 KB (fits 400 KB).
