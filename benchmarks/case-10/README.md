@@ -65,10 +65,11 @@ failing elements. The complete official B=64 batch then produced:
 | 1 tiled WiFi worker (equivalent) | **238.2 s** | - | Derived from the replicas' measured work |
 | 2 tiled WiFi replicas | **119.101 s** | **146.7 s** | **64/64 PASS**, zero failing elements |
 | 4 tiled WiFi replicas | **59.563 s** | **74.2 s** | **64/64 PASS**, zero failing elements |
+| 8 tiled WiFi replicas | **29.793 s** | **39.2 s** | **64/64 PASS**, zero failing elements |
 
-The two- and four-node runs scale exactly **2.00x** and **4.00x** against one
-tiled worker. Against the best optimized single-board compute total, they are
-**1.16x** and **2.33x** faster. Tiling is the memory enabler, not a per-board
-speed optimization: one tiled forward is 3.722 s versus 2.165 s on the
-optimized USB build. Raw evidence and commands are in
+The two-, four-, and eight-node runs scale **2.00x**, **4.00x**, and **7.999x**
+against one tiled worker. Against the best optimized single-board compute
+total, they are **1.16x**, **2.33x**, and **4.65x** faster. Tiling is the
+memory enabler, not a per-board speed optimization: one tiled forward is
+3.722 s versus 2.165 s on the optimized USB build. Raw evidence and commands are in
 [`multiboard/README.md`](multiboard/README.md).
