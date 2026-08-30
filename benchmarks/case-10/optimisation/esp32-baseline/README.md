@@ -84,10 +84,11 @@ enough runtime heap for WiFi/lwIP on the physical boards.
 
 ## Current measured execution (on-device, FAST mode)
 
-The optimized USB device gate passes 25/25 seeds at 2.165 s/forward. Two
-physical tiled WiFi workers passed seed 0 in 3.7218 / 3.7193 s, then completed
-the full B=64 batch in 119.101 s compute wall with 64/64 outputs passing and
-worst `max_abs=1.2526e-3`. Full results are in
+The optimized USB device gate passes 25/25 seeds at 2.165 s/forward. Physical
+tiled WiFi workers passed seed 0 in 3.7218 / 3.7193 s. Two replicas completed
+the full B=64 batch in 119.101 s compute wall; four replicas completed it in
+59.563 s. Both runs returned 64/64 passing outputs with worst
+`max_abs=1.2526e-3`. Full results are in
 [`../../multiboard/`](../../multiboard/). Fine-grained per-phase and
 per-version profiles are in
 [`optimisations/README.md`](optimisations/README.md).
