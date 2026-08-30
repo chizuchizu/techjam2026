@@ -2,7 +2,9 @@
 
 Case 07 is `B=64, S=128, D=32, H=4, F=32, L=4`, causal. The board streams the
 official batch of 64 inputs and performs one complete forward per input frame.
-No complete-batch total is stated here because it would be a derived projection.
+A complete batch of 64 inputs has now been streamed and timed end-to-end
+on-board; the measured full-case total is **30.4272 s** on the device
+(**70.227 s** wall including host USB pacing) — see the result section below.
 
 ## Configuration
 
@@ -35,10 +37,12 @@ ESP32-C3 at 160 MHz, one forward per input frame.
 The 0.475 s/forward v1 row was measured on board A (`/dev/cu.usbmodem101`)
 with all 25 official device seeds passing the benchmark gate (worst
 `abs_err` 1.46e-03), plus a firmware `TM` sweep of 475,099 / 474,979 /
-475,172 us per forward. Raw capture and summary live in
-[`optimisation/results/`](optimisation/results/). A complete-batch total
-would be a derived projection and is not reported; only real on-board
-measurements appear here.
+475,172 us per forward. Raw per-seed capture and summary live in
+[`optimisation/results/`](optimisation/results/). The complete-batch total is
+now a measured number as well: streaming all B=64 frames on-board took
+**30.4272 s** of device compute (sum of the firmware `us=` counters) and
+**70.227 s** of wall time including host USB pacing — see
+`case-07_xiao_c3_optimised_full_case_v1.md` in the same directory.
 
 ## Likely next step
 

@@ -2,7 +2,9 @@
 
 Case 12 is `B=64, S=32, D=128, H=4, F=128, L=4`, causal. The board streams the
 official batch of 64 inputs and performs one complete forward per input frame.
-No complete-batch total is stated here because it would be a derived projection.
+A complete batch of 64 inputs has now been streamed and timed end-to-end
+on-board; the measured full-case total is **33.8794 s** on the device
+(**73.744 s** wall including host USB pacing) — see the result section below.
 
 ## Configuration
 
@@ -37,7 +39,10 @@ device seeds PASS (worst `abs_err` 1.14e-03), firmware `TM` sweep 529,015 /
 528,970 / 528,764 us per forward. The maintained v1 build is ~7% slower than
 the very first physical capture (0.493 s); it is the number to cite for the
 maintained optimisation path and is the full 25-seed result, not a projection.
-Raw capture and summary: [`optimisation/results/`](optimisation/results/).
+The complete B=64 batch is now measured directly as **33.8794 s** of on-device
+compute (sum of the firmware `us=` counters over all 64 streamed frames) and
+**73.744 s** wall time including host USB pacing. Raw captures and summaries:
+[`optimisation/results/`](optimisation/results/).
 
 ## Likely next step
 

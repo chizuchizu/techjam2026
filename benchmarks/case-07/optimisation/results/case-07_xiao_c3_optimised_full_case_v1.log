@@ -1,0 +1,71 @@
+[boot] ''
+[mode] TM 1 128 32
+frame   0: fails=    0 max_abs=1.1568e-03 us=481323 PASS
+frame   1: fails=    0 max_abs=1.2744e-03 us=475389 PASS
+frame   2: fails=    0 max_abs=1.0613e-03 us=475297 PASS
+frame   3: fails=    0 max_abs=1.0387e-03 us=475431 PASS
+frame   4: fails=    0 max_abs=9.8015e-04 us=475394 PASS
+frame   5: fails=    0 max_abs=1.1749e-03 us=475286 PASS
+frame   6: fails=    0 max_abs=8.3840e-04 us=475292 PASS
+frame   7: fails=    0 max_abs=1.0217e-03 us=475287 PASS
+frame   8: fails=    0 max_abs=1.0632e-03 us=475326 PASS
+frame   9: fails=    0 max_abs=1.0875e-03 us=475114 PASS
+frame  10: fails=    0 max_abs=9.9856e-04 us=475282 PASS
+frame  11: fails=    0 max_abs=9.9312e-04 us=475346 PASS
+frame  12: fails=    0 max_abs=9.4835e-04 us=475333 PASS
+frame  13: fails=    0 max_abs=1.1409e-03 us=475384 PASS
+frame  14: fails=    0 max_abs=1.0128e-03 us=475337 PASS
+frame  15: fails=    0 max_abs=1.0532e-03 us=475457 PASS
+frame  16: fails=    0 max_abs=1.0232e-03 us=475198 PASS
+frame  17: fails=    0 max_abs=1.1504e-03 us=475342 PASS
+frame  18: fails=    0 max_abs=1.1269e-03 us=475334 PASS
+frame  19: fails=    0 max_abs=1.2720e-03 us=475394 PASS
+frame  20: fails=    0 max_abs=9.8968e-04 us=475194 PASS
+frame  21: fails=    0 max_abs=1.0872e-03 us=475322 PASS
+frame  22: fails=    0 max_abs=1.0427e-03 us=475447 PASS
+frame  23: fails=    0 max_abs=1.1339e-03 us=475341 PASS
+frame  24: fails=    0 max_abs=1.0475e-03 us=475311 PASS
+frame  25: fails=    0 max_abs=1.1499e-03 us=475378 PASS
+frame  26: fails=    0 max_abs=1.1683e-03 us=475328 PASS
+frame  27: fails=    0 max_abs=8.3494e-04 us=475241 PASS
+frame  28: fails=    0 max_abs=1.0845e-03 us=475233 PASS
+frame  29: fails=    0 max_abs=1.1132e-03 us=475321 PASS
+frame  30: fails=    0 max_abs=1.2805e-03 us=475266 PASS
+frame  31: fails=    0 max_abs=9.8956e-04 us=475317 PASS
+frame  32: fails=    0 max_abs=1.1356e-03 us=475283 PASS
+frame  33: fails=    0 max_abs=9.3186e-04 us=475402 PASS
+frame  34: fails=    0 max_abs=1.2828e-03 us=475351 PASS
+frame  35: fails=    0 max_abs=9.6506e-04 us=475242 PASS
+frame  36: fails=    0 max_abs=1.4421e-03 us=475255 PASS
+frame  37: fails=    0 max_abs=1.2566e-03 us=475420 PASS
+frame  38: fails=    0 max_abs=1.0931e-03 us=475294 PASS
+frame  39: fails=    0 max_abs=9.2036e-04 us=475260 PASS
+frame  40: fails=    0 max_abs=1.0067e-03 us=475370 PASS
+frame  41: fails=    0 max_abs=1.0432e-03 us=475162 PASS
+frame  42: fails=    0 max_abs=8.7571e-04 us=475560 PASS
+frame  43: fails=    0 max_abs=9.8646e-04 us=475282 PASS
+frame  44: fails=    0 max_abs=1.0378e-03 us=475204 PASS
+frame  45: fails=    0 max_abs=1.0915e-03 us=475487 PASS
+frame  46: fails=    0 max_abs=1.2031e-03 us=475315 PASS
+frame  47: fails=    0 max_abs=1.2652e-03 us=475354 PASS
+frame  48: fails=    0 max_abs=1.1964e-03 us=475337 PASS
+frame  49: fails=    0 max_abs=1.1755e-03 us=475551 PASS
+frame  50: fails=    0 max_abs=9.6178e-04 us=475362 PASS
+frame  51: fails=    0 max_abs=1.0732e-03 us=475360 PASS
+frame  52: fails=    0 max_abs=1.0419e-03 us=475406 PASS
+frame  53: fails=    0 max_abs=1.1102e-03 us=475134 PASS
+frame  54: fails=    0 max_abs=1.2469e-03 us=475283 PASS
+frame  55: fails=    0 max_abs=1.0017e-03 us=475352 PASS
+frame  56: fails=    0 max_abs=1.4762e-03 us=475253 PASS
+frame  57: fails=    0 max_abs=1.5579e-03 us=475355 PASS
+frame  58: fails=    0 max_abs=1.2230e-03 us=475474 PASS
+frame  59: fails=    0 max_abs=1.1017e-03 us=475377 PASS
+frame  60: fails=    0 max_abs=1.0583e-03 us=475319 PASS
+frame  61: fails=    0 max_abs=9.6166e-04 us=475401 PASS
+frame  62: fails=    0 max_abs=9.1310e-04 us=475457 PASS
+frame  63: fails=    0 max_abs=1.0946e-03 us=475332 PASS
+---- FULL CASE SUMMARY ----
+case=07 B=64 N=4096
+frames=64 total_device_us=30427239 total_device_s=30.4272 median_us=475333.5
+wall_s=70.227 (first frame send -> last frame output, boot/flash excluded)
+gate_fail_elements=0 worst_max_abs=1.5579e-03 ALL_PASS

@@ -40,7 +40,10 @@ reduced working set, so this table now reports the physical measurement.
 
 Measured on board A (`/dev/cu.usbmodem101`), all 25 official device seeds
 PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,162,329 / 2,162,943 /
-2,162,547 us per forward. Raw capture and summary:
+2,162,547 us per forward. The complete B=64 batch is now measured directly:
+**138.5358 s** of on-device compute for the whole case (sum of the firmware
+`us=` counters over all 64 streamed frames) and **262.778 s** wall time
+including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
 ## Next case-specific step

@@ -33,8 +33,10 @@ head-width-32 while the full `D=128` projection work is unchanged.
 Each row executes the same complete four-layer Transformer body once on
 one XIAO ESP32-C3 at 160 MHz. The firmware streams one input frame
 (`S*D` floats) per forward; the single-input forward is the measured
-physical capture; a complete batch-64 total would be a derived
-projection and is not reported.
+physical capture; the complete batch-64 total is now measured directly
+on-board as **138.6104 s** of device compute (sum of the firmware `us=`
+counters over all 64 streamed frames) with **262.754 s** wall time including
+host USB pacing.
 
 | Build | Time/forward | Speedup | Validation |
 |---|---:|---:|---|
@@ -44,8 +46,9 @@ projection and is not reported.
 The v1 row was measured on board B (`/dev/cu.usbmodem1101`), all 25 official
 device seeds PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,163,993 /
 2,164,242 / 2,164,130 us per forward. The 16 tiny heads add per-head loop/setup
-overhead yet the projection-dominated forward lands at ~2.17 s. Raw capture and
-summary: [`optimisation/results/`](optimisation/results/).
+overhead yet the projection-dominated forward lands at ~2.17 s, and the full B=64 case
+lands at 138.6104 s of device compute. Raw captures and summaries:
+[`optimisation/results/`](optimisation/results/).
 
 ## Next case-specific step
 

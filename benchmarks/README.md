@@ -31,12 +31,12 @@ Measured cross-case run of the case-2 optimised firmware on cases 1–5:
 | [04](case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **42.4x** | data parallel, 2.00x | 16/16 forwards PASS |
 | [05](case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **42.3x** | data parallel, 2.00x | 128/128 forwards PASS |
 | [06](case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | Not implemented | - |
-| [07](case-07/) | `(64,128,32,4,32,4)` | - | **0.475 s/fwd** | - | - | - | 25/25 PASS (worst 1.46e-03) |
+| [07](case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** (B=64 full case) | - | - | - | 64/64 full-case PASS (worst 1.56e-03) |
 | [08](case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | Not implemented | - |
-| [09](case-09/) | `(64,128,128,1,128,4)` | - | **2.157 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03; SRAM fixed) |
-| [10](case-10/) | `(64,128,128,2,128,4)` | - | **2.165 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03) |
-| [11](case-11/) | `(64,128,128,16,128,4)` | - | **2.166 s/fwd** | - | - | - | 25/25 PASS (worst 1.24e-03) |
-| [12](case-12/) | `(64,32,128,4,128,4)` | - | **0.529 s/fwd** | - | - | - | 25/25 PASS (worst 1.14e-03) |
+| [09](case-09/) | `(64,128,128,1,128,4)` | - | **138.027 s** (B=64 full case) | - | - | - | 64/64 full-case PASS (worst 1.49e-03; SRAM fixed) |
+| [10](case-10/) | `(64,128,128,2,128,4)` | - | **138.536 s** (B=64 full case) | - | - | - | 64/64 full-case PASS (worst 1.59e-03) |
+| [11](case-11/) | `(64,128,128,16,128,4)` | - | **138.610 s** (B=64 full case) | - | - | - | 64/64 full-case PASS (worst 1.48e-03) |
+| [12](case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** (B=64 full case) | - | - | - | 64/64 full-case PASS (worst 1.31e-03) |
 | [13](case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | Not implemented | - |
 | [14](case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | Not implemented | - |
 
@@ -51,12 +51,13 @@ starting point. Only case 2's baseline is a measurement. The optimised and
 two-board columns are measured everywhere.
 
 Cases 7, 9, 10, 11 and 12 each stream `B=64` independent inputs, so the
-"Optimised, 1 board" figure above is **one complete four-layer forward** as
-measured by the device (0.475 / 2.157 / 2.165 / 2.166 / 0.529 s). The
-whole-case totals are the derived `B x` projection — 30.4 / 138.1 / 138.6 /
-138.6 / 33.9 s — and are intentionally not reported as measurements; see each
-case README for the raw 25-seed captures. Cases 8 and 13 have no consumable
-firmware in this workspace and remain not implemented.
+"Optimised, 1 board" figure above is the **measured full-case total**: the sum
+of the device's own `us=` forward counters over all 64 streamed frames
+(30.427 / 138.027 / 138.536 / 138.610 / 33.879 s). Wall time including host
+USB pacing is 70.227 / 262.073 / 262.778 / 262.754 / 73.744 s respectively.
+Each full-case run also passed the gate on all 64/64 frames; see each case
+README and `optimisation/results/` for the raw captures. Cases 8 and 13 have no
+consumable firmware in this workspace and remain not implemented.
 
 
 **Multiboard split** names which decomposition the two-board column used. Cases
