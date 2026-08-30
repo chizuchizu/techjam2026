@@ -27,6 +27,7 @@ head-width-32 while the full `D=128` projection work is unchanged.
 |---|---|
 | [`baseline/`](baseline/) | First physical capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+| [`multiboard/`](multiboard/) | Two-node WiFi data-parallel result and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -50,10 +51,26 @@ overhead yet the projection-dominated forward lands at ~2.17 s, and the full B=6
 lands at 138.6104 s of device compute. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
-## Next case-specific step
+## WiFi data parallelism
 
-The small head width (8) means per-head QK/PV rows are 128x8 (Q15),
-so attention is index/loop-bound rather than dot-product-bound: profile
-the per-head loop and head-reorder overhead at `H=16` before assuming
-head-parallel gains, then design a grouped-head shard (e.g. 4 heads of
-width 8) for the multiboard experiment.
+The opt-in WiFi worker uses a 16-row sequential tile schedule. Its activation
+arena scales with tile height rather than the complete `S=128` sequence,
+reducing the credential-enabled build to **158,964 / 327,680 B static RAM**.
+The default optimized USB build remains unchanged at 256,180 B.
+
+The tiled host gate passes 25/25 seeds (worst `max_abs=1.1135e-3`). Two
+physical workers passed a seed-0 TCP forward at 6.452 / 6.451 s. The complete
+B=64 two-node run produced:
+
+| Build | Compute wall | End-to-end wall | Validation |
+|---|---:|---:|---|
+| 1 optimized USB worker | **138.610 s** | 262.754 s | 25/25 device seeds PASS |
+| 1 tiled WiFi worker (equivalent) | **412.707 s** | - | Derived from measured replica work |
+| 2 tiled WiFi replicas | **206.354 s** | **238.0 s** | **64/64 PASS**, zero failing elements |
+
+Two replicas scale exactly **2.00x** against one tiled worker, but remain
+**1.49x slower** than the best optimized USB compute total. H=16 performs
+sixteen causal softmaxes per layer, so the memory-saving tile schedule has
+more overhead here than in cases 9 and 10. Four nodes are the first expected
+crossover; that is the next physical measurement. Raw evidence and commands
+are in [`multiboard/README.md`](multiboard/README.md).

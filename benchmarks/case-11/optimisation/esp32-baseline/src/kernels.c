@@ -3,6 +3,9 @@
  */
 #define TM_PROFILE 1
 #include "kernels.h"
+#ifdef TM_TILED_FORWARD
+#include "gelu_tab_2049.h"
+#endif
 #pragma GCC optimize ("O3")
 #ifndef TM_IRAM
 #define TM_IRAM
@@ -36,10 +39,12 @@ void tm_gemm_f32(const float* A, const float* W, const float* bias,
  * int16*int16 products are exact in int32; the K-term accumulation bound
  * (~ 6e-9 * K) keeps sums far below INT32 saturation for this model.
  */
-/* Shared Q15 activation scratch (32 KB).  Used by the FAST projection
- * GEMMs.  Sequential use: the QKV path quantizes g_buf1 ONCE per layer and
- * reuses this buffer across all heads; oproj/f1/f2 re-use it after. */
-static int16_t a16[TM_S * TM_D];
+/* Sequential tiled builds only feed TM_A16_ROWS rows at once. Default builds
+ * retain the complete-sequence workspace and unchanged behavior. */
+#ifndef TM_A16_ROWS
+#define TM_A16_ROWS TM_S
+#endif
+static int16_t a16[TM_A16_ROWS * TM_D];
 
 /* Accessor so model.c can share the same scratch (no duplicate 32 KB). */
 int16_t* tm_gemm_a16(void) { return a16; }
@@ -80,7 +85,7 @@ static __inline__ uint32_t tm_kb_now_host(void) {
  * (esp_cpu_get_cycle_count reads the 'cycle' CSR; official ESP-IDF API). */
 static __inline__ uint64_t tm_cyc_now(void) {
 #if defined(__riscv)
-    return (uint64_t)esp_cpu_get_cycle_count();
+    return (uint64_t)esp_cpu_get_ccount();
 #else
     return 0;
 #endif
@@ -252,9 +257,17 @@ void tm_gemm_core2(const int16_t* Aq, float sa_inv, const int16_t* Wq,
 float tm_gemm_head_q15(const int16_t* Aq, float sa_inv, const int16_t* Wq,
                        float w_scale, const float* bias,
                        int32_t* acc, int16_t* dst, int K) {
+    return tm_gemm_head_q15_m(Aq, sa_inv, Wq, w_scale, bias, acc, dst,
+                              TM_S, K);
+}
+
+/* Row-count-parameterised variant used by the sequential tile schedule. */
+float tm_gemm_head_q15_m(const int16_t* Aq, float sa_inv, const int16_t* Wq,
+                         float w_scale, const float* bias,
+                         int32_t* acc, int16_t* dst, int M, int K) {
     KPB(0);
     const float g = sa_inv * w_scale;
-    const int S = TM_S, HD = TM_HD;
+    const int S = M, HD = TM_HD;
     /* Pass 1: j-outer GEMM (sequential W columns, flash-cache friendly like
      * core4) straight into the int32 accumulator scratch.  Tracks per-column
      * min/max of the int32 accs so amax is EXACT but requires only 2*HD fp32
@@ -1650,6 +1663,7 @@ void tm_gelu_inplace(float* x, int n) {
  * for the actual scale; applies in pure integer (7-bit linear interp, max
  * err <0.1 Q15 units).  Output stays on the input Q15 grid (|gelu|<=|x|).
  */
+#ifndef TM_TILED_FORWARD
 static int16_t g_gelu_lut[513];
 void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
     const float inv_sqrt2 = 0.70710677f;
@@ -1668,6 +1682,54 @@ void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
                          ((((int32_t)g_gelu_lut[idx+1] - (int32_t)g_gelu_lut[idx]) * off + 64) >> 7));
     }
 }
+#else
+static const float GELU_ZMAX = 3.2f;
+void tm_gelu_q15_lut(int16_t* x, int n, float amax) {
+    /* A flash-resident erf table avoids rebuilding 513 soft-float entries for
+     * every sequential tile. The default USB build retains its established
+     * runtime-LUT path. */
+    const float inv_sqrt2 = 0.70710677f;
+    const float zstep = GELU_ZMAX / 2048.0f;
+    const float csc = (amax / (32767.0f * inv_sqrt2)) / zstep;
+    int shift = 0;
+    int32_t q = 1;
+    if (csc < 2048.0f) {
+        while (shift < 20) {
+            int32_t qtry = (int32_t)(csc * (float)(1 << shift) + 0.5f);
+            if ((int64_t)32767 * (int64_t)qtry < ((int64_t)1 << 30)) {
+                q = qtry;
+                shift++;
+            } else {
+                break;
+            }
+        }
+    }
+    if (csc >= 2048.0f) {
+        for (int i = 0; i < n; i++) x[i] = x[i] > 0 ? x[i] : (int16_t)0;
+        return;
+    }
+    const int32_t half = 1 << (shift - 1);
+    const int32_t mask = (1 << shift) - 1;
+    for (int i = 0; i < n; i++) {
+        int32_t v = x[i];
+        if (v == 0) continue;
+        int32_t ax = v < 0 ? -v : v;
+        int64_t avq = (int64_t)ax * q;
+        int32_t idx = (int32_t)(avq >> shift);
+        if (idx >= 2048) {
+            x[i] = v > 0 ? (int16_t)v : (int16_t)0;
+            continue;
+        }
+        int32_t e0 = g_erf_tab[idx], e1 = g_erf_tab[idx + 1];
+        int32_t off = (int32_t)(avq & mask);
+        int32_t ev = e0 + (((e1 - e0) * off + half) >> shift);
+        float g;
+        if (v > 0) g = 0.5f * (float)ax * (32767.0f + (float)ev) / 32767.0f;
+        else       g = 0.5f * (float)ax * ((float)ev - 32767.0f) / 32767.0f;
+        x[i] = (int16_t)(g + (g >= 0.0f ? 0.5f : -0.5f));
+    }
+}
+#endif
 
 /* ================= elementwise add ================= */
 void tm_add_inplace(const float* x, float* y, int n) {

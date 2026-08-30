@@ -1,7 +1,8 @@
-# ESP32-C3 case-02 single-board Transformer
+# ESP32-C3 case-11 Transformer
 
-Single-board C implementation of the case-2 transformer
-(B=1, S=128, D=128, H=4, HD=32, F=128, L=4, causal, ~399K params) tuned for the
+Single-board and opt-in WiFi implementation of the case-11 transformer
+(B=64 streamed inputs, S=128, D=128, H=16, HD=8, F=128, L=4, causal,
+~399K params) tuned for the
 **Seeed XIAO ESP32C3** (400 KB SRAM, 4 MB flash, 160 MHz RV32IMC, **no FPU**).
 
 The model is the reference `BaselineTransformer` from
@@ -17,22 +18,24 @@ The model is the reference `BaselineTransformer` from
 * **FAST** (`TM_MODE_FAST`, default): Q15 activations and Q12 weights feed
   fixed-point GEMMs; attention uses integer QK/PV paths and an exp lookup
   table; GELU, LayerNorm and quantisation are fused where possible; weights
-  and biases are pre-quantized offline. **Measured on device: 2.462 s/forward**
-  (FAST, 5/5 device seeds; board B).
+  and biases are pre-quantized offline. **Measured on device: 2.166 s/forward**
+  (FAST, 25/25 device seeds; board B).
 
 FAST is validated against the real benchmark gate (|a-b| <= 0.002 OR
-|a-b| <= 0.02*|b|). On-device: **5/5 seeds pass**,
-worst max_abs 1.0893e-03, 2.462 s/forward.
+|a-b| <= 0.02*|b|). On-device: **25/25 seeds pass**, with a complete B=64
+compute total of 138.6104 s.
 
 Scores: not computed for this case (no full on-board scoring run); see baseline/README.md.
 
 ## Repository layout
 
-    platformio.ini        two espressif32 envs (XIAO C3 + generic devkit)
+    platformio.ini        default USB targets plus opt-in tiled WiFi target
     src/tm_config.h       model geometry, numeric modes, weight layout
     src/kernels.h/.c      fp32 GEMM, Q15xQ12 GEMM, LayerNorm, GELU, fast exp
     src/model.h/.c        forward pass + streaming causal attention
     src/main.cpp          Arduino firmware (serial protocol, timing)
+    src/model_tiled.c     16-row reduced-memory FAST forward
+    src/main_wifi.cpp     persistent WiFi/TCP command endpoint
     tools/export_case2.py torch artifact exporter (system python3)
     tools/host_test.c     host validation vs torch references (25 seeds)
     tools/compare.py      verify a raw device output dump vs torch refs
@@ -50,8 +53,11 @@ See `TM_W_BLK_*` / `woff()` in src. `weights_q12.bin` is 24 matrices
 
 ## Build & validate on the host
 
-    python3 tools/export_case2.py --outdir . --seeds 25   # torch artifacts
-    make -C tools host_test && ./tools/host_test all --both --reps 5
+    python3 tools/export_case2.py --outdir . --seeds 25 \
+      --B 64 --S 128 --D 128 --H 16 --F 128 --L 4
+    make -C tools host_test host_test_tiled
+    (cd tools && ./host_test all --both --reps 5)
+    (cd tools && ./host_test_tiled all --fast)
 
 ## Build & run on the ESP32-C3
 
@@ -61,20 +67,30 @@ See `TM_W_BLK_*` / `woff()` in src. `weights_q12.bin` is 24 matrices
                                                # 'R' + 65536 input bytes,
                                                # 'T' + count (timing)
 
+For the memory-reduced WiFi worker, copy `secrets.example.h` to the ignored
+`secrets.h`, fill in the benchmark-LAN credentials, then run:
+
+    pio run -e esp32-wifi-tiled -t upload --upload-port /dev/ttyACM0
+
 Serial protocol (main.cpp): `M` prints mode; `R` reads 16384 floats,
 runs one forward, streams 16384 output floats then `END`; `T <n>` does
 n timed forwards and prints `TM <mode> <us>...`.
 
 ## Numbers
 
-Param count 398,592 = 1.59 MB fp32. XIAO build RAM 256,180 B (fits 400 KB).
-App partition 2,646,542 B (fits 4 MB).
+Param count 398,592 = 1.59 MB fp32. The default USB build uses
+256,180 / 327,680 B static RAM. The credential-enabled 16-row WiFi build uses
+**158,964 / 327,680 B** static RAM and 3,126,328 / 3,670,016 B flash, leaving
+enough runtime heap for WiFi/lwIP.
 
 ## Current measured execution (on-device, FAST mode)
 
-Device gate (FAST, 5 seeds): **5/5 PASS**, max_abs up to 1.0893e-03.
-On-device forward time is **2.462 s/forward** (measured on board B).
-Fine-grained per-phase and per-version profiles are in
+The optimized USB gate passes 25/25 seeds at 2.166 s/forward. The tiled host
+gate passes 25/25 seeds (worst `max_abs=1.1135e-3`). Two physical WiFi workers
+passed seed 0 at 6.452 / 6.451 s, then completed the official B=64 batch in
+206.354 s compute wall with 64/64 outputs passing and worst
+`max_abs=1.3083e-3`. Full results are in
+[`../../multiboard/`](../../multiboard/). Fine-grained profiles are in
 [`optimisations/README.md`](optimisations/README.md).
 
 ## Scoring (evaluation methodology)
