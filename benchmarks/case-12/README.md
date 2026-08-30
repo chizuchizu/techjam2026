@@ -23,6 +23,7 @@ on-board; the measured full-case total is **33.8794 s** on the device
 |---|---|
 | [`baseline/`](baseline/) | First physical C3 capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+| [`multiboard/`](multiboard/) | Two-node WiFi data-parallel firmware, raw results, and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -44,11 +45,29 @@ compute (sum of the firmware `us=` counters over all 64 streamed frames) and
 **73.744 s** wall time including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
+## Two-board WiFi data parallelism
+
+The official-shape host gate was reconfirmed first (50/50 FAST + EXACT
+seed-runs), followed by a fresh optimized one-board batch (33.928 s, 64/64
+PASS). Two direct-WiFi ESP32-C3 replicas then ran 32 inputs each:
+
+| Active boards | Compute wall | End-to-end wall | Scaling | Validation |
+|---:|---:|---:|---:|---|
+| 1 optimized USB | 33.928 s | 206.0 s * | 1.00x | 64/64 PASS |
+| 2 WiFi replicas | **17.091 s** | **29.4 s** | **2.00x vs one WiFi worker** | 64/64 PASS |
+
+`*` The fresh USB run recovered one short output frame, inflating only its
+transport-inclusive wall. The earlier clean optimized capture is 33.879 s
+compute / 73.744 s USB-inclusive wall.
+
+The short sequence needs no tiling and the WiFi image uses only 104,956 bytes
+of static RAM. Flash is tight at 3,125,954 / 3,145,728 bytes (99.4%). Complete
+method, raw JSON, and reproduction commands:
+[`multiboard/README.md`](multiboard/README.md).
+
 ## Likely next step
 
-Short sequences shrink attention work, so setup, dispatch, and transport costs
-matter more than in case 2 (attention is only ~17 MFLOP of the ~27 MFLOP
-body). Fuse projections and normalization, then compare the single-board
-streamed batch path with head or batch parallelism including measured link
-cost.
-
+Short sequences shrink attention work, so setup and dispatch costs matter more
+than in case 2. Batch parallelism is now physically validated at 2.00x; the
+next optimisation is projection/normalization fusion, or scaling the same
+replica method to four/eight nodes.
