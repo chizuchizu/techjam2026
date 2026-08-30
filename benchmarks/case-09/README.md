@@ -27,6 +27,7 @@ attention/projection path has no head loop at all.
 |---|---|
 | [`baseline/`](baseline/) | SRAM-limit record and review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+| [`multiboard/`](multiboard/) | Four-node WiFi data-parallel result and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -49,12 +50,26 @@ PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,154,695 / 2,155,128 /
 including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
-## Next case-specific step
+## WiFi data parallelism
 
 The reduced-memory path is now implemented as an opt-in 16-row sequential
 tile schedule with a persistent WiFi/TCP endpoint. It links at **224,244 B**
 static RAM instead of the default build's 273,180 B. The tiled host gate passes
 25/25 seeds (worst `max_abs=1.1038e-3`), and the first two physical workers
 both passed a seed-0 TCP forward at 3.563 s device compute with zero failing
-elements. This is a worker-readiness smoke test, not yet a reported two-board
-case speedup; a complete 64/64 distributed batch is the next measurement.
+elements.
+
+The complete B=64 batch was then distributed evenly across four physical
+workers:
+
+| Active boards | Compute wall | End-to-end wall | Scaling | Validation |
+|---:|---:|---:|---:|---|
+| 1 optimized USB | **138.027 s** | 262.073 s | 1.00x | 64/64 PASS |
+| 4 tiled WiFi replicas | **57.005 s** | **75.4 s** | **4.00x vs one tiled worker** | 64/64 PASS |
+
+Tiling makes one WiFi worker slower than the best SRAM-cached USB build, so
+the measured cluster gain against that best single-board compute total is
+**2.42x**, not 4.00x. The four-node run had no missing inputs or failing
+elements; worst `max_abs=1.2649e-3`. Raw evidence and commands are in
+[`multiboard/README.md`](multiboard/README.md). The next hardware step is the
+same complete gate on eight replicas.
