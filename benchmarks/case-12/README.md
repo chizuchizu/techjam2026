@@ -45,16 +45,17 @@ compute (sum of the firmware `us=` counters over all 64 streamed frames) and
 **73.744 s** wall time including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
-## Two-board WiFi data parallelism
+## WiFi data parallelism
 
 The official-shape host gate was reconfirmed first (50/50 FAST + EXACT
 seed-runs), followed by a fresh optimized one-board batch (33.928 s, 64/64
-PASS). Two direct-WiFi ESP32-C3 replicas then ran 32 inputs each:
+PASS). Direct-WiFi ESP32-C3 replicas then ran the batch on two and four boards:
 
 | Active boards | Compute wall | End-to-end wall | Scaling | Validation |
 |---:|---:|---:|---:|---|
 | 1 optimized USB | 33.928 s | 206.0 s * | 1.00x | 64/64 PASS |
 | 2 WiFi replicas | **17.091 s** | **29.4 s** | **2.00x vs one WiFi worker** | 64/64 PASS |
+| 4 WiFi replicas | **8.554 s** | **15.7 s** | **4.00x vs one WiFi worker** | 64/64 PASS |
 
 `*` The fresh USB run recovered one short output frame, inflating only its
 transport-inclusive wall. The earlier clean optimized capture is 33.879 s
@@ -68,6 +69,6 @@ method, raw JSON, and reproduction commands:
 ## Likely next step
 
 Short sequences shrink attention work, so setup and dispatch costs matter more
-than in case 2. Batch parallelism is now physically validated at 2.00x; the
+than in case 2. Batch parallelism is now physically validated at 4.00x; the
 next optimisation is projection/normalization fusion, or scaling the same
-replica method to four/eight nodes.
+replica method to eight nodes.

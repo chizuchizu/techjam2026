@@ -45,7 +45,7 @@ experiments that are not official cases are isolated in
 | [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | - | - | Not implemented - sequence/model sharding |
 | [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | - | - | Not implemented - two head shards plus batch parallelism |
 | [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | - | - | Not implemented - fine-grained head parallelism |
-| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** | **17.091 s** | - | - | - | Two-node WiFi DP verified, 64/64 PASS |
+| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** | **17.091 s** | **8.554 s** | - | - | Four-node WiFi DP verified, 64/64 PASS |
 | [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | - | - | Not implemented - online attention and KV sharding |
 | [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | - | - | Not implemented - extreme sequence streaming |
 
@@ -128,9 +128,9 @@ over shared weights, so the boards exchange nothing. See
 [`benchmarks/batch-dp/`](benchmarks/batch-dp/).
 
 The same shape-aware data-parallel coordinator is physically verified for
-case 7 (`D=F=32`) and case 12 (`S=32`). Two direct-WiFi replicas completed all
-64/64 forwards in 15.822 s and 17.091 s compute wall respectively, with 2.00x
-scaling versus one WiFi worker. See
+case 7 (`D=F=32`) and case 12 (`S=32`). Case 7 reached 2.00x on two direct-WiFi
+replicas; case 12 reached **4.00x** on four replicas, completing all 64/64
+forwards in **8.554 s** compute wall. See
 [`benchmarks/case-07/multiboard/`](benchmarks/case-07/multiboard/) and
 [`benchmarks/case-12/multiboard/`](benchmarks/case-12/multiboard/).
 
