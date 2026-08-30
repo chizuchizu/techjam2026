@@ -33,7 +33,7 @@ Measured cross-case run of the case-2 optimised firmware on cases 1–5:
 | [06](case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | - | - | Not implemented | - |
 | [07](case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** (B=64 full case) | **15.822 s** | **7.922 s** | **3.963 s** | - | data parallel, 7.99x | 64/64 WiFi forwards PASS (worst 1.50e-03) |
 | [08](case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | - | Not implemented | - |
-| [09](case-09/) | `(64,128,128,1,128,4)` | - | **138.027 s** (B=64 full case) | - | **57.005 s** | - | - | data parallel, 4.00x | 64/64 WiFi forwards PASS (worst 1.26e-03) |
+| [09](case-09/) | `(64,128,128,1,128,4)` | - | **138.027 s** (B=64 full case) | - | **57.005 s** | **28.508 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.26e-03) |
 | [10](case-10/) | `(64,128,128,2,128,4)` | - | **138.536 s** (B=64 full case) | - | - | - | - | - | 64/64 full-case PASS (worst 1.59e-03) |
 | [11](case-11/) | `(64,128,128,16,128,4)` | - | **138.610 s** (B=64 full case) | - | - | - | - | - | 64/64 full-case PASS (worst 1.48e-03) |
 | [12](case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** (B=64 full case) | **17.091 s** | **8.554 s** | **4.282 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.28e-03) |
@@ -118,6 +118,7 @@ MFU below is correspondingly conservative.
 | 07 | 0.940 G | eight-board WiFi DP | 3.963 s | 8 | 29.65 M | 18.5% |
 | 09 | 8.590 G | optimised, 1 board | 138.027 s | 1 | 62.23 M | 38.9% |
 | 09 | 8.590 G | four-board tiled WiFi DP | 57.005 s | 4 | 37.67 M | 23.5% |
+| 09 | 8.590 G | eight-board tiled WiFi DP | 28.508 s | 8 | 37.66 M | 23.5% |
 | 10 | 8.590 G | optimised, 1 board | 138.536 s | 1 | 62.01 M | 38.8% |
 | 11 | 8.590 G | optimised, 1 board | 138.610 s | 1 | 61.97 M | 38.7% |
 | 12 | 1.745 G | optimised, 1 board | 33.879 s | 1 | 51.50 M | 32.2% |

@@ -59,17 +59,18 @@ static RAM instead of the default build's 273,180 B. The tiled host gate passes
 both passed a seed-0 TCP forward at 3.563 s device compute with zero failing
 elements.
 
-The complete B=64 batch was then distributed evenly across four physical
-workers:
+The complete B=64 batch was then distributed evenly across four and eight
+physical workers:
 
 | Active boards | Compute wall | End-to-end wall | Scaling | Validation |
 |---:|---:|---:|---:|---|
 | 1 optimized USB | **138.027 s** | 262.073 s | 1.00x | 64/64 PASS |
 | 4 tiled WiFi replicas | **57.005 s** | **75.4 s** | **4.00x vs one tiled worker** | 64/64 PASS |
+| 8 tiled WiFi replicas | **28.508 s** | **38.5 s** | **8.00x vs one tiled worker** | 64/64 PASS |
 
 Tiling makes one WiFi worker slower than the best SRAM-cached USB build, so
-the measured cluster gain against that best single-board compute total is
-**2.42x**, not 4.00x. The four-node run had no missing inputs or failing
-elements; worst `max_abs=1.2649e-3`. Raw evidence and commands are in
-[`multiboard/README.md`](multiboard/README.md). The next hardware step is the
-same complete gate on eight replicas.
+the measured cluster gains against that best single-board compute total are
+**2.42x** on four nodes and **4.84x** on eight, rather than 4x and 8x. Both
+runs had no missing inputs or failing elements; worst
+`max_abs=1.2649e-3`. Raw evidence and commands are in
+[`multiboard/README.md`](multiboard/README.md).
