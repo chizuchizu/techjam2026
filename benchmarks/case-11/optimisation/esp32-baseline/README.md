@@ -87,9 +87,11 @@ enough runtime heap for WiFi/lwIP.
 
 The optimized USB gate passes 25/25 seeds at 2.166 s/forward. The tiled host
 gate passes 25/25 seeds (worst `max_abs=1.1135e-3`). Two physical WiFi workers
-passed seed 0 at 6.452 / 6.451 s, then completed the official B=64 batch in
-206.354 s compute wall with 64/64 outputs passing and worst
-`max_abs=1.3083e-3`. Full results are in
+passed seed 0 at 6.452 / 6.451 s. The official B=64 batch completed in
+206.354 s on two nodes and **103.169 s on four nodes**, with exact 2.00x and
+4.00x replica scaling. Both runs passed 64/64 outputs with worst
+`max_abs=1.3083e-3`; four tiled replicas are 1.34x faster than the best
+optimized single-board compute result. Full results are in
 [`../../multiboard/`](../../multiboard/). Fine-grained profiles are in
 [`optimisations/README.md`](optimisations/README.md).
 

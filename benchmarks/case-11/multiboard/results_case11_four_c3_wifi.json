@@ -1,0 +1,32 @@
+[
+  {
+    "batch": 64,
+    "seq_len": 128,
+    "d_model": 128,
+    "boards": 4,
+    "missing": [],
+    "complete": true,
+    "checked": 64,
+    "per_board_inputs": [
+      16,
+      16,
+      16,
+      16
+    ],
+    "per_board_compute_s": [
+      103.164,
+      103.169,
+      103.166,
+      103.169
+    ],
+    "compute_wall_s": 103.169,
+    "one_board_compute_s": 412.668,
+    "speedup": 4.0,
+    "transport": "wifi-tcp",
+    "end_to_end_wall_s": 119.3,
+    "serial_wall_s": 119.3,
+    "per_forward_s": 6.4479,
+    "fails": 0,
+    "max_abs": 0.0013082623481750488
+  }
+]
