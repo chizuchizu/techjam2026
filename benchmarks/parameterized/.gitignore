@@ -1,0 +1,4 @@
+.pio/
+test_host
+__pycache__/
+*.pyc
