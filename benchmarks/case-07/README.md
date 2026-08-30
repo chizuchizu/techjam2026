@@ -23,7 +23,7 @@ on-board; the measured full-case total is **30.4272 s** on the device
 |---|---|
 | [`baseline/`](baseline/) | First physical C3 capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
-| [`multiboard/`](multiboard/) | Two-node WiFi data-parallel firmware, raw results, and reproduction steps |
+| [`multiboard/`](multiboard/) | WiFi data-parallel firmware, one-to-eight-node raw results, and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -49,13 +49,14 @@ now a measured number as well: streaming all B=64 frames on-board took
 
 After reconfirming the official-shape host gate (50/50 FAST + EXACT seed-runs)
 and a fresh optimized one-board physical batch (31.006 s, 64/64 PASS), direct
-WiFi ESP32-C3 replicas ran the batch on two and four boards:
+WiFi ESP32-C3 replicas ran the batch on two, four, and eight boards:
 
 | Active boards | Compute wall | End-to-end wall | Scaling | Validation |
 |---:|---:|---:|---:|---|
 | 1 optimized USB | 31.006 s | 203.7 s * | 1.00x | 64/64 PASS |
 | 2 WiFi replicas | **15.822 s** | **28.6 s** | **2.00x vs one WiFi worker** | 64/64 PASS |
 | 4 WiFi replicas | **7.922 s** | **17.9 s** | **4.00x vs one WiFi worker** | 64/64 PASS |
+| 8 WiFi replicas | **3.963 s** | **10.4 s** | **7.99x vs one WiFi worker** | 64/64 PASS |
 
 `*` The fresh USB run recovered one short output frame, inflating only its
 transport-inclusive wall. No input was omitted; device compute and all 64
@@ -71,6 +72,5 @@ raw JSON, and reproduction commands:
 
 D and F of 32 make the projection and FFN matrices tiny, so dispatch, loop,
 and serialization overhead dominate the small GEMMs. Fuse the narrow
-projections and normalization. Data parallelism is now physically validated at
-4.00x; the next hardware step is the same eight-node scale-out already
-validated for case 12.
+projections and normalization. Data parallelism is now physically validated
+from one through eight nodes, reaching 7.99x compute scaling.
