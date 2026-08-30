@@ -40,7 +40,7 @@ experiments that are not official cases are isolated in
 | [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **16.853 s** | **8.438 s** | **79.9x** | Eight-node WiFi DP verified, 16/16 PASS |
 | [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **134.887 s** | **67.451 s** | **80.0x** | Eight-node WiFi DP verified, 128/128 PASS |
 | [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | - | - | Not implemented - streaming batch execution |
-| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | - | - | - | - | - | Not implemented - narrow-kernel overhead and fusion |
+| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** | **15.822 s** | - | - | - | Two-node WiFi DP verified, 64/64 PASS |
 | [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | - | Not implemented - weight and feature sharding |
 | [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | - | - | Not implemented - sequence/model sharding |
 | [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | - | - | Not implemented - two head shards plus batch parallelism |
@@ -126,6 +126,11 @@ eight-board cases 1–5 sweep gated all 213 forwards individually with zero
 missing inputs and zero failing elements. These cases are independent forwards
 over shared weights, so the boards exchange nothing. See
 [`benchmarks/batch-dp/`](benchmarks/batch-dp/).
+
+The same data-parallel coordinator is now shape-aware and physically verified
+for case 7 (`D=F=32`): two direct-WiFi replicas completed all 64/64 forwards
+in 15.822 s compute wall, exactly 2.00x versus one WiFi worker. See
+[`benchmarks/case-07/multiboard/`](benchmarks/case-07/multiboard/).
 
 #### Benchmark four boards, then scale to eight
 

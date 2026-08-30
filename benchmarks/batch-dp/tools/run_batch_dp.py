@@ -14,7 +14,7 @@ Reported per run:
   compute wall   max over boards of the summed device forward times - the
                  batch time the cluster achieves, excluding host transfer,
                  which is the same convention the single-board number uses
-  transport wall measured end to end including the 64 KB in / 64 KB out per
+  transport wall measured end to end including one input and output frame per
                  input over USB CDC or WiFi TCP, for context
   speedup        (sum of every forward's device time) / compute wall, i.e.
                  against one board doing all B inputs
@@ -22,6 +22,8 @@ Reported per run:
 Usage:
   python3 tools/run_batch_dp.py --batch 4 16 64 128 [--boards /dev/ttyACM0 ...]
   python3 tools/run_batch_dp.py --batch 4 16 64 128 --wifi 192.168.1.41 192.168.1.42
+  python3 tools/run_batch_dp.py --batch 64 --seq-len 128 --d-model 32 \
+      --root ../case-07/multiboard --wifi 192.168.1.41 192.168.1.42
 """
 import argparse
 import glob
@@ -347,7 +349,8 @@ def wait_idle(b):
     raise RuntimeError(f"{b.name}: unresponsive")
 
 
-def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL, transport="usb-cdc"):
+def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL, transport="usb-cdc",
+              seq_len=128, d_model=128):
     d = root / "testdata" / f"B{batch}"
     inputs = [(d / f"input_{i}.bin").read_bytes() for i in range(batch)]
     refs = [np.fromfile(d / f"ref_{i}.bin", dtype="<f4").astype(np.float64)
@@ -400,7 +403,8 @@ def run_batch(boards, batch, root, atol=ATOL, rtol=RTOL, transport="usb-cdc"):
     compute_wall = max(per_board)              # the cluster's batch time
     fails = sum(r["fails"] for r in results)
     return dict(
-        batch=batch, boards=n, missing=missing, complete=not missing,
+        batch=batch, seq_len=seq_len, d_model=d_model,
+        boards=n, missing=missing, complete=not missing,
         checked=len(all_us),
         per_board_inputs=[len(a) for a in assign],
         per_board_compute_s=[round(p, 3) for p in per_board],
@@ -426,9 +430,19 @@ def main():
                     metavar="HOST[:PORT]",
                     help="tiled full-forward nodes over TCP (default port 5000)")
     ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--seq-len", type=int, default=128,
+                    help="tokens per input frame (default: 128)")
+    ap.add_argument("--d-model", type=int, default=128,
+                    help="float values per token (default: 128)")
     ap.add_argument("--root", default=str(ROOT))
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+
+    if args.seq_len <= 0 or args.d_model <= 0:
+        ap.error("--seq-len and --d-model must be positive")
+    global N_ELEMS, FRAME
+    N_ELEMS = args.seq_len * args.d_model
+    FRAME = N_ELEMS * 4
 
     if args.wifi and args.boards:
         ap.error("use either --wifi or --boards, not both")
@@ -443,7 +457,16 @@ def main():
     boards = [board_cls(p, args.baud, f"b{k}") for k, p in enumerate(ports)]
     time.sleep(0.8)
     for b in boards:
-        print(f"[{b.name}] {wait_idle(b)}")
+        mode = wait_idle(b)
+        print(f"[{b.name}] {mode}")
+        match = re.search(r"TM\s+\d+\s+(\d+)\s+(\d+)", mode)
+        if not match:
+            raise RuntimeError(f"{b.name}: malformed model reply {mode!r}")
+        got_shape = (int(match.group(1)), int(match.group(2)))
+        want_shape = (args.seq_len, args.d_model)
+        if got_shape != want_shape:
+            raise RuntimeError(f"{b.name}: model shape {got_shape} != requested "
+                               f"{want_shape}")
 
     root = pathlib.Path(args.root)
     transport = "wifi-tcp" if args.wifi else "usb-cdc"
@@ -453,7 +476,8 @@ def main():
             print(f"B={B}: fewer inputs than boards, skipping")
             continue
         print(f"\n=== B={B} on {len(boards)} boards ===")
-        r = run_batch(boards, B, root, transport=transport)
+        r = run_batch(boards, B, root, transport=transport,
+                      seq_len=args.seq_len, d_model=args.d_model)
         rows.append(r)
         head = (f"B={B:4d} boards={r['boards']} inputs/board={r['per_board_inputs']}\n"
                 f"      per-forward {r['per_forward_s']:.3f}s | ")

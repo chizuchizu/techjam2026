@@ -23,6 +23,7 @@ on-board; the measured full-case total is **30.4272 s** on the device
 |---|---|
 | [`baseline/`](baseline/) | First physical C3 capture and independent review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+| [`multiboard/`](multiboard/) | Two-node WiFi data-parallel firmware, raw results, and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -44,10 +45,31 @@ now a measured number as well: streaming all B=64 frames on-board took
 **70.227 s** of wall time including host USB pacing — see
 `case-07_xiao_c3_optimised_full_case_v1.md` in the same directory.
 
+## Two-board WiFi data parallelism
+
+After reconfirming the official-shape host gate (50/50 FAST + EXACT seed-runs)
+and a fresh optimized one-board physical batch (31.006 s, 64/64 PASS), two
+WiFi ESP32-C3 workers ran 32 inputs each:
+
+| Active boards | Compute wall | End-to-end wall | Scaling | Validation |
+|---:|---:|---:|---:|---|
+| 1 optimized USB | 31.006 s | 203.7 s * | 1.00x | 64/64 PASS |
+| 2 WiFi replicas | **15.822 s** | **28.6 s** | **2.00x vs one WiFi worker** | 64/64 PASS |
+
+`*` The fresh USB run recovered one short output frame, inflating only its
+transport-inclusive wall. No input was omitted; device compute and all 64
+accuracy checks completed. The earlier clean optimized capture is 30.427 s
+compute / 70.227 s USB-inclusive wall.
+
+The WiFi build avoids the SRAM weight cache and links at only 108,300 bytes
+static RAM, so this narrow case does not need sequence tiling. Complete method,
+raw JSON, and reproduction commands:
+[`multiboard/README.md`](multiboard/README.md).
+
 ## Likely next step
 
 D and F of 32 make the projection and FFN matrices tiny, so dispatch, loop,
 and serialization overhead dominate the small GEMMs. Fuse the narrow
-projections and normalization, then compare that single-board path with batch
-parallelism. Do not assume head distribution amortises network cost when each
-forward is under 0.5 s.
+projections and normalization. Data parallelism is already validated at 2.00x;
+the next hardware step is four/eight-node scaling after the same two-board
+evidence ladder is completed for case 12.
