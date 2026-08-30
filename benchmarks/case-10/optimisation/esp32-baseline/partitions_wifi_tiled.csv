@@ -1,0 +1,6 @@
+# Single 3.5 MB app partition for the tiled FAST firmware, WiFi/lwIP, and both
+# existing weight blobs. No OTA or filesystem is needed on benchmark nodes.
+# Name,   Type, SubType, Offset,  Size
+nvs,      data, nvs,     0x9000,  0x5000
+otadata,  data, ota,     0xe000,  0x2000
+app0,     app,  ota_0,   0x10000, 0x380000

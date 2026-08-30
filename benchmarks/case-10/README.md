@@ -26,6 +26,7 @@ halving the per-head attention rows relative to case 2.
 |---|---|
 | [`baseline/`](baseline/) | SRAM-limit record and review |
 | [`optimisation/`](optimisation/) | Maintained complete single-board implementation and optimisation log |
+| [`multiboard/`](multiboard/) | Two-node WiFi data-parallel result and reproduction steps |
 
 ## Comparable complete-forward result
 
@@ -46,15 +47,26 @@ PASS (worst `abs_err` 1.24e-03), firmware `TM` sweep 2,162,329 / 2,162,943 /
 including host USB pacing. Raw captures and summaries:
 [`optimisation/results/`](optimisation/results/).
 
-## Next case-specific step
+## WiFi data parallelism
 
-`H=2` is (with `H=1`) the SRAM dead end of whole-head parallelism on
-the ESP32-C3: head width 64 needs larger per-head staging than the
-32-width case-2 reference. Follow-ups are (a) a reduced-memory head
-path (streaming Q/K/V rows, fused context write-back, no 128x128
-per-head copies) that stays bit-compatible with the baseline's host
-output and would bring H=2 within the 321,296-byte dram segment, or
-(b) the multiboard split, where H=2 is a two-head shard of width 64 —
-one peer runs the full-D projections (the C3 can, as case-11 shows),
-the other carries the 128x64 attention. Worth doing only if (a) is
-impossible.
+The opt-in WiFi worker uses a 16-row sequential tile schedule. Its activation
+arena scales with the tile height instead of all `S=128` rows, reducing the
+complete-forward build to **189,428 / 327,680 B static RAM including
+WiFi/lwIP**. The default optimized USB build remains unchanged and uses
+265,324 B.
+
+The tiled host gate passes 25/25 seeds (worst `max_abs=1.1496e-3`). Both
+physical workers passed the seed-0 TCP smoke test at 3.722 / 3.719 s with zero
+failing elements. The complete official B=64 batch then produced:
+
+| Build | Compute wall | End-to-end wall | Validation |
+|---|---:|---:|---|
+| 1 optimized USB worker | **138.536 s** | 262.778 s | 25/25 device seeds PASS |
+| 1 tiled WiFi worker (equivalent) | **238.195 s** | - | Derived from the two workers' measured work |
+| 2 tiled WiFi replicas | **119.101 s** | **146.7 s** | **64/64 PASS**, zero failing elements |
+
+The two WiFi replicas scale exactly **2.00x** against one tiled worker and are
+**1.16x faster** than the best optimized single-board compute total. Tiling is
+the memory enabler, not a per-board speed optimization: one tiled forward is
+3.722 s versus 2.165 s on the optimized USB build. Raw evidence and commands
+are in [`multiboard/README.md`](multiboard/README.md).

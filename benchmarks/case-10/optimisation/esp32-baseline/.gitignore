@@ -5,6 +5,7 @@ testdata/
 manifest.json
 # host build
 tools/host_test
+tools/host_test_tiled
 # platformio
 .pio/
 .pioenvs/
