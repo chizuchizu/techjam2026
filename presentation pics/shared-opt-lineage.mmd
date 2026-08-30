@@ -1,0 +1,27 @@
+%%{init: {"theme":"base", "themeVariables": {"fontFamily":"Arial", "fontSize":"15px"}, "flowchart": {"nodeSpacing": 24, "rankSpacing": 32, "padding": 10}}}%%
+flowchart TB
+    BASE["Shared ESP32-C3 base<br/>FP32 / hybrid<br/>42.15 s per forward"]
+    BASE --> P1["Opts 1–5<br/>Integer attention · Exp LUT<br/>GEMM tiling · int GELU"]
+    P1 --> P2["Opts 6–10<br/>QKV quantization<br/>Integer LN · output fusion"]
+    P2 --> P3["Opts 11–19<br/>Integer PV<br/>core4/core5 · QK/PV assembly"]
+    P3 --> P4["Opts 20–23<br/>Profiling · residual fast path<br/>KB0 + core5 fix"]
+    P4 --> FINAL["Opt 23 final shared firmware<br/>1.996 s / forward · 21.1×"]
+
+    FINAL --> TC1["TC1<br/>Opt 23 reuse<br/>21.2× single-board<br/>42.3× with batch DP"]
+    FINAL --> TC2["TC2<br/>Opt 23 reuse<br/>21.1× single-board<br/>33.0× 2-board split"]
+    FINAL --> TC3["TC3<br/>Opt 23 reuse<br/>21.2× single-board<br/>42.1× with batch DP"]
+    FINAL --> TC4["TC4<br/>Opt 23 reuse<br/>21.2× single-board<br/>42.4× with batch DP"]
+    FINAL --> TC5["TC5<br/>Opt 23 reuse<br/>21.2× single-board<br/>42.3× with batch DP"]
+    FINAL --> TC7["TC7<br/>Opt 23 reuse<br/>1.03×"]
+    FINAL --> TC11["TC11<br/>Opt 23 reuse<br/>1.14×"]
+    FINAL --> TC12["TC12<br/>Opt 23 reuse<br/>0.93×, but passes"]
+
+    classDef base fill:#607d8b,color:#fff,stroke:#37474f
+    classDef opt fill:#1565c0,color:#fff,stroke:#0d47a1
+    classDef final fill:#0d47a1,color:#fff,stroke:#002171,stroke-width:3px
+    classDef case fill:#2e7d32,color:#fff,stroke:#1b5e20
+
+    class BASE base
+    class P1,P2,P3,P4 opt
+    class FINAL final
+    class TC1,TC2,TC3,TC4,TC5,TC7,TC11,TC12 case

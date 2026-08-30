@@ -1,0 +1,31 @@
+%%{init: {"theme":"base", "themeVariables": {"fontFamily":"Arial", "fontSize":"16px"}, "flowchart": {"nodeSpacing": 22, "rankSpacing": 18, "padding": 10}}}%%
+flowchart TB
+    TITLE["Single-board timing comparison — before vs after shared Opts 1–23"]
+
+    subgraph R1["TC1–TC5: same D=128 transformer geometry"]
+        direction LR
+        B1["TC1 Before<br/>42.15 s"] -->|"21.2×"| A1["TC1 After<br/>1.990 s"]
+        B2["TC2 Before<br/>42.15 s"] -->|"21.1×"| A2["TC2 After<br/>1.996 s"]
+        B3["TC3 Before<br/>42.15 s"] -->|"21.2×"| A3["TC3 After<br/>1.990 s"]
+        B4["TC4 Before<br/>42.15 s"] -->|"21.2×"| A4["TC4 After<br/>1.990 s"]
+        B5["TC5 Before<br/>42.15 s"] -->|"21.2×"| A5["TC5 After<br/>1.990 s"]
+    end
+
+    subgraph R2["Different geometries"]
+        direction LR
+        B7["TC7 Before<br/>0.491 s"] -->|"1.03×"| A7["TC7 After<br/>0.475 s"]
+        B11["TC11 Before<br/>2.462 s"] -->|"1.14×"| A11["TC11 After<br/>2.166 s"]
+        B12["TC12 Before<br/>0.493 s"] -->|"0.93× · 7% slower"| A12["TC12 After<br/>0.529 s"]
+    end
+
+    TITLE --> R1
+    R1 --> R2
+
+    classDef title fill:#37474f,color:#fff,stroke:#263238,stroke-width:2px
+    classDef before fill:#78909c,color:#fff,stroke:#455a64
+    classDef after fill:#2e7d32,color:#fff,stroke:#1b5e20
+    classDef slower fill:#f9a825,color:#111,stroke:#f57f17
+    class TITLE title
+    class B1,B2,B3,B4,B5,B7,B11,B12 before
+    class A1,A2,A3,A4,A5,A7,A11 after
+    class A12 slower

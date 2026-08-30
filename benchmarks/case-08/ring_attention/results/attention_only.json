@@ -1,0 +1,48 @@
+{
+  "case": 8,
+  "shape": {
+    "B": 1,
+    "S": 128,
+    "D": 1024,
+    "H": 4,
+    "L": 4
+  },
+  "ports": [
+    "COM10",
+    "COM11"
+  ],
+  "attention_only": true,
+  "wall_ms": 223416.1303,
+  "accuracy": {
+    "passed": true,
+    "failed": 0,
+    "elements": 131072,
+    "max_abs": 5.960464477539063e-08,
+    "mean_abs": 4.330903191629432e-09,
+    "worst_index": [
+      0,
+      1,
+      597
+    ],
+    "reference_at_worst": -0.5133959054946899,
+    "candidate_at_worst": -0.5133958458900452
+  },
+  "phases_ms": {
+    "attention_only": 223329.7858
+  },
+  "workers": [
+    {
+      "wire_us": 207118473,
+      "device_us": 8275846,
+      "requests": 289,
+      "staged_bytes": 0
+    },
+    {
+      "wire_us": 223281201,
+      "device_us": 24384509,
+      "requests": 289,
+      "staged_bytes": 0
+    }
+  ],
+  "checksum": -5.586274251382406
+}

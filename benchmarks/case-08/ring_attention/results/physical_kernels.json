@@ -1,0 +1,91 @@
+{
+  "passed": true,
+  "workers": [
+    {
+      "port": "COM10",
+      "identity": "case8-ring-worker,c3,S=128,D=1024,H=4,HD=256,q=16,kv=32",
+      "linear": {
+        "passed": true,
+        "failed": 0,
+        "elements": 64,
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 6.984919309616089e-09,
+        "worst_index": [
+          0,
+          6
+        ],
+        "reference_at_worst": -0.5283957123756409,
+        "candidate_at_worst": -0.5283957719802856
+      },
+      "gelu_residual": {
+        "passed": true,
+        "failed": 0,
+        "elements": 64,
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 6.170012056827545e-09,
+        "worst_index": [
+          0,
+          3
+        ],
+        "reference_at_worst": 0.5838801264762878,
+        "candidate_at_worst": 0.5838801860809326
+      },
+      "layer_norm": {
+        "passed": true,
+        "failed": 0,
+        "elements": 4096,
+        "max_abs": 1.430511474609375e-06,
+        "mean_abs": 1.7009233488352038e-07,
+        "worst_index": [
+          3,
+          858
+        ],
+        "reference_at_worst": 3.6494393348693848,
+        "candidate_at_worst": 3.64943790435791
+      }
+    },
+    {
+      "port": "COM11",
+      "identity": "case8-ring-worker,c3,S=128,D=1024,H=4,HD=256,q=16,kv=32",
+      "linear": {
+        "passed": true,
+        "failed": 0,
+        "elements": 64,
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 6.984919309616089e-09,
+        "worst_index": [
+          0,
+          6
+        ],
+        "reference_at_worst": -0.5283957123756409,
+        "candidate_at_worst": -0.5283957719802856
+      },
+      "gelu_residual": {
+        "passed": true,
+        "failed": 0,
+        "elements": 64,
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 7.974449545145035e-09,
+        "worst_index": [
+          0,
+          3
+        ],
+        "reference_at_worst": 0.5230234265327454,
+        "candidate_at_worst": 0.5230234861373901
+      },
+      "layer_norm": {
+        "passed": true,
+        "failed": 0,
+        "elements": 4096,
+        "max_abs": 1.430511474609375e-06,
+        "mean_abs": 1.7009233488352038e-07,
+        "worst_index": [
+          3,
+          858
+        ],
+        "reference_at_worst": 3.6494393348693848,
+        "candidate_at_worst": 3.64943790435791
+      }
+    }
+  ]
+}

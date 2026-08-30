@@ -9,6 +9,9 @@ __pycache__/
 *.swp
 .tensorrt-cache/
 .pio/
+.pio-core/
+**/station_secrets.h
+NUL
 
 # firecrawl raw scrapes (research; distilled into the case-02 optimisation log)
 .firecrawl/

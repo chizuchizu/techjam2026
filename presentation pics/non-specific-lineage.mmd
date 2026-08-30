@@ -1,0 +1,18 @@
+flowchart LR
+    BASE["BASE<br/>FP32 / hybrid<br/>42.15 s / forward"] --> OPT["Shared Opts 1–23<br/>Quantization · integer attention<br/>GEMM tiling · assembly<br/>1.996 s / forward"]
+
+    OPT --> TC1["TC1<br/>21.2× single board<br/>42.3× with 2-board batch DP"]
+    OPT --> TC2["TC2<br/>21.1× single board<br/>33.0× with 2-board split"]
+    OPT --> TC3["TC3<br/>21.2× single board<br/>42.1× with 2-board batch DP"]
+    OPT --> TC4["TC4<br/>21.2× single board<br/>42.4× with 2-board batch DP"]
+    OPT --> TC5["TC5<br/>21.2× single board<br/>42.3× with 2-board batch DP"]
+    OPT --> TC7["TC7<br/>1.03× single board"]
+    OPT --> TC11["TC11<br/>1.14× single board"]
+    OPT --> TC12["TC12<br/>0.93× single board"]
+
+    classDef base fill:#607d8b,color:#fff,stroke:#37474f
+    classDef opt fill:#1565c0,color:#fff,stroke:#0d47a1
+    classDef case fill:#2e7d32,color:#fff,stroke:#1b5e20
+    class BASE base
+    class OPT opt
+    class TC1,TC2,TC3,TC4,TC5,TC7,TC11,TC12 case
