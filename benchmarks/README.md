@@ -80,6 +80,75 @@ streaming - hence 1.56x rather than 2x. See
 [`case-02/multiboard/esp32-cluster-full/`](case-02/multiboard/esp32-cluster-full/)
 and [`batch-dp/`](batch-dp/).
 
+## Per-device MFU
+
+Model FLOPs Utilisation is the fraction of a board's arithmetic peak that the
+measured run actually converts into useful model work. It is the one metric
+that compares cases of different shapes, and node counts, on equal terms.
+
+**Model FLOPs** per case are counted analytically from the shape, with one
+multiply-accumulate as 2 FLOP:
+
+```
+FLOP = 2 · B · L · S · (4·D² + 2·S·D + 2·D·F)
+       └ QKV 3·S·D²   └ QKᵀ and PV 2·S²·D   └ out-proj S·D²   └ FFN 2·S·D·F
+```
+
+`H` does not appear: splitting `D` into heads repartitions the attention work
+without changing its volume. Cases 9, 10, 11 and case 1 therefore have
+identical FLOP counts and differ only in `H`.
+
+**Peak** is `160 MFLOP/s` per board `[E]`: 160 MHz, single-issue in-order
+RV32IMC at 1 IPC, and 2 instructions per int16×int16→int32 MAC (`mul` then
+`add` — RV32IMC has no fused multiply-add and no SIMD). MFU is
+`achieved ÷ 160 MFLOP/s`. This peak is a derived bound, not a datasheet
+figure; if `mul` is multi-cycle on this core the true peak is lower and every
+MFU below is correspondingly conservative.
+
+| Case | Model FLOP | Config | Time | Boards | FLOP/s/device | **MFU/device** |
+|---:|---:|---|---:|---:|---:|---:|
+| 02 | 0.134 G | baseline, 1 board | 42.15 s | 1 | 3.18 M | 2.0% |
+| 01–05 | — | **optimised (opt23), 1 board** | — | 1 | **67.45 M** | **42.2%** |
+| 02 | 0.134 G | two-board token-row split | 1.276 s | 2 | 52.59 M | 32.9% |
+| 01/03/04/05 | — | two-board data parallel | — | 2 | 67.4 M | 42.1% |
+| 01–05 | — | **WiFi DP (opt24 tiled), 4 or 8 nodes** | — | 4–8 | **31.84 M** | **19.9%** |
+| 07 | 0.940 G | optimised, 1 board | 30.427 s | 1 | 30.88 M | 19.3% |
+| 09 | 8.590 G | optimised, 1 board | 138.027 s | 1 | 62.23 M | 38.9% |
+| 10 | 8.590 G | optimised, 1 board | 138.536 s | 1 | 62.01 M | 38.8% |
+| 11 | 8.590 G | optimised, 1 board | 138.610 s | 1 | 61.97 M | 38.7% |
+| 12 | 1.745 G | optimised, 1 board | 33.879 s | 1 | 51.50 M | 32.2% |
+
+Per-case FLOP counts: case 01/09/10/11 8.590 G, case 02 0.134 G, case 03
+0.537 G, case 04 2.147 G, case 05 17.180 G, case 07 0.940 G, case 12 1.745 G.
+Counting only unmasked causal attention instead of the dense `S²` scales every
+MFU above down by roughly 13% (case 02: 42.2% → 36.9%).
+
+Four things this exposes that the wall-time columns do not:
+
+1. **The opt23 firmware holds 42.2% MFU across cases 1–5 to within 0.1
+   point.** Those cases share one shape and differ only in `B`, so a constant
+   MFU is evidence that batching adds no per-input overhead — the 8.0x baseline
+   ratio is real work, not amortised setup.
+2. **Data-parallel scaling is free; the WiFi firmware is not.** The two-board
+   DP rows hold 42.1% per device, so 2.00x is genuine. But the 4- and 8-node
+   WiFi columns run at **19.9% per device — less than half** — because they use
+   the memory-first row-tiled `opt24` build (4.214 s/forward vs 1.996 s) needed
+   to fit the WiFi stack in SRAM. The 8.00x node scaling is therefore bought at
+   a 2.1x per-device efficiency loss; against the *best* single board the true
+   eight-node gain is 3.78x, not 8.00x.
+3. **Case 2's token-row split costs 9.3 MFU points** (42.2% → 32.9%), which is
+   the per-layer K/V exchange and the unhalved weight streaming made
+   quantitative — the same reason it reaches 1.56x rather than 2.00x.
+4. **Shape penalties are visible directly.** Case 7 (`D=F=32`) drops to 19.3%,
+   confirming the narrow-kernel overhead its README predicts; case 12 (`S=32`)
+   to 32.2% for short-sequence overhead; cases 9/10/11 sit ~3.4 points below
+   case 1 at identical FLOPs, so `H≠4` costs about 8% purely in head-loop
+   scheduling.
+
+For the same metric on a laptop, a consumer GPU and an H200 — where an H200
+running case 2 sits below 1% MFU — see
+[`../docs/HARDWARE_COMPARISON.md`](../docs/HARDWARE_COMPARISON.md).
+
 The shared official
 [`problem statement`](../COMPETITION_RULES.MD) and
 [`PyTorch reference`](../torch_transformer_benchmark.py) remain at the
