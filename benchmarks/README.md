@@ -34,8 +34,8 @@ Measured cross-case run of the case-2 optimised firmware on cases 1–5:
 | [07](case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** (B=64 full case) | **15.822 s** | **7.922 s** | **3.963 s** | - | data parallel, 7.99x | 64/64 WiFi forwards PASS (worst 1.50e-03) |
 | [08](case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | - | Not implemented | - |
 | [09](case-09/) | `(64,128,128,1,128,4)` | - | **138.027 s** (B=64 full case) | - | **57.005 s** | **28.508 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.26e-03) |
-| [10](case-10/) | `(64,128,128,2,128,4)` | - | **138.536 s** (B=64 full case) | - | - | - | - | - | 64/64 full-case PASS (worst 1.59e-03) |
-| [11](case-11/) | `(64,128,128,16,128,4)` | - | **138.610 s** (B=64 full case) | - | - | - | - | - | 64/64 full-case PASS (worst 1.48e-03) |
+| [10](case-10/) | `(64,128,128,2,128,4)` | - | **138.536 s** (B=64 full case) | **119.101 s** | **59.563 s** | **29.793 s** | - | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.25e-03) |
+| [11](case-11/) | `(64,128,128,16,128,4)` | - | **138.610 s** (B=64 full case) | **206.354 s** | **103.169 s** | **51.604 s** | - | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.31e-03) |
 | [12](case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** (B=64 full case) | **17.091 s** | **8.554 s** | **4.282 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.28e-03) |
 | [13](case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | - | - | Not implemented | - |
 | [14](case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | - | - | Not implemented | - |
@@ -47,9 +47,9 @@ timing columns alike.
 
 `*` Cases 1, 3, 4 and 5 were never run on the pre-optimisation firmware, so
 their baseline is **estimated** as `B x 42.15 s` from case 2's measured
-starting point. Only case 2's baseline is a measurement. The optimised and
-two-board columns are measured everywhere; the four-node and eight-node WiFi
-columns are measured for cases 1–5.
+starting point. Only case 2's baseline is a measurement. Every non-dash
+optimised or multiboard entry is a physical measurement. Four- and eight-node
+WiFi results cover cases 1–5, 7, and 9–12; case 9 has no recorded two-node run.
 
 **4-node WiFi DP** is four full-forward replicas running independent batch
 inputs over persistent TCP; the column reports compute wall. `†` Case 2 has
@@ -67,8 +67,11 @@ of the device's own `us=` forward counters over all 64 streamed frames
 (30.427 / 138.027 / 138.536 / 138.610 / 33.879 s). Wall time including host
 USB pacing is 70.227 / 262.073 / 262.778 / 262.754 / 73.744 s respectively.
 Each full-case run also passed the gate on all 64/64 frames; see each case
-README and `optimisation/results/` for the raw captures. Cases 8 and 13 have no
-consumable firmware in this workspace and remain not implemented.
+README and `optimisation/results/` for the raw captures. Cases 7, 10, 11, and
+12 also have complete two-, four-, and eight-node WiFi accuracy runs; case 9
+has complete four- and eight-node runs. See each `multiboard/` directory for
+the raw JSON. Cases 8 and 13 have no consumable firmware in this workspace and
+remain not implemented.
 
 
 **Multiboard split** names which decomposition the two-board column used. Cases
@@ -120,7 +123,13 @@ MFU below is correspondingly conservative.
 | 09 | 8.590 G | four-board tiled WiFi DP | 57.005 s | 4 | 37.67 M | 23.5% |
 | 09 | 8.590 G | eight-board tiled WiFi DP | 28.508 s | 8 | 37.66 M | 23.5% |
 | 10 | 8.590 G | optimised, 1 board | 138.536 s | 1 | 62.01 M | 38.8% |
+| 10 | 8.590 G | two-board tiled WiFi DP | 119.101 s | 2 | 36.06 M | 22.5% |
+| 10 | 8.590 G | four-board tiled WiFi DP | 59.563 s | 4 | 36.05 M | 22.5% |
+| 10 | 8.590 G | eight-board tiled WiFi DP | 29.793 s | 8 | 36.04 M | 22.5% |
 | 11 | 8.590 G | optimised, 1 board | 138.610 s | 1 | 61.97 M | 38.7% |
+| 11 | 8.590 G | two-board tiled WiFi DP | 206.354 s | 2 | 20.81 M | 13.0% |
+| 11 | 8.590 G | four-board tiled WiFi DP | 103.169 s | 4 | 20.82 M | 13.0% |
+| 11 | 8.590 G | eight-board tiled WiFi DP | 51.604 s | 8 | 20.81 M | 13.0% |
 | 12 | 1.745 G | optimised, 1 board | 33.879 s | 1 | 51.50 M | 32.2% |
 | 12 | 1.745 G | two-board WiFi DP | 17.091 s | 2 | 51.05 M | 31.9% |
 | 12 | 1.745 G | four-board WiFi DP | 8.554 s | 4 | 51.00 M | 31.9% |
@@ -137,13 +146,13 @@ Four things this exposes that the wall-time columns do not:
    point.** Those cases share one shape and differ only in `B`, so a constant
    MFU is evidence that batching adds no per-input overhead — the 8.0x baseline
    ratio is real work, not amortised setup.
-2. **Data-parallel scaling is free; the WiFi firmware is not.** The two-board
-   DP rows hold 42.1% per device, so 2.00x is genuine. But the 4- and 8-node
-   WiFi columns run at **19.9% per device — less than half** — because they use
-   the memory-first row-tiled `opt24` build (4.214 s/forward vs 1.996 s) needed
-   to fit the WiFi stack in SRAM. The 8.00x node scaling is therefore bought at
-   a 2.1x per-device efficiency loss; against the *best* single board the true
-   eight-node gain is 3.78x, not 8.00x.
+2. **Data-parallel scaling is free; the WiFi firmware is not.** For cases 1–5,
+   the two-board DP rows hold 42.1% per device, so 2.00x is genuine. Their
+   4- and 8-node WiFi rows run at **19.9% per device — less than half** —
+   because they use the memory-first row-tiled `opt24` build (4.214 s/forward
+   vs 1.996 s) needed to fit the WiFi stack in SRAM. The 8.00x node scaling is
+   therefore bought at a 2.1x per-device efficiency loss; against the *best*
+   single board the true eight-node gain is 3.78x, not 8.00x.
 3. **Case 2's token-row split costs 9.3 MFU points** (42.2% → 32.9%), which is
    the per-layer K/V exchange and the unhalved weight streaming made
    quantitative — the same reason it reaches 1.56x rather than 2.00x.
@@ -151,7 +160,8 @@ Four things this exposes that the wall-time columns do not:
    confirming the narrow-kernel overhead its README predicts; case 12 (`S=32`)
    to 32.2% for short-sequence overhead; cases 9/10/11 sit ~3.4 points below
    case 1 at identical FLOPs, so `H≠4` costs about 8% purely in head-loop
-   scheduling.
+   scheduling. The tiled WiFi path makes head-count overhead clearer still:
+   cases 9, 10, and 11 sustain 23.5%, 22.5%, and 13.0% MFU per device.
 
 For the same metric on a laptop, a consumer GPU and an H200 — where an H200
 running case 2 sits below 1% MFU — see
