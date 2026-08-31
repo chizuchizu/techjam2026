@@ -1,0 +1,68 @@
+flowchart TB
+    BASE["Base ESP32-C3 baseline<br/>FP32 / hybrid<br/>~42.15 s per forward"]
+
+    BASE --> O1["Opt 1<br/>Integer attention"]
+    O1 --> O2["Opt 2<br/>Exp lookup table"]
+    O2 --> O35["Opts 3–5<br/>GEMM tiling<br/>int GELU<br/>quantization micro-opts"]
+    O35 --> O6["Opt 6<br/>Fused QKV int16 quantization"]
+    O6 --> O78["Opts 7–8<br/>Integer exp index<br/>core4 GEMM"]
+    O78 --> O8B["Opt 8b<br/>j-outer head GEMM<br/>integer amax"]
+    O8B --> O9["Opt 9<br/>Fused LN → Q15"]
+    O9 --> O9B["Opt 9b<br/>Integer LayerNorm pass"]
+    O9B --> O10["Opt 10<br/>Output-projection/context fusion"]
+    O10 --> O11["Opt 11<br/>Integer PV + context epilogue"]
+    O11 --> O12["Opt 12<br/>GEMM j-tile-2<br/>K-pair prefetch"]
+    O12 --> O1314["Opts 13–14<br/>Integer LN stats<br/>amax + quantization"]
+    O1314 --> O15["Opt 15<br/>core5 GEMM<br/>j-tile-2 × IBfile:///C:/Users/yyc/techjam2026/optimization-lineage.mmdLK-4"]
+    O15 --> O16["Opt 16<br/>Q15 hand assembly"]
+    O16 --> O17["Opt 17<br/>Fixed-point FFN1 epilogue"]
+    O17 --> O18["Opt 18<br/>KB1 bias folding<br/>core5 bias folding<br/>int32 QK"]
+    O18 --> O19["Opt 19<br/>QK unroll-4<br/>PV 8 accumulators"]
+    O19 --> O20["Opt 20<br/>Profiling / memory analysis"]
+    O20 --> O21["Opt 21<br/>Integer residual fast path"]
+    O21 --> O22["Opt 22<br/>KB0 head-GEMM assembly"]
+    O22 --> O23["Opt 23<br/>core5 4×2 assembly fix<br/>1.996 s / forward"]
+
+    O23 --> C1["Case 1<br/>Reuses Case-2 Opt 23<br/>Batch/data-parallel extension"]
+    O23 --> C2["Case 2<br/>Primary optimization target<br/>21.1× speedup"]
+    O23 --> C3["Case 3<br/>Reuses Case-2 Opt 23<br/>Batch/data-parallel extension"]
+    O23 --> C4["Case 4<br/>Reuses Case-2 Opt 23<br/>Batch/data-parallel extension"]
+    O23 --> C5["Case 5<br/>Reuses Case-2 Opt 23<br/>Batch/data-parallel extension"]
+    O23 --> C7["Case 7<br/>Reuses Opt 23<br/>0.475 s / forward"]
+    O23 --> C11["Case 11<br/>Reuses Opt 23<br/>H=16"]
+    O23 --> C12["Case 12<br/>Reuses Opt 23<br/>Short sequence"]
+
+    O23 -.-> W24["Case 2 Opt 24<br/>Row-tiled/head-sequential Wi-Fi<br/>Memory-first, opt-in"]
+
+    O23 --> C9A["Case 9 Opt 24<br/>SRAM fit + SDK patches<br/>H=1"]
+    C9A --> C9["Case 9<br/>2.157 s / forward"]
+
+    O23 --> C10A["Case 10 Opt 24<br/>Per-head Q/K buffer overlays<br/>H=2"]
+    C10A --> C10B["Opt 25<br/>PV advancing pointer"]
+    C10B --> C10C["Opt 26<br/>QK base-pointer cleanup"]
+    C10C --> C10D["Opt 27<br/>Fixed GELU table"]
+    C10D --> C10["Case 10<br/>2.165 s / forward"]
+
+    BASE --> C6["Case 6<br/>Case-2 port<br/>Host/build validated<br/>No physical timing"]
+
+    BASE -.-> C8["Case 8 official status<br/>Not implemented"]
+    C8 -.-> C8CPU["Experimental CPU streaming attention"]
+    C8CPU -.-> C8ESP["Experimental 2× ESP32 Ring Attention"]
+
+    BASE -.-> C13["Case 13 official status<br/>Not implemented"]
+
+    BASE -.-> C14["Case 14 official status<br/>Not implemented"]
+    C14 -.-> C14ESP["Experimental ESP32 Ring Attention"]
+    C14 -.-> C14GPU["Experimental Intel SYCL<br/>online-softmax attention"]
+
+    classDef base fill:#455a64,color:#fff
+    classDef opt fill:#1565c0,color:#fff
+    classDef official fill:#2e7d32,color:#fff
+    classDef special fill:#6a1b9a,color:#fff
+    classDef experimental fill:#ef6c00,color:#fff,stroke-dasharray:5 5
+
+    class BASE base
+    class O1,O2,O35,O6,O78,O8B,O9,O9B,O10,O11,O12,O1314,O15,O16,O17,O18,O19,O20,O21,O22,O23 opt
+    class C1,C2,C3,C4,C5,C6,C7,C9,C10,C11,C12 official
+    class C9A,C10A,C10B,C10C,C10D,W24 special
+    class C8,C8CPU,C8ESP,C13,C14,C14ESP,C14GPU experimental
