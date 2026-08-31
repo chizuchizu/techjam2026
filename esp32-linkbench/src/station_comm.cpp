@@ -84,6 +84,9 @@
 #ifndef LF_DEMO_AUTO
 #define LF_DEMO_AUTO 1              // coordinator auto-runs the compute demo (no PC needed)
 #endif
+#ifndef LF_DEBUG_RX_PRINT
+#define LF_DEBUG_RX_PRINT 0         // 1 = log every UDP rx datagram (serial throttle on the data path)
+#endif
 #ifdef LF_DEMO_AUTO
 #define LF_DEMO_AUTO_PERIOD_MS 6000
 #define LF_DEMO_AUTO_STARTUP_MS 8000   // first auto-run shortly after role is known
@@ -314,6 +317,53 @@ static void handle_job_sum(char* buf, int rx_len) {
                   jobid, len, (unsigned long long)s, f_coord);
 }
 
+// worker side: handle a BROADCAST SUM16 job (single frame to all workers).
+//   JB|<jobid>|<workers>|<len>|payload(uint16[], host byte order)
+// The coordinator sends one datagram for the whole vector; each worker sums
+// only its own slice. Slice boundaries are a pure function of (worker index,
+// worker count, total). Worker index = (#known peers with MAC < mine) - 1,
+// i.e. rank 0 is the coordinator, workers are ranks 1..N-1 - the same MAC
+// order the coordinator uses to split. This makes dispatch O(1) in N: one
+// frame reaches every worker instead of N unicast datagrams.
+static void handle_job_bcast(char* buf, int rx_len) {
+    char* f_jobid   = field_n(buf, 1);
+    char* f_workers = field_n(buf, 2);
+    char* f_len     = field_n(buf, 3);
+    uint8_t* payload = (uint8_t*)field_n(buf, 4);
+    if (!f_jobid || !f_workers || !f_len || !payload) return;
+    int total = atoi(f_len);
+    int W = atoi(f_workers);
+    if (total < 0 || total > 650 || W < 1) return;
+    int consumed = (int)((char*)payload - buf) + total * 2;
+    if (consumed > rx_len) return;                  // truncated / corrupt
+    int rank = 0;                                   // peers with MAC < mine
+    for (int i = 0; i < g_nfleet; i++) {
+        bool known = false;
+        for (int k = 0; k < 6; k++) if (g_fleet[i].mac[k]) known = true;
+        if (known && mac_cmp(g_mymac, g_fleet[i].mac) > 0) rank++;
+    }
+    int w = rank - 1;                               // 0-based worker index
+    if (w < 0 || w >= W) {                          // coordinator or unknown rank
+        Serial.printf("LINKFW-S|job|bcast_skip|rank=%d|W=%d\n", rank, W);
+        return;
+    }
+    int base  = total / W;
+    int rem   = total % W;
+    int start = w * base + (w < rem ? w : rem);     // slice start
+    int len   = base + (w < rem ? 1 : 0);           // slice length
+    if (start < 0 || start + len > total) return;
+    uint64_t s = 0;
+    uint16_t* v = (uint16_t*)payload;
+    for (int k = start; k < start + len; k++) s += v[k];
+    int jobid = atoi(f_jobid);
+    udp.beginPacket(udp.remoteIP(), LF_UDP_PORT);
+    udp.printf("RESULT|%s|%d|SUM16|%llu|%d", g_host, jobid,
+               (unsigned long long)s, len);
+    udp.endPacket();
+    Serial.printf("LINKFW-S|job|work_bcast|jobid=%d|w=%d|start=%d|len=%d|sum=%llu|to=%s\n",
+                  jobid, w, start, len, (unsigned long long)s, udp.remoteIP().toString().c_str());
+}
+
 // coordinator side: collect one worker result
 static void handle_result_sum(char* buf) {
     // RESULT|<worker>|<jobid>|SUM16|<sum>|<count>
@@ -362,7 +412,9 @@ static void handle_rx() {
     IPAddress src = udp.remoteIP();
     int i = add_fleet(src);
     if (i < 0) { udp.clear(); return; }      // registry full: drop the datagram
-    Serial.printf("LINKFW-S|rx|from=%s|%s\n", src.toString().c_str(), (char*)g_rx);
+#ifdef LF_DEBUG_RX_PRINT
+    if (LF_DEBUG_RX_PRINT) Serial.printf("LINKFW-S|rx|from=%s|%s\n", src.toString().c_str(), (char*)g_rx);
+#endif
 
     if (strncmp((char*)g_rx, "PING|", 5) == 0) {
         udp.beginPacket(src, LF_UDP_PORT);
@@ -391,6 +443,8 @@ static void handle_rx() {
             }
         }
         recompute_role();
+    } else if (strncmp((char*)g_rx, "JB|", 3) == 0) {
+        handle_job_bcast((char*)g_rx, len);
     } else if (strncmp((char*)g_rx, "JOB|", 4) == 0) {
         handle_job_sum((char*)g_rx, len);
     } else if (strncmp((char*)g_rx, "RESULT|", 7) == 0) {
@@ -525,10 +579,12 @@ static void drop_stale() {
 }
 
 // ---------------- SUM16 fleet demo (coordinator side) ----------------
-static void send_job_sum(IPAddress dst, uint16_t jobid, uint16_t start, uint16_t len) {
-    udp.beginPacket(dst, LF_UDP_PORT);
-    udp.printf("JOB|%s|%u|SUM16|%u|", g_host, jobid, len);
-    udp.write((const uint8_t*)(g_demo_vec + start), (size_t)len * 2);
+// Broadcast the whole vector once; every worker sums its own MAC-ranked slice
+// (see handle_job_bcast). One datagram replaces N unicast JOBs -> O(1) dispatch.
+static void send_job_bcast(uint16_t jobid, uint16_t workers, uint16_t total) {
+    udp.beginPacket(IPAddress(255, 255, 255, 255), LF_UDP_PORT);
+    udp.printf("JB|%u|%u|%u|", jobid, workers, total);
+    udp.write((const uint8_t*)g_demo_vec, (size_t)total * 2);
     udp.endPacket();
 }
 
@@ -566,16 +622,13 @@ static void start_demo_sum() {
     g_job.expected = expected;
     g_job.start_ms = millis();
     g_job.deadline = g_job.start_ms + LF_JOB_TIMEOUT_MS;
-    uint16_t sent = 0;
     for (int i = 0; i < g_nfleet; i++) {
-        uint16_t len = base;
-        if (i == g_nfleet - 1) len = (uint16_t)(LF_DEMO_VEC_LEN - sent);  // remainder
-        g_job.cnt[i] = len;
+        g_job.cnt[i] = base;
         g_job.rtt[i] = 0;
-        send_job_sum(g_fleet[i].ip, jobid, sent, len);
-        g_job.sent_at[i] = millis();
-        sent += len;
     }
+    send_job_bcast(jobid, (uint16_t)g_nfleet, (uint16_t)LF_DEMO_VEC_LEN);
+    uint32_t now0 = millis();
+    for (int i = 0; i < g_nfleet; i++) g_job.sent_at[i] = now0;
     Serial.printf("LINKFW-S|job|start|id=%u|workers=%d|len=%u|expected=%llu\n",
                   jobid, g_nfleet, LF_DEMO_VEC_LEN, (unsigned long long)expected);
 }

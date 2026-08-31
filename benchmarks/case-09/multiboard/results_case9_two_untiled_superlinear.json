@@ -1,0 +1,46 @@
+{
+ "title": "2-board data-parallel, untiled FAST compute nodes (superlinear evidence)",
+ "batch": 64,
+ "seq_len": 128,
+ "d_model": 128,
+ "boards": 2,
+ "transport": "usb-cdc (per-board serial); fleet comm under study: ESP-NOW/UDP broadcast (station_comm)",
+ "boards_used": [
+  "/dev/cu.usbmodem101",
+  "/dev/cu.usbmodem1101"
+ ],
+ "measured_per_forward_s": {
+  "tiled16_wifi": 3.5956,
+  "tiled64_wifi": 3.2705,
+  "untiled": 2.1653
+ },
+ "untiled_dram_relief_bytes": 45760,
+ "gate": {
+  "run_inputs": 24,
+  "per_board_inputs": [
+   12,
+   12
+  ],
+  "fails": 0,
+  "max_abs": 0.00119
+ },
+ "measurement": {
+  "run_inputs": 24,
+  "per_board_compute_s": [
+   25.985,
+   25.986
+  ],
+  "cluster_compute_wall_s": 25.986,
+  "e2e_wall_s_usb_paced": 53.1,
+  "equivalent_single_tiled_worker_s": 86.3,
+  "speedup_24": 3.32
+ },
+ "projection_64_batch": {
+  "type": "linear projection from measured per-forward (batch-independent schedule; same method the repo uses for 'equivalent one tiled worker')",
+  "equivalent_single_tiled_worker_s": 230.1,
+  "two_board_compute_wall_s": 69.3,
+  "two_board_speedup": 3.32,
+  "per_node_relief_x": 1.661
+ },
+ "citation": "README multiboard: 16-row schedule 3.562 s/fwd vs untiled 2.157 s/fwd; untiled+WiFi DRAM overflow proved here (45,760 B)."
+}

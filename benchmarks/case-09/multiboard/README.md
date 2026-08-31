@@ -40,6 +40,8 @@ Raw result:
 - [`results_case9_four_c3_wifi.json`](results_case9_four_c3_wifi.json)
 - [`results_case9_eight_c3_wifi.json`](results_case9_eight_c3_wifi.json)
 
+
+| Two untiled compute nodes (this work) | **25.99 s compute, 3.32x** (no WiFi on compute nodes), 24/24 PASS; superlinear |
 ## Reproduce
 
 Generate the official batch inputs and references:
