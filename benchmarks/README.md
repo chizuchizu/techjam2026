@@ -31,25 +31,42 @@ Measured cross-case run of the case-2 optimised firmware on cases 1–5:
 | [04](case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **16.853 s** | **8.438 s** | **79.9x** | data parallel, 8.00x | 16/16 WiFi forwards PASS |
 | [05](case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **134.887 s** | **67.451 s** | **80.0x** | data parallel, 8.00x | 128/128 WiFi forwards PASS |
 | [06](case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | - | - | Not implemented | - |
-| [07](case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** (B=64 full case) | **15.822 s** | **7.922 s** | **3.963 s** | - | data parallel, 7.99x | 64/64 WiFi forwards PASS (worst 1.50e-03) |
+| [07](case-07/) | `(64,128,32,4,32,4)` | 295.05 s § | **30.427 s** (B=64 full case) | **15.822 s** | **7.922 s** | **3.963 s** | **74.5x** § | data parallel, 7.99x | 64/64 WiFi forwards PASS (worst 1.50e-03) |
 | [08](case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | - | Not implemented | - |
-| [09](case-09/) | `(64,128,128,1,128,4)` | - | **138.027 s** (B=64 full case) | - | **57.005 s** | **28.508 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.26e-03) |
-| [10](case-10/) | `(64,128,128,2,128,4)` | - | **138.536 s** (B=64 full case) | **119.101 s** | **59.563 s** | **29.793 s** | - | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.25e-03) |
-| [11](case-11/) | `(64,128,128,16,128,4)` | - | **138.610 s** (B=64 full case) | **206.354 s** | **103.169 s** | **51.604 s** | - | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.31e-03) |
-| [12](case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** (B=64 full case) | **17.091 s** | **8.554 s** | **4.282 s** | - | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.28e-03) |
+| [09](case-09/) | `(64,128,128,1,128,4)` | 2,697.6 s § | **138.027 s** (B=64 full case) | - | **57.005 s** | **28.508 s** | **94.6x** § | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.26e-03) |
+| [10](case-10/) | `(64,128,128,2,128,4)` | 2,697.6 s § | **138.536 s** (B=64 full case) | **119.101 s** | **59.563 s** | **29.793 s** | **90.5x** § | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.25e-03) |
+| [11](case-11/) | `(64,128,128,16,128,4)` | 2,697.6 s § | **138.610 s** (B=64 full case) | **206.354 s** | **103.169 s** | **51.604 s** | **52.3x** § | data parallel, 7.999x | 64/64 WiFi forwards PASS (worst 1.31e-03) |
+| [12](case-12/) | `(64,32,128,4,128,4)` | 547.95 s § | **33.879 s** (B=64 full case) | **17.091 s** | **8.554 s** | **4.282 s** | **128.0x** § | data parallel, 8.00x | 64/64 WiFi forwards PASS (worst 1.28e-03) |
 | [13](case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | - | - | Not implemented | - |
 | [14](case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | - | - | Not implemented | - |
 
 All times are for the **whole case**: one forward for case 2, the full batch of
-B inputs for the others. Every figure is the device's own measurement of the
-complete four-layer body; host serial transfer is excluded throughout, on all
-timing columns alike.
+B inputs for the others. Every non-dash optimised or multiboard timing is the
+device's own measurement of the complete four-layer body; host serial transfer
+is excluded throughout. Baseline-column projections are marked below.
 
-`*` Cases 1, 3, 4 and 5 were never run on the pre-optimisation firmware, so
-their baseline is **estimated** as `B x 42.15 s` from case 2's measured
-starting point. Only case 2's baseline is a measurement. Every non-dash
-optimised or multiboard entry is a physical measurement. Four- and eight-node
-WiFi results cover cases 1–5, 7, and 9–12; case 9 has no recorded two-node run.
+Only case 2's pre-optimisation baseline is a physical measurement. `*` Cases
+1, 3, 4 and 5 change only `B`, so their baseline is the direct batch projection
+`B x 42.15 s`. `§` Cases 7 and 9–12 change the model shape and use the
+lower-confidence FLOP-normalised projection
+
+```
+t_baseline_est = 42.15 s x FLOP_case / FLOP_case_02
+```
+
+at case 2's measured baseline effective rate (3.184 MFLOP/s). The exact dense
+FLOP ratios are 7x for case 7, 64x for cases 9–11, and 13x for case 12. The
+corresponding `vs baseline` entries divide these estimates by the measured
+eight-node compute wall. The model does not include shape-dependent baseline
+throughput effects such as head-loop and softmax overhead, so these values must
+remain marked `§` and must not be described as device measurements. In
+particular, the canonical case-9 and case-10 baseline workspaces exceed SRAM
+and never produced runnable firmware; their numbers are counterfactual
+compute-only projections. Later per-case "first physical capture" records are
+hybrid ports and are not the pre-optimisation baseline estimated here.
+
+Four- and eight-node WiFi results cover cases 1–5, 7, and 9–12; case 9 has no
+recorded two-node run.
 
 **4-node WiFi DP** is four full-forward replicas running independent batch
 inputs over persistent TCP; the column reports compute wall. `†` Case 2 has

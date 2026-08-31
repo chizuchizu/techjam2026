@@ -1,0 +1,22 @@
+step,seconds_per_forward,category_color
+baseline,42.15,#E7652B
+int QK,15.21,#E7652B
+exp LUT,13.7,#E7652B
+GEMM tile,6.91,#2367D1
+fused quant,6.56,#12805C
+core4,5.27,#2367D1
+head GEMM,4.862,#2367D1
+fused LN,4.784,#12805C
+int LN,4.16,#12805C
+ctx fusion,3.969,#12805C
+int PV,3.688,#E7652B
+core4 v2,3.664,#2367D1
+int amax,3.205,#12805C
+core5,2.982,#2367D1
+KB0 asm,2.838,#6F55B5
+Q15 epilogue,2.701,#12805C
+bias fold,2.447,#6F55B5
+QK unroll,2.386,#E7652B
+int residual,2.122,#178A9E
+compose,2.056,#6F55B5
+asm fix,1.996,#6F55B5
