@@ -180,8 +180,8 @@ direct-WiFi replicas and completed all 64/64 forwards, in **3.963 s** and
 - [ ] Add a short project overview for non-technical judges.
 - [ ] Add a limitations and future-improvements section.
 - [ ] Add a team-contributions section with one line per person.
-- [ ] Document the AI tools, libraries, frameworks, and development tools used.
-- [ ] Explain that the official benchmark uses seeded random weights and no dataset.
+- [x] Document the AI tools, libraries, frameworks, and development tools used.
+- [x] Explain that the official benchmark uses seeded random weights and no dataset.
 - [ ] Check the public repository for credentials, private addresses, and build files.
 - [ ] Merge the final pull request and verify all README links on GitHub.
 
@@ -198,9 +198,9 @@ direct-WiFi replicas and completed all 64/64 forwards, in **3.963 s** and
 
 ### Devpost submission
 
-- [ ] Write the project description and problem statement.
-- [ ] Describe the single-board and multiboard approaches.
-- [ ] List development tools, APIs, libraries, frameworks, and assets.
+- [x] Write the project description and problem statement.
+- [x] Describe the single-board and multiboard approaches.
+- [x] List development tools, APIs, libraries, frameworks, and assets.
 - [ ] Add the GitHub repository link.
 - [ ] Add the demo video link.
 - [ ] Add limitations, future work, and practical impact.
@@ -251,6 +251,7 @@ build directories.
 - [`TODO.md`](TODO.md) — shared priorities.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — validation and result conventions.
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — milestones and acceptance gates.
+- [`docs/DEVPOST_PROJECT_DESCRIPTION.md`](docs/DEVPOST_PROJECT_DESCRIPTION.md) — copy-ready project description, technical report, tools, APIs, frameworks, assets, results, and limitations.
 - [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — cluster decomposition and protocol design.
 - [`docs/WIFI_ON_A_COMPUTE_NODE.md`](docs/WIFI_ON_A_COMPUTE_NODE.md) — SRAM challenge, tiled TCP solution, physical results, and sidecar alternative.
 - [`esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md`](esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md) — what the ESP-NOW relay does and the full-protocol WiFi–UART sidecar.
