@@ -1,14 +1,120 @@
-# TechJam 2026 — ESP32 Transformer
+# NotGPU Attention
 
-This repository explores a different ESP32 execution strategy for each of the
-14 official Transformer benchmark cases. Every case owns its documentation,
-baseline evidence, single-board optimisations, multiboard implementation, and
-results under [`benchmarks/case-NN/`](benchmarks/).
+> A complete Transformer on an S$7 microcontroller—optimized from one no-FPU
+> ESP32-C3 to an eight-board wireless cluster.
 
-## Case layout
+**TinyCluster:** Karthik Gangula, Mingchen Yang, and Yuma Ochi
 
-[`benchmarks/README.md`](benchmarks/README.md) is the full case index. Each
-implemented case follows the same layout; case-02 is shown as the example:
+[Devpost technical report](docs/DEVPOST_PROJECT_DESCRIPTION.md) ·
+[benchmark evidence](benchmarks/README.md) ·
+[competition specification](COMPETITION_RULES.MD)
+
+The competition asks teams to accelerate a Transformer while preserving the output
+of the supplied PyTorch reference. Most solutions start with a GPU. We asked a more
+extreme question: **what if there is no GPU at all?**
+
+Our target is the Seeed XIAO ESP32-C3: a 160 MHz single-core RISC-V
+microcontroller with no floating-point unit, no PSRAM, about 321 KB of usable
+application SRAM, and 4 MB of flash. We kept the complete four-layer Transformer
+body—including causal multi-head attention, LayerNorm, residuals, GELU, and the
+feed-forward network—and redesigned how it computes, stores, and distributes data.
+
+## Headline results
+
+| Result | Improvement | Validation |
+|---|---:|---|
+| One C3: `42.15 s -> 1.996 s` | **21.1x** | Complete case-2 forward; physical device |
+| Two C3s: `1.996 s -> 1.276 s` | **1.56x**, or **33.0x** vs original | Complete token-row forward; gate passes |
+| Eight Wi-Fi workers | **8.00x** vs one identical tiled worker | Physical batch-data-parallel run |
+| Cases 1–5 eight-board sweep | **213/213** forwards pass | No missing inputs or failing elements |
+
+The eight-board workers use a memory-saving tiled schedule so that the model and
+Wi-Fi stack fit together. Against the fastest untiled single board, the fair cluster
+gain for fully utilized cases 1, 4, and 5 is approximately **3.78x**. We keep that
+comparison separate from the 8.00x node-scaling result.
+
+## How it works
+
+1. **Fixed-point attention:** Q15 activations, Q12 weights, integer QK/PV, and a
+   lookup-table softmax remove software floating point from the hottest loops.
+2. **Register-aware GEMM:** a `4 x 2` output tile fits the real RISC-V register
+   budget and avoids stack spills caused by a larger `8 x 2` tile.
+3. **Fusion and assembly:** fixed-point residual updates remove full memory passes;
+   hand-scheduled independent accumulators hide multiply latency.
+4. **SRAM-aware execution:** 16-row, head-sequential tiling lets the Transformer and
+   Wi-Fi/lwIP coexist without PSRAM.
+5. **Shape-aware parallelism:** independent batch inputs use data parallelism;
+   batch-one case 2 uses an alternating token-row split with overlapped K/V exchange.
+6. **Evidence-first optimization:** every accepted change is checked against the
+   official numerical gate and stored with reproducible measurement artifacts.
+
+## Benchmark coverage
+
+The complete measurement table, shape definitions, raw-artifact links, and
+measured-versus-projected notes live in [`benchmarks/README.md`](benchmarks/README.md).
+This README keeps only the physical-device summary needed by a reviewer.
+
+| Scope | Physical result | Correctness |
+|---|---:|---|
+| Cases 1–5, eight-board Wi-Fi sweep | 213 complete forwards | **213/213 PASS** |
+| Case 7, eight boards | 3.963 s for the full B=64 case | **64/64 PASS** |
+| Case 9, eight boards | 28.508 s for the full B=64 case | **64/64 PASS** |
+| Case 10, eight boards | 29.793 s for the full B=64 case | **64/64 PASS** |
+| Case 11, eight boards | 51.604 s for the full B=64 case | **64/64 PASS** |
+| Case 12, eight boards | 4.282 s for the full B=64 case | **64/64 PASS** |
+
+All reported compute times cover the complete four-layer body and exclude host
+input/output consistently. Wi-Fi-inclusive wall times are recorded separately.
+Only case 2 has a physically measured pre-optimization baseline. Cross-shape
+baseline estimates remain marked as projections and are not presented as device
+measurements.
+
+The official gate is applied per output element:
+
+```text
+absolute error <= 0.002  OR  relative error <= 0.02
+```
+
+The supplied benchmark uses deterministic random inputs and weights. Passing this
+gate demonstrates numerical equivalence to the PyTorch reference, not trained-task
+accuracy.
+
+## Parallelization
+
+### Batch data parallelism
+
+Each worker stores a complete model and receives independent inputs from the host over
+persistent TCP. Workers exchange no tensors during a forward, so useful parallelism
+is `min(batch size, board count)`. When at least eight inputs are available, the eight
+workers maintain essentially linear scaling against one identical tiled worker.
+
+### Token-row parallelism
+
+Official case 2 has batch size one, so ordinary data parallelism cannot use multiple
+boards. We divide alternating sequence rows between two C3s. This balances the uneven
+causal-attention workload. Most of the Transformer runs locally; the boards exchange
+only attention K/V data, and a dedicated task overlaps that communication with
+computation. The complete forward improves from 1.990 to 1.276 seconds.
+
+Parity-interleaved attention is related to published Striped Attention. We do not
+claim invention of the general algorithm. Our contribution is its fixed-point,
+memory-bounded, communication-overlapped realization as a complete Transformer on
+two no-FPU microcontrollers.
+
+## Reproducible engineering
+
+[`tinyprof/`](tinyprof/) is our operator-level ESP32-C3 profiler. It captures cycle
+timing, call counts, instrumentation overhead, heap and stack watermarks, ELF-derived
+static memory, embedded weight sizes, and traffic derived from measured calls. It
+produces machine-readable artifacts and a self-contained comparison report.
+
+[`esp32-linkbench/`](esp32-linkbench/) measures the communication layer independently
+from model compute, including TCP, UDP, and ESP-NOW experiments. Keeping compute and
+transport evidence separate prevents radio results from being mistaken for complete
+Transformer performance.
+
+Every official case keeps its implementation, validation evidence, and raw results
+under [`benchmarks/case-NN/`](benchmarks/):
 
 ```text
 benchmarks/case-02/
@@ -19,203 +125,65 @@ benchmarks/case-02/
 │   └── esp32-baseline/
 └── multiboard/
     ├── esp32_cluster_transport/
-    ├── esp32-linkbench/
     ├── tools/
     └── results/
 ```
 
-The competition problem statement and official executable reference remain at
-the repository root: [`COMPETITION_RULES.MD`](COMPETITION_RULES.MD) and
-[`torch_transformer_benchmark.py`](torch_transformer_benchmark.py). Smaller
-experiments that are not official cases are isolated in
+Smaller experiments that are not complete official cases remain isolated under
 [`benchmarks/experiments/`](benchmarks/experiments/).
 
-Two tools sit outside the case tree because they span several of them:
-[`esp32-linkbench/`](esp32-linkbench/) measures the board-to-board radio link,
-and [`tinyprof/`](tinyprof/) profiles the forward pass — per-op time and call
-counts, ELF-derived static memory, runtime heap and stack watermarks, memory
-traffic derived from measured call counts, and measured instrumentation
-overhead, rendered as a baseline-versus-optimised HTML report. What it does and
-does not claim is stated in [`tinyprof/PRIOR_ART.md`](tinyprof/PRIOR_ART.md).
+## Development stack
 
-## Official case status
+- **Embedded:** C/C++, RISC-V assembly, Arduino-ESP32, ESP-IDF components, FreeRTOS,
+  lwIP, TCP, UDP, and ESP-NOW.
+- **Build and analysis:** PlatformIO, Arduino CLI, GNU Make, GCC, RISC-V GCC/binutils,
+  ELF files, and linker maps.
+- **Reference and validation:** Python 3, PyTorch, NumPy, and pySerial.
+- **Visualization:** Matplotlib-generated scientific charts and original project
+  illustrations.
+- **Collaboration:** Git and GitHub.
 
-| Case | Shape `(B,S,D,H,F,L)` | Baseline, 1 board | Optimised, 1 board | 2 boards | 4-node WiFi DP | 8-node WiFi DP | vs baseline | Status |
-|---:|---|---:|---:|---:|---:|---:|---:|---|
-| [1](benchmarks/case-01/) | `(64,128,128,4,128,4)` | 2,697.6 s * | 127.36 s | **63.7 s** | **67.465 s** | **33.713 s** | **80.0x** | Eight-node WiFi DP verified, 64/64 PASS |
-| [2](benchmarks/case-02/) | `(1,128,128,4,128,4)` | 42.15 s | 1.990 s | **1.276 s** | **4.2137 s †** | **4.220 s †** | **33.0x** | WiFi full-forward verified; B=1 activates one DP node |
-| [3](benchmarks/case-03/) | `(4,128,128,4,128,4)` | 168.6 s * | 7.96 s | **4.0 s** | **4.215 s** | **4.218 s ‡** | **42.1x** | Eight available, four active; 4/4 PASS |
-| [4](benchmarks/case-04/) | `(16,128,128,4,128,4)` | 674.4 s * | 31.84 s | **15.9 s** | **16.853 s** | **8.438 s** | **79.9x** | Eight-node WiFi DP verified, 16/16 PASS |
-| [5](benchmarks/case-05/) | `(128,128,128,4,128,4)` | 5,395.2 s * | 254.72 s | **127.4 s** | **134.887 s** | **67.451 s** | **80.0x** | Eight-node WiFi DP verified, 128/128 PASS |
-| [6](benchmarks/case-06/) | `(10000,128,128,4,128,4)` | - | - | - | - | - | - | Not implemented - streaming batch execution |
-| [7](benchmarks/case-07/) | `(64,128,32,4,32,4)` | - | **30.427 s** | **15.822 s** | **7.922 s** | **3.963 s** | - | Eight-node WiFi DP verified, 64/64 PASS |
-| [8](benchmarks/case-08/) | `(64,128,1024,4,1024,4)` | - | - | - | - | - | - | Not implemented - weight and feature sharding |
-| [9](benchmarks/case-09/) | `(64,128,128,1,128,4)` | - | - | - | - | - | - | Not implemented - sequence/model sharding |
-| [10](benchmarks/case-10/) | `(64,128,128,2,128,4)` | - | - | - | - | - | - | Not implemented - two head shards plus batch parallelism |
-| [11](benchmarks/case-11/) | `(64,128,128,16,128,4)` | - | - | - | - | - | - | Not implemented - fine-grained head parallelism |
-| [12](benchmarks/case-12/) | `(64,32,128,4,128,4)` | - | **33.879 s** | **17.091 s** | **8.554 s** | **4.282 s** | - | Eight-node WiFi DP verified, 64/64 PASS |
-| [13](benchmarks/case-13/) | `(64,1024,128,4,128,4)` | - | - | - | - | - | - | Not implemented - online attention and KV sharding |
-| [14](benchmarks/case-14/) | `(32,100000,1024,16,1024,2)` | - | - | - | - | - | - | Not implemented - extreme sequence streaming |
+### AI-assisted development
 
-All times cover the **whole case**: one forward for case 2, the full batch of B
-inputs for the others. Every figure is the device's own measurement of the
-complete four-layer body, with host serial transfer excluded from all timing
-columns alike.
+- **OpenAI Codex** supported repository analysis, implementation candidates,
+  debugging, experiment design, review, and technical documentation.
+- **Anthropic Claude Code** supported alternative design review and refinement of
+  technical explanations and presentation material.
 
-`*` Cases 1, 3, 4 and 5 were never run on the pre-optimisation firmware, so
-their baseline is **estimated** as `B x 42.15 s` from case 2's measured
-starting point. Only case 2's baseline is a measurement. The optimised,
-two-board, four-node WiFi, and eight-node WiFi columns are measured for cases
-1–5.
+Neither tool is a runtime dependency. The ESP32 firmware calls no external AI or
+cloud inference API. AI-assisted changes were retained only after compilation,
+validation against the official reference, and physical-device measurement where a
+hardware result is claimed.
 
-**4-node WiFi DP** means four full-forward replicas receiving independent
-batch inputs over persistent TCP. The column reports compute wall, excluding
-transport like the other timing columns; measured WiFi-inclusive wall times
-are in [`benchmarks/batch-dp/RESULTS_FOUR_C3_WIFI.md`](benchmarks/batch-dp/RESULTS_FOUR_C3_WIFI.md).
-`†` Case 2 has B=1, so only one of the four available data-parallel nodes can
-run; 4.2137 s is the tiled WiFi single-forward time, not a four-board speedup.
-The same limit applies with eight available nodes. `‡` Case 3 has B=4, so it
-uses four active nodes and cannot obtain an eight-board data-parallel speedup.
-Complete eight-node measurements and WiFi-inclusive wall times are in
-[`benchmarks/batch-dp/RESULTS_EIGHT_C3_WIFI.md`](benchmarks/batch-dp/RESULTS_EIGHT_C3_WIFI.md).
+## Data and assets
 
-Cases 1, 3, 4 and 5 are batches of independent forwards, so two boards run B/2
-inputs each and exchange nothing - exactly 2.00x. Case 2 is a single forward
-and has to be split *inside* the model, by token row, which costs one K/V
-exchange per layer and does not halve the per-board weight streaming - hence
-1.56x.
+No external dataset is used. The organizers supplied
+[`torch_transformer_benchmark.py`](torch_transformer_benchmark.py), which generates
+deterministic random weights and inputs. We export those tensors into binary test
+fixtures and quantized weight blobs for the firmware.
 
-The approach notes for unimplemented cases are design hypotheses, not measured
-claims. Each case README records what must be validated before its status can
-change.
+The repository also contains project-generated serial logs, JSON measurements,
+linker evidence, Matplotlib figures, and photographs of the physical boards. Prior
+work and third-party projects are cited in [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md);
+their results are not represented as our measurements.
 
-## Hackathon submission TODO
+## Limitations
 
-### Benchmark evidence
+- This benchmark demonstrates numerical equivalence on seeded random weights, not the
+  accuracy of a trained application model.
+- Complete official-case coverage remains unfinished for cases 6, 8, 13, and 14.
+  Bounded streaming and ring-attention experiments are documented separately and are
+  not presented as complete official results.
+- The Wi-Fi-capable tiled worker is slower than the fastest radio-free worker; node
+  scaling and fair speedup versus the best single board are reported separately.
+- Device-compute timing excludes host transfer by benchmark convention. End-to-end
+  transport results are reported separately.
+- Energy per forward has not yet been measured with an external power instrument.
+- This is a reproducible benchmark prototype, not a production-hardened network.
 
-#### Completed foundation
+## Quick start
 
-- [x] Add the official case-2 baseline implementation.
-- [x] Validate the case-2 baseline against the required accuracy gate.
-- [x] Record the physical single-board baseline timing.
-- [x] Add the optimised case-2 single-board implementation.
-- [x] Validate the optimised implementation on host and physical hardware.
-- [x] Record the baseline-to-optimised single-board speedup.
-- [x] Record a two-board partial-layer result.
-- [x] Record a four-board attention-only result.
-- [x] Label both multiboard results as partial, not end-to-end inference.
-
-#### Complete two-board end-to-end case 2
-
-- [x] Run all four layers and the final LayerNorm across two boards.
-- [x] Add the missing projections, residuals, LayerNorm, and FFN path.
-- [x] Keep weights on the workers; each board holds the full blobs in flash and
-      returns only its own output rows.
-- [x] Validate the two-board output with five seeds.
-- [x] Measure full wall time and split compute from communication.
-- [x] Compare it with one board and save the raw results.
-
-Result: **1.276 s across two C3s against 1.990 s on one (1.56x)** on the opt23
-kernels, 25/25 host seeds passing the accuracy gate with zero failing elements.
-Time blocked on the board-to-board link is 5-88 ms per forward. The measured
-window excludes host serial transfer, exactly as the single-board number does.
-See
-[`benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md`](benchmarks/case-02/multiboard/results/CASE2_FULL_E2E_RESULTS.md).
-
-#### Multiboard for the batch cases
-
-- [x] Data-parallel dispatch for cases 1, 3, 4 and 5 across N boards.
-- [x] Validate every output of every batch against the torch reference.
-- [x] Compare with one board and save the raw results.
-
-Result: **2.00x on two boards, 4.00x on four WiFi nodes, and 8.00x on eight
-WiFi nodes when B >= 8**. Case 3 saturates at 4.00x because B=4. The
-eight-board cases 1–5 sweep gated all 213 forwards individually with zero
-missing inputs and zero failing elements. These cases are independent forwards
-over shared weights, so the boards exchange nothing. See
-[`benchmarks/batch-dp/`](benchmarks/batch-dp/).
-
-The same shape-aware data-parallel coordinator is physically verified for
-case 7 (`D=F=32`) and case 12 (`S=32`). Both reached **8.00x** on eight
-direct-WiFi replicas and completed all 64/64 forwards, in **3.963 s** and
-**4.282 s** compute wall respectively. See
-[`benchmarks/case-07/multiboard/`](benchmarks/case-07/multiboard/) and
-[`benchmarks/case-12/multiboard/`](benchmarks/case-12/multiboard/).
-
-#### Benchmark four boards, then scale to eight
-
-- [x] Run and validate the same end-to-end path on four boards.
-- [x] Save the four-board speedup, efficiency, median, and raw results.
-- [ ] Record per-forward samples and p90 for the four-board run.
-- [x] Choose an eight-board split beyond the four available attention heads.
-- [ ] Add stable board IDs, discovery, timeouts, retries, and failure handling.
-- [x] Validate the eight-board output against the official reference.
-- [x] Benchmark one, two, four, and eight boards under the same conditions.
-- [ ] Measure speedup, efficiency, communication, retries, and slowest-worker time.
-- [x] Save raw results and explain where scaling improves or stops.
-
-#### Support additional official benchmark cases
-
-- [ ] Move case shapes out of case-2-specific code and into configuration.
-- [ ] Add case selection, memory checks, and shared validated kernels.
-- [ ] Support cases 3, 7, 9, 11, 12, and 13 first.
-- [ ] Validate every case against its official reference.
-- [ ] Keep each case's code, raw results, and report in its own directory.
-- [ ] Add other cases after checking memory and runtime needs.
-
-#### Final evidence pack
-
-- [ ] Run the final case-2 commands from a fresh checkout.
-- [ ] Record hardware, clocks, software versions, and timing rules.
-- [ ] Check that every result passes accuracy and uses the same scope.
-- [ ] Publish raw captures with median, p90, warm-ups, and run counts.
-- [ ] Summarise what scaled, what did not, and why.
-
-### Repository and README
-
-- [x] Organise official work into one directory per benchmark case.
-- [x] Keep case-2 baseline, optimisation, multiboard code, and results together.
-- [x] Keep the competition problem statement at the repository root.
-- [x] Document setup and reproduction commands.
-- [ ] Add a short project overview for non-technical judges.
-- [ ] Add a limitations and future-improvements section.
-- [ ] Add a team-contributions section with one line per person.
-- [x] Document the AI tools, libraries, frameworks, and development tools used.
-- [x] Explain that the official benchmark uses seeded random weights and no dataset.
-- [ ] Check the public repository for credentials, private addresses, and build files.
-- [ ] Merge the final pull request and verify all README links on GitHub.
-
-### Demo video
-
-- [ ] Write a short problem → approach → result demo script.
-- [ ] Record the ESP32 setup and identify the boards on camera.
-- [ ] Record one reproducible inference or benchmark run.
-- [ ] Show the accuracy result before showing the speedup.
-- [ ] Explain the boundary between the full single-board result and partial multiboard results.
-- [ ] Add captions or readable terminal zoom for timings and validation output.
-- [ ] Upload the video publicly to YouTube.
-- [ ] Add the public video link to the Devpost submission.
-
-### Devpost submission
-
-- [x] Write the project description and problem statement.
-- [x] Describe the single-board and multiboard approaches.
-- [x] List development tools, APIs, libraries, frameworks, and assets.
-- [ ] Add the GitHub repository link.
-- [ ] Add the demo video link.
-- [ ] Add limitations, future work, and practical impact.
-- [ ] Add all team members and their contributions.
-- [ ] Preview the complete submission while logged out.
-- [ ] Submit before the deadline and save the confirmation.
-
-### Optional technical stretch goals
-
-- [ ] Complete output projection, residuals, second LayerNorm, and FFN for one distributed layer.
-- [ ] Run all four case-2 layers across multiple boards.
-- [ ] Add worker heartbeats, retry handling, and cached performance profiles.
-- [ ] Implement and validate another official benchmark case in its own directory.
-
-## Quick setup
+Create a Python environment and run all host-side checks:
 
 ```bash
 python3 -m venv .venv
@@ -223,9 +191,7 @@ python3 -m venv .venv
 make check
 ```
 
-Build the current case-2 single-board implementation:
-
-The exporter also requires PyTorch in the selected Python environment.
+Build the optimized case-2 firmware:
 
 ```bash
 cd benchmarks/case-02/optimisation/esp32-baseline
@@ -233,26 +199,34 @@ python3 tools/export_case2.py --outdir . --seeds 25
 pio run -e esp32-baseline
 ```
 
-Configure a local, Git-ignored Wi-Fi secrets file before compiling the case-2
-cluster worker:
+Build the complete two-board case-2 worker:
 
 ```bash
-cp benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.example.h \
-   benchmarks/case-02/multiboard/esp32_cluster_transport/secrets.h
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 \
-  benchmarks/case-02/multiboard/esp32_cluster_transport
+cd benchmarks/case-02/multiboard/esp32-cluster-full
+pio run
 ```
 
-Never commit credentials, private addresses, generated model artifacts, or
-build directories.
+The exporter requires PyTorch. Local Wi-Fi credentials belong in the provided
+Git-ignored `secrets.h` workflow and must never be committed.
 
-## Project documentation
+## Documentation
 
-- [`TODO.md`](TODO.md) — shared priorities.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — validation and result conventions.
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — milestones and acceptance gates.
-- [`docs/DEVPOST_PROJECT_DESCRIPTION.md`](docs/DEVPOST_PROJECT_DESCRIPTION.md) — copy-ready project description, technical report, tools, APIs, frameworks, assets, results, and limitations.
-- [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — cluster decomposition and protocol design.
-- [`docs/WIFI_ON_A_COMPUTE_NODE.md`](docs/WIFI_ON_A_COMPUTE_NODE.md) — SRAM challenge, tiled TCP solution, physical results, and sidecar alternative.
-- [`esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md`](esp32-linkbench/docs/PC_MASTER_WIFI_BRIDGE.md) — what the ESP-NOW relay does and the full-protocol WiFi–UART sidecar.
-- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — prior-art review and positioning.
+- [`docs/DEVPOST_PROJECT_DESCRIPTION.md`](docs/DEVPOST_PROJECT_DESCRIPTION.md) —
+  copy-ready Devpost description and full technical report.
+- [`benchmarks/README.md`](benchmarks/README.md) — authoritative case table and
+  measured-versus-projected definitions.
+- [`docs/report/index.html`](docs/report/index.html) — self-contained engineering
+  report with figures.
+- [`docs/WIFI_ON_A_COMPUTE_NODE.md`](docs/WIFI_ON_A_COMPUTE_NODE.md) — Wi-Fi SRAM
+  collision, tiled solution, and measured trade-off.
+- [`docs/MULTI_ESP32_DESIGN.md`](docs/MULTI_ESP32_DESIGN.md) — distributed execution
+  architecture.
+- [`tinyprof/README.md`](tinyprof/README.md) — profiler design and reproduction.
+- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — novelty boundary and related work.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — validation and result-reporting rules.
+
+## Submission assets
+
+This repository contains the implementation and measurement evidence for the
+TechJam 2026 submission. Add the public demo-video link to the Devpost entry after the
+final upload; no video URL is fabricated here.
