@@ -1,0 +1,26 @@
+{
+  "case": "case-02 (H=4, B=1 geometry at batch 24; S=128 D=128 H=4 F=128 L=4, causal)",
+  "batch": 24,
+  "per_board_inputs": [
+    12,
+    12
+  ],
+  "boards": 2,
+  "project": "benchmarks/case-02/optimisation/esp32-baseline (platform espressif32@7.0.1, aligned with case-09)",
+  "transport": "usb-cdc (run_batch_dp, paced 1 KB/20 ms host delivery)",
+  "testdata": "benchmarks/case-02/comparison/testdata/B24 (copied from case-02 testdata seeds 0..23)",
+  "gate": "PASS",
+  "recorded": "2026-09-01 (this session)",
+  "labels": {
+    "variant": "WITH communication optimization (radio-free compute node)",
+    "image": "[env:esp32-baseline] main.cpp, untiled FAST forward, no WiFi/lwIP on compute",
+    "why": "Fleet comm keeps the radio OFF the compute node (tiny-comm / O(1) broadcast dispatch, Phase 2), so each node runs the fast untiled schedule"
+  },
+  "device": "per-forward 1.990 s (median of 24 device-reported us)",
+  "compute_wall_s": 23.9,
+  "one_tiled_worker_s": 102.0,
+  "speedup_vs_one_tiled_worker": 4.27,
+  "e2e_wall_usb_paced_s": 47.8,
+  "fails": 0,
+  "max_abs": 0.001237
+}
