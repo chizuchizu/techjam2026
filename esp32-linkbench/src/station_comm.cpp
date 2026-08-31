@@ -50,6 +50,9 @@
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>
 #include "esp_mac.h"      // esp_read_mac: read the eFuse base MAC before WiFi init
+#if LF_ESPNOW_BENCH
+#include <esp_now.h>      // ESP-NOW fast path (Phase-2 8-board transport)
+#endif
 #ifdef LF_AP_NAT
 #include "esp_netif.h"    // core 3.x / IDF 5.1+ only: esp_netif_napt_enable (lwIP NAPT)
 #endif
@@ -102,6 +105,20 @@
 #endif
 #ifndef LF_FORCE_AP
 #define LF_FORCE_AP 0
+#endif
+
+// ---- ESP-NOW bench toggles (Phase-2 fast-path transport measurement) ----
+#ifndef LF_ESPNOW_BENCH
+#define LF_ESPNOW_BENCH 0              // 1 = run the ESP-NOW broadcast dispatch RTT bench
+#endif
+#ifndef LF_ESPNOW_BENCH_ROUNDS
+#define LF_ESPNOW_BENCH_ROUNDS 64      // measurement rounds (after 3 warmup)
+#endif
+#ifndef LF_ESPNOW_BENCH_INTERVAL_MS
+#define LF_ESPNOW_BENCH_INTERVAL_MS 15 // min gap between rounds (reply << 15 ms)
+#endif
+#ifndef LF_ESPNOW_SLOT_US
+#define LF_ESPNOW_SLOT_US 1500         // per-worker collect slot (avoids 8->1 CSMA burst)
 #endif
 
 static WiFiUDP udp;
@@ -654,6 +671,315 @@ static void poll_job() {
     g_job.active = false;
 }
 
+
+// ---------------- ESP-NOW fast-path bench (LF_ESPNOW_BENCH) ----------------
+// Hardware-validates the 8-board comm transport. The coordinator broadcast-
+// dispatches one tiny control frame over ESP-NOW (O(1), one frame to ALL
+// workers); each worker replies after its slot (worker_index * SLOT_US) to
+// avoid the 8->1 CSMA "thundering herd". We measure the true broadcast->reply
+// round trip in us on THIS hardware. Baseline: the fleet UDP PING/PONG (ms).
+#if LF_ESPNOW_BENCH
+static uint8_t  g_eb_bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+static bool     g_eb_on = false;
+static bool     g_eb_done = false;         // bench already ran once
+static bool     g_eb_ready = false;        // roles known + fleet seen
+static uint32_t g_eb_ready_at = 0;
+static uint16_t g_eb_seq = 0;
+static bool     g_eb_pending = false;
+static uint32_t g_eb_sent_us = 0;
+static uint32_t g_eb_sent_ms = 0;          // stale-reply watchdog
+#ifndef LF_ESPNOW_TIMEOUT_MS
+#define LF_ESPNOW_TIMEOUT_MS 200
+#endif
+static uint32_t g_eb_round = 0;
+static uint32_t g_eb_last = 0;
+static uint32_t g_eb_rtt_min = 0xFFFFFFFFu;
+static uint32_t g_eb_rtt_max = 0;
+static uint64_t g_eb_rtt_sum = 0;
+static int      g_eb_rtt_n = 0;
+static uint32_t g_eb_rtt_vals[LF_ESPNOW_BENCH_ROUNDS + 8];
+static int      g_eb_miss = 0;
+static const int g_eb_warmup = 3;
+static bool     g_eb_defer_on = false;
+static uint16_t g_eb_defer_seq = 0;
+static uint8_t  g_eb_defer_mac[6];
+static uint32_t g_eb_defer_slot_us = 0;
+static uint32_t g_eb_defer_us = 0;
+
+static bool mac_eq(const uint8_t *a, const uint8_t *b) {
+    for (int i = 0; i < 6; i++) if (a[i] != b[i]) return false;
+    return true;
+}
+static bool mac_is_zero(const uint8_t *a) {
+    for (int i = 0; i < 6; i++) if (a[i]) return false;
+    return true;
+}
+
+static int my_worker_index() {
+    // number of fleet members with a live MAC ordering below ours = our rank,
+    // minus one for the coordinator itself -> 0-based worker index.
+    int rank = 0;
+    for (int i = 0; i < g_nfleet; i++) {
+        if (mac_is_zero(g_fleet[i].mac)) continue;
+        if (mac_cmp(g_mymac, g_fleet[i].mac) > 0) rank++;
+    }
+    return rank - 1;                        // 0-based, -1 if called on the coordinator
+}
+
+static void eb_add_peer(const uint8_t *mac, int step) {
+    if (esp_now_is_peer_exist(mac)) return;
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, mac, 6);
+    peer.channel = 0;                       // current channel (both boards on AP ch 1)
+    peer.ifidx = g_ap_mode ? (wifi_interface_t)WIFI_IF_AP : (wifi_interface_t)WIFI_IF_STA;
+    peer.encrypt = false;
+    esp_now_add_peer(&peer);
+}
+
+static void eb_ensure_bcast_peer() { eb_add_peer(g_eb_bcast, 1); }
+
+static uint8_t *eb_peer_target() {
+    // AP board: first fleet station MAC; STA board: the AP's BSSID we joined.
+    if (g_ap_mode) {
+        if (g_nfleet > 0 && !mac_is_zero(g_fleet[0].mac)) return g_fleet[0].mac;
+        return NULL;
+    }
+    return WiFi.BSSID();   // we joined this AP -> its MAC is the AP peer
+}
+
+// parse a decimal uint16 from data[from..]; returns false if none found
+static bool eb_parse_uint16(const uint8_t *data, int len, int from, uint16_t *out) {
+    uint16_t v = 0; int d = 0;
+    for (int i = from; i < len; i++) {
+        if (data[i] < '0' || data[i] > '9') break;
+        v = v * 10 + (uint16_t)(data[i] - '0');
+        d++;
+    }
+    if (!d) return false;
+    *out = v;
+    return true;
+}
+
+// worker: "EB|<seq>" broadcast from the coordinator -> slotted unicast "EBR|<seq>"
+// reply to the sender (slots = worker_index * LF_ESPNOW_SLOT_US, kept tiny so an
+// 8-node storm of simultaneous replies never reaches the coordinator at once).
+static void eb_worker_on_dispatch(const uint8_t *mac, const uint8_t *data, int len) {
+    // IMPORTANT: never send from inside the recv callback (lwIP/esp_now mutex
+    // deadlock on this stack). We only record what needs replying; eb_poll
+    // (the main loop) performs the slot-timed unicast send.
+    if (!g_eb_ready) return;
+    uint16_t seq = 0;
+    int from = 2;
+    if (from < len && data[from] == '|') from++;     // "EB|" prefix
+    if (!eb_parse_uint16(data, len, from, &seq)) return;
+    int w = my_worker_index(); if (w < 0) w = 0;
+    if (g_eb_defer_on) return;                       // reply already queued for this round
+#ifdef LF_ESPNOW_DEBUG
+    if (seq <= 8) Serial.printf("LINKFW-E|w|dispatch|seq=%u|slot_us=%u\n", seq, (uint32_t)w * (uint32_t)LF_ESPNOW_SLOT_US);
+#endif
+    g_eb_defer_on = true;
+    g_eb_defer_seq = seq;
+    memcpy(g_eb_defer_mac, mac, 6);
+    g_eb_defer_slot_us = (uint32_t)w * (uint32_t)LF_ESPNOW_SLOT_US;
+    g_eb_defer_us = micros() + g_eb_defer_slot_us;
+}
+
+static void eb_on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+    const uint8_t *mac = info ? info->src_addr : NULL;
+#ifdef LF_ESPNOW_DEBUG
+#ifndef LF_ESPNOW_DIAG_PING
+    {
+        static int dbg1 = 0;
+        if (dbg1 < 8) {
+            dbg1++;
+            Serial.printf("LINKFW-E|%s|raw|n=%d|len=%d|t_ms=%u|src=%02X:%02X:%02X:%02X:%02X:%02X|b0=%02X\n",
+                          (g_role_coord ? "c" : "w"), dbg1, len, (uint32_t)millis(),
+                          mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], data[0]);
+        }
+    }
+#endif
+#endif
+#ifdef LF_ESPNOW_DIAG_PING
+    {
+        static int ping_rx = 0;
+        if (ping_rx < 40) {
+            char hexb[32]; hexb[0] = 0;
+            for (int q = 0; q < len && q < 10; q++) {
+                snprintf(hexb + strlen(hexb), sizeof(hexb) - strlen(hexb), "%02X", data[q]);
+            }
+            ping_rx++;
+            Serial.printf("LINKFW-E|ping|rx|n=%d|len=%d|t_ms=%u|src=%02X:%02X:%02X:%02X:%02X:%02X|d=%s\n",
+                          ping_rx, len, (uint32_t)millis(),
+                          mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], hexb);
+        }
+    }
+#endif
+    if (len < 2 || data[0] != 'E' || data[1] != 'B') return;
+    if (g_role_coord) {                     // coordinator: match an EBR reply to a sent seq
+        if (len < 4 || data[2] != 'R') return;
+        uint16_t seq = 0;
+        int cfrom = 2;
+        if (cfrom < len && data[cfrom] == 'R') cfrom++;             // "EBR" prefix
+        if (cfrom < len && data[cfrom] == '|') cfrom++;             // "EBR|"
+        if (!eb_parse_uint16(data, len, cfrom, &seq)) return;
+        if (!g_eb_pending || seq != g_eb_seq) return;
+        uint32_t rtt = micros() - g_eb_sent_us;
+#ifdef LF_ESPNOW_DEBUG
+        if (seq <= 8) {
+            Serial.printf("LINKFW-E|b|rx|seq=%u|rtt_us=%lu|t_ms=%u\n",
+                          seq, (unsigned long)rtt, (uint32_t)millis());
+        }
+#endif
+        g_eb_pending = false;
+        g_eb_rtt_vals[g_eb_round] = rtt;    // seq == round (0-based; warmup is rounds 0..2)
+        if (g_eb_round >= (uint32_t)g_eb_warmup && g_eb_round - g_eb_warmup < LF_ESPNOW_BENCH_ROUNDS) {
+            if (rtt < g_eb_rtt_min) g_eb_rtt_min = rtt;
+            if (rtt > g_eb_rtt_max) g_eb_rtt_max = rtt;
+            g_eb_rtt_sum += rtt;
+            g_eb_rtt_n++;
+        }
+        return;
+    }
+    eb_worker_on_dispatch(mac, data, len);  // worker path
+}
+
+static void eb_setup() {
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("LINKFW-E|init|fail");
+        return;
+    }
+    esp_now_register_recv_cb(eb_on_recv);
+    Serial.println("LINKFW-E|init|ok");
+}
+
+static void eb_send_round() {
+    char out[24];
+    int n = snprintf(out, sizeof(out), "EB|%u", (uint32_t)g_eb_seq);
+    eb_ensure_bcast_peer();
+    g_eb_sent_us = micros();
+    g_eb_sent_ms = millis();
+    g_eb_pending = true;
+    esp_now_send(g_eb_bcast, (const uint8_t*)out, (size_t)n);
+#ifdef LF_ESPNOW_DEBUG
+    if (g_eb_seq <= 8) {
+        Serial.printf("LINKFW-E|b|tx|seq=%u|t_ms=%u\n",
+                      (uint32_t)g_eb_seq, (uint32_t)g_eb_sent_ms);
+    }
+#endif
+}
+
+static void eb_poll() {
+    if (LF_ESPNOW_BENCH == 0) return;
+#ifdef LF_ESPNOW_DIAG_PING
+    {   // bidirectional ping: both boards broadcast every 300ms, log every rx
+        uint32_t nw = millis();
+        if (g_eb_ready_at > 0 && nw >= g_eb_ready_at) {
+            if (nw - g_eb_last >= 300) {
+                g_eb_last = nw;
+                if (g_eb_seq <= 40) {
+                    char o[24];
+                    int nn = snprintf(o, sizeof(o), "EB|P%u", (uint32_t)g_eb_seq);
+                    eb_ensure_bcast_peer();
+                    esp_now_send(g_eb_bcast, (const uint8_t*)o, (size_t)nn);
+                    uint8_t *u = eb_peer_target();
+                    if (u) {
+                        char ou[24];
+                        int un = snprintf(ou, sizeof(ou), "EB|U%u", (uint32_t)g_eb_seq);
+                        int urc = esp_now_is_peer_exist(u) ? 1 : 0;
+                        eb_add_peer(u, 3);
+                        esp_err_t uer = esp_now_send(u, (const uint8_t*)ou, (size_t)un);
+                        Serial.printf("LINKFW-E|ping|utx|n=%u|rc=%d|peer=%d\n",
+                                      (uint32_t)g_eb_seq, (int)uer, urc);
+                    } else {
+                        Serial.println("LINKFW-E|ping|utx|no_peer");
+                    }
+                    Serial.printf("LINKFW-E|ping|tx|n=%u|t_ms=%u\n",
+                                  (uint32_t)g_eb_seq, (uint32_t)nw);
+                    g_eb_seq++;
+                }
+            }
+        } else if (g_eb_ready_at == 0 && g_role_known) {
+            g_eb_ready_at = millis() + 8000;   // settle then ping for 20 rounds
+        }
+    }
+#endif
+    if (g_eb_done) return;
+    if (!g_eb_ready) {
+        if (g_role_known && g_nfleet >= 1 && !g_eb_on) {
+            g_eb_ready = true;
+            g_eb_ready_at = millis() + 5000;    // settle period after roles are known
+        }
+        return;
+    }
+    uint32_t now = millis();
+    if (now < g_eb_ready_at) return;
+    if (!g_role_coord) {
+        // worker: flush the deferred reply when its slot arrives. Send happens in
+        // the main loop on purpose -- esp_now_send inside the recv callback can
+        // block/deadlock the wifi task on this stack.
+        if (g_eb_defer_on && (int32_t)(micros() - g_eb_defer_us) >= 0) {
+            g_eb_defer_on = false;
+            char out[24];
+            int n = snprintf(out, sizeof(out), "EBR|%u", (uint32_t)g_eb_defer_seq);
+            eb_add_peer(g_eb_defer_mac, 2);
+            esp_now_send(g_eb_defer_mac, (const uint8_t*)out, (size_t)n);
+#ifdef LF_ESPNOW_DEBUG
+            if (g_eb_defer_seq <= 8) Serial.printf("LINKFW-E|w|send|seq=%u\n", (uint32_t)g_eb_defer_seq);
+#endif
+        }
+        return;
+    }
+    if (!g_eb_on) {
+        g_eb_on = true;
+        g_eb_last = 0;
+        Serial.printf("LINKFW-E|bench|start|rounds=%d|slot_us=%u\n",
+                      LF_ESPNOW_BENCH_ROUNDS, (uint32_t)LF_ESPNOW_SLOT_US);
+        return;
+    }
+    if (g_eb_pending) {
+        if (now - g_eb_sent_ms > (uint32_t)LF_ESPNOW_TIMEOUT_MS) {   // lost reply
+            g_eb_pending = false;
+            g_eb_miss++;
+            g_eb_round++;
+            Serial.printf("LINKFW-E|round|seq=%u|MISS\n", (uint32_t)g_eb_seq);
+        }
+        return;
+    }
+    if (now - g_eb_last < (uint32_t)LF_ESPNOW_BENCH_INTERVAL_MS) return;
+    g_eb_last = now;
+    if (g_eb_round >= (uint32_t)LF_ESPNOW_BENCH_ROUNDS + (uint32_t)g_eb_warmup) {
+        // summarize: min/avg/max + median over the recorded rounds
+        uint32_t med = 0;
+        if (g_eb_rtt_n > 0) {
+            uint32_t arr[LF_ESPNOW_BENCH_ROUNDS + 8];
+            int m = 0;
+            for (int k = g_eb_warmup; k < (int)g_eb_round; k++) {
+                if (g_eb_rtt_vals[k]) arr[m++] = g_eb_rtt_vals[k];
+            }
+            for (int a = 1; a < m; a++) {           // insertion sort (m <= 64)
+                uint32_t key = arr[a]; int b = a - 1;
+                while (b >= 0 && arr[b] > key) { arr[b + 1] = arr[b]; b--; }
+                arr[b + 1] = key;
+            }
+            med = arr[m / 2];
+        }
+        Serial.printf("LINKFW-E|bench|done|n=%d|min_us=%lu|avg_us=%lu|max_us=%lu|med_us=%lu|miss=%d\n",
+                      g_eb_rtt_n,
+                      (unsigned long)(g_eb_rtt_n ? g_eb_rtt_min : 0),
+                      (unsigned long)(g_eb_rtt_n ? (uint32_t)(g_eb_rtt_sum / g_eb_rtt_n) : 0),
+                      (unsigned long)(g_eb_rtt_n ? g_eb_rtt_max : 0),
+                      (unsigned long)med,
+                      g_eb_miss);
+        g_eb_on = false;
+        g_eb_done = true;
+        return;
+    }
+    g_eb_seq = (uint16_t)(g_eb_round + 1);
+    eb_send_round();
+    g_eb_round++;
+}
+#endif // LF_ESPNOW_BENCH
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -717,6 +1043,9 @@ void setup() {
     }
 
     udp.begin(LF_UDP_PORT);
+#if LF_ESPNOW_BENCH
+    eb_setup();
+#endif
     print_info();
     Serial.println("LINKFW-S|READY");
 }
@@ -750,6 +1079,9 @@ void loop() {
             for (int i = 0; i < g_nfleet; i++) send_ping(g_fleet[i].ip);
         }
     }
+#if LF_ESPNOW_BENCH
+    eb_poll();
+#endif
 }
 
 #endif // BUILD_ROLE_STATION

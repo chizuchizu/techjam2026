@@ -42,6 +42,7 @@ Raw result:
 
 
 | Two untiled compute nodes (this work) | **25.99 s compute, 3.32x** (no WiFi on compute nodes), 24/24 PASS; superlinear |
+| ESP-NOW fast dispatch (Phase 2) | **median RTT 4.4-5.2 ms** vs UDP ~40 ms; 0 loss @64/256 rounds ([report](espnow_fast_comm.md)) |
 ## Reproduce
 
 Generate the official batch inputs and references:
