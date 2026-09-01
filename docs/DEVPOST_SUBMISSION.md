@@ -75,18 +75,29 @@ memory, communication, and correctness**.
 
 ## Accomplishments that we're proud of 🏆
 
-| Milestone | Measured result | **Improvement** |
-|---|---:|---:|
-| Original Case 2, one C3 | 42.15 s | 1.00× |
-| Optimized Case 2, one C3 | **1.996 s** | **21.1× faster** |
-| Token-row split, two C3s | **1.276 s** | **33.0× vs baseline; 1.56× vs optimized** |
-| Batch data parallel, eight C3s | Eight active workers | **8.00× node scaling** |
-| Eight C3s vs fastest untiled C3 | Fully utilized batch cases | **3.78× fair cluster gain** |
-| Cases 1–5 cluster sweep | **213/213 forwards passed** | **100% pass rate** |
+Before parallelism, we reduced Case 2 from **42.15 s to 1.996 s on one C3**—a
+**21.1× single-board speedup**.
 
-These are physical device measurements. The **8.00×** result compares eight workers
-with one identical memory-saving Wi-Fi worker; **3.78×** compares the cluster with
-our fastest untiled single-board firmware.
+| Case | Optimized, one board | Parallel boards | **Measured speedup** |
+|---:|---:|---:|---:|
+| 01 | 127.360 s | **33.713 s** (8 C3s) | **3.78×** |
+| 02 | 1.996 s | **1.276 s** (2 C3s) | **1.56×** |
+| 03 | 7.960 s | **4.218 s** (4 active C3s) | **1.89×** |
+| 04 | 31.840 s | **8.438 s** (8 C3s) | **3.77×** |
+| 05 | 254.720 s | **67.451 s** (8 C3s) | **3.78×** |
+| 07 | 30.427 s | **3.963 s** (8 C3s) | **7.68×** |
+| 09 | 138.027 s | **28.508 s** (8 C3s) | **4.84×** |
+| 10 | 138.536 s | **29.793 s** (8 C3s) | **4.65×** |
+| 11 | 138.610 s | **51.604 s** (8 C3s) | **2.69×** |
+| 12 | 33.879 s | **4.282 s** (8 C3s) | **7.91×** |
+
+All rows compare physical measurements of the complete four-layer body; host transfer
+is excluded consistently. Speedup is the optimized one-board time divided by the
+parallel compute time.
+
+Eight Wi-Fi workers achieve **8.00× node scaling** against one identical tiled Wi-Fi
+worker. The table uses the stronger comparison against our fastest one-board firmware.
+Our Cases 1–5 cluster sweep also passed **213/213 forwards**.
 
 The complete Transformer and Wi-Fi stack fit **without PSRAM**, and every headline
 result is backed by reproducible profiling and validation artifacts.
