@@ -94,11 +94,40 @@ Measured with `esp_timer_get_time()`; self-test = embedded `input_0` vs
 
 > The generic single-binary kernels run ~12.8 s/forward on the C3. The tuned
 > per-case firmware (fused GEMM, integer attention softmax, cached weight
-> blocks) runs the same case in ~2.4 s. 64 such generic forwards would need
+> blocks) runs the same case in ~2.0 s. 64 such generic forwards would need
 > ~819 s, past the 600 s full-batch cutoff, so the repository's benchmark
 > submissions still use the per-case optimized firmware; this module is the
 > portable correctness/profile reference and the "parameters in, response out"
 > API.
+
+## Device results & comparison vs tuned per-case firmware (C3, FAST, one forward)
+
+The ESP32 project flashes **one image** and selects the case at runtime
+(`C 2`, `C 7`, … `C 12`). Weights/input/ref blobs for six cases are embedded.
+
+| Case | geometry `(S,D,H,F,L)` | this generic module | tuned per-case firmware* | gate |
+|---|---|---|---|---|
+| 07 | `(128,32,4,32,4)` | **3.82 s** | 0.475 s | PASS |
+| 02 | `(128,128,4,128,4)` | **12.81 s** | 1.996 s | PASS |
+| 12 | `(32,128,4,128,4)` | **2.65 s** | 0.529 s | PASS |
+| 11 | `(128,128,16,128,4)` | **18.96 s (wrong)** | 2.166 s | **FAIL on-device** |
+| 10 | `(128,128,2,128,4)` | does not fit (needs 282 KB) | 2.165 s | — |
+| 09 | `(128,128,1,128,4)` | does not fit (needs 331 KB) | 2.157 s | — |
+
+\* Tuned per-case = this repo's published optimised firmware (B=64 full-case
+device totals / 64; case-02 = opt23 single-forward measurement).
+
+**Generic is ~8-13x slower** than the tuned per-case builds (unfused kernels,
+materialised attention scores, no exp LUT, no weight caching). It is the
+correctness/profile reference, not the submission fast path.
+
+Known issues on the C3 build (host build passes all six cases in both modes):
+- `H=16` (head_dim=8) **fails on-device only** — the Q15 attention softmax for
+  8-dim heads diverges on the soft-float RISC-V build (`MAX_ABS 2.8e-1`), while
+  the identical code+blob passes on the host (`8.4e-4`). Under investigation.
+- `H=1` / `H=2` (cases 09/10) need 331/282 KB of workspace; the C3 static-SRAM
+  budget here is 257 KB, so the single-image sketch refuses them. The tuned
+  builds fit via streaming attention / tiled geometry.
 
 ## What fits where (workspace formula)
 
@@ -133,8 +162,9 @@ large-dim attention bounds on the C3, and host+device profiling methodology.
 
 - **Data-driven runtime** (TFLM tensor arena, llama2.c config struct): geometry
   lives in a runtime struct, kernels loop over `S/D/H/F/L`, one arena allocator.
-- **Q15/Q12 integer GEMM with int32 accumulation** is the established no-FPU
-  pattern; int64 is used only for attention QK/PV where the sums need it.
+- **Q15/Q12 integer GEMM** is the established no-FPU pattern; this module folds
+  8-term int32 inner blocks into an int64 total (CMSIS-NN style) so a full
+  K=128 dot cannot overflow, and uses int64 accumulation for attention QK/PV.
 - **`esp_timer_get_time()`** (µs) for per-kernel timing; `esp_cpu_get_cycle_count()`
   (`rdcycle`) for finer microbenchmarks on RISC-V.
 - **Memory verdict** (matches this repo's earlier per-case work): S=128/D=128
