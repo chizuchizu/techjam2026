@@ -5,7 +5,8 @@
 
 **TinyCluster:** Karthik Gangula, Mingchen Yang, and Yuma Ochi
 
-[Devpost report](docs/DEVPOST_PROJECT_DESCRIPTION.md) ·
+[Devpost submission](docs/DEVPOST_SUBMISSION.md) ·
+[project poster](docs/poster/notgpu-attention-poster.png) ·
 [full benchmark table](benchmarks/README.md) ·
 [competition specification](COMPETITION_RULES.MD)
 
@@ -128,7 +129,7 @@ pio run -e esp32-baseline
 
 ## More detail
 
-- [Devpost project description](docs/DEVPOST_PROJECT_DESCRIPTION.md)
+- [Devpost technical report](docs/DEVPOST_PROJECT_DESCRIPTION.md)
 - [Authoritative results](benchmarks/README.md)
 - [Engineering report](docs/report/index.html)
 - [Wi-Fi memory design](docs/WIFI_ON_A_COMPUTE_NODE.md)
