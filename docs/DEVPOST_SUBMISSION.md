@@ -35,22 +35,21 @@ So we are not only making it faster—we are making sure it is still **correct**
 
 ## Hardware overview 🔬
 
-| Hardware feature | Our XIAO ESP32-C3 | Why it matters for a Transformer |
-|---|---|---|
-| **CPU** | Single-core, 32-bit RISC-V RV32IMC; four-stage pipeline | Only one instruction stream—no second core for compute |
-| **Clock** | Up to **160 MHz** | A tight cycle budget for millions of Transformer multiply-accumulates |
-| **Arithmetic** | Integer multiply/divide, but **no FPU, SIMD, vector unit, or fused MAC** | FP32 attention becomes slow software routines; one MAC needs separate multiply and add instructions |
-| **Registers** | 32 architectural 32-bit integer registers; `x0` is fixed at zero, with about **28 practical registers** for our inner kernel | Large GEMM tiles spill to the stack; this is why our $4\times2$ tile beats $8\times2$ |
-| **On-chip SRAM** | 400 KB physical; about **321 KB usable application region** in our build | Activations, scratch space, stack, heap, and Wi-Fi must share this memory |
-| **Flash** | **4 MB** onboard; about 3.1 MB available to the app partition | Weights fit in flash, but flash cannot act like fast working memory |
-| **PSRAM** | **None** | Large tensors must be tiled, reused, or never materialized |
-| **Wireless** | 2.4 GHz Wi-Fi and Bluetooth LE 5 | Enables clustering, but lwIP/FreeRTOS consume SRAM and communication costs time |
-| **Measured model throughput** | **67.45 model MFLOP/s; 42.2% MFU** on optimized Case 2 | Shows how much of our derived scalar arithmetic bound became useful Transformer work |
-| **Cost** | About **S$7 per board** | Makes an eight-node physical AI cluster inexpensive and reproducible |
+| Hardware feature | Our XIAO ESP32-C3 |
+|---|---|
+| **CPU** | Single-core, 32-bit RISC-V RV32IMC; four-stage pipeline |
+| **Clock** | Up to **160 MHz** |
+| **Arithmetic** | Integer multiply/divide, but **no FPU, SIMD, vector unit, or fused MAC** |
+| **Registers** | 32 architectural 32-bit integer registers; `x0` is fixed at zero, with about **28 practical registers** for our inner kernel |
+| **On-chip SRAM** | 400 KB physical; about **321 KB usable application region** in our build |
+| **Flash** | **4 MB** onboard; about 3.1 MB available to the app partition |
+| **PSRAM** | **None** |
+| **Wireless** | 2.4 GHz Wi-Fi and Bluetooth LE 5 |
+| **Cost** | About **S$7 per board** |
 
 Chip specifications come from the [Espressif ESP32-C3 datasheet](https://documentation.espressif.com/esp32-c3_datasheet_en.html)
 and [Seeed XIAO ESP32-C3 documentation](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/).
-The usable-memory and model-throughput rows are our measured or derived project values.
+The usable-memory row is our measured project value.
 
 ## How we built it 🛠️
 
@@ -59,7 +58,7 @@ desktop implementation:
 
 - 🔢 **Fixed-point attention:** Q15 activations, Q12 weights, integer QK/PV kernels,
   and LUT softmax removed software floating point from the hot loops.
-- 🧮 **Register-aware GEMM:** A $4\times2$ tile fits the RV32IMC register budget;
+- 🧮 **Register-aware GEMM:** A \(4\times2\) tile fits the RV32IMC register budget;
   hand-scheduled assembly hides multiply latency with independent accumulators.
 - ⚡ **Operator fusion:** GEMM epilogues combine bias, scaling, quantization, and
   residual updates, eliminating extra activation-buffer passes.
@@ -81,8 +80,8 @@ PyTorch, NumPy, Codex, and Claude Code.
   attention dominated the original runtime.
 - 💥 **Wi-Fi caused an SRAM clash:** Model activations, FreeRTOS, and lwIP all
   competed for the same few hundred kilobytes.
-- 🧮 **Register pressure:** An $8\times2$ GEMM tile spilled values to the stack; the
-  smaller $4\times2$ tile was faster.
+- 🧮 **Register pressure:** An \(8\times2\) GEMM tile spilled values to the stack; the
+  smaller \(4\times2\) tile was faster.
 - ⚖️ **Causal attention is unbalanced:** A contiguous token split gives one board
   much more work. Alternating token rows makes the triangular workload nearly even.
 - 📡 **Communication could erase the gain:** K/V exchange had to overlap with useful
