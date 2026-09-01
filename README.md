@@ -9,7 +9,8 @@
 [project poster](docs/poster/notgpu-attention-poster.png) ·
 [presentation slides](docs/slides/notgpu-attention-presentation.pdf) ·
 [full benchmark table](benchmarks/README.md) ·
-[competition specification](COMPETITION_RULES.MD)
+[competition specification](COMPETITION_RULES.MD) ·
+[MIT License](LICENSE)
 
 ## Presentation
 
