@@ -4,8 +4,7 @@ What if **every tiny IoT device could run AI locally**—without a GPU, cloud
 connection, or expensive hardware?
 
 We challenged ourselves to run a complete Transformer on a **S$7 ESP32-C3
-microcontroller**. It has only **321 KB of usable memory**, runs at **160 MHz**,
-and does not even have hardware support for floating-point math.
+microcontroller**—a chip designed for small connected sensors, not matrix-heavy AI.
 
 We genuinely love working **close to the hardware**: counting cycles, reading
 assembly, studying linker maps, and discovering how much useful computation can be
@@ -33,6 +32,25 @@ $$
 $$
 
 So we are not only making it faster—we are making sure it is still **correct**.
+
+## Hardware overview 🔬
+
+| Hardware feature | Our XIAO ESP32-C3 | Why it matters for a Transformer |
+|---|---|---|
+| **CPU** | Single-core, 32-bit RISC-V RV32IMC; four-stage pipeline | Only one instruction stream—no second core for compute |
+| **Clock** | Up to **160 MHz** | A tight cycle budget for millions of Transformer multiply-accumulates |
+| **Arithmetic** | Integer multiply/divide, but **no FPU, SIMD, vector unit, or fused MAC** | FP32 attention becomes slow software routines; one MAC needs separate multiply and add instructions |
+| **Registers** | 32 architectural 32-bit integer registers; `x0` is fixed at zero, with about **28 practical registers** for our inner kernel | Large GEMM tiles spill to the stack; this is why our $4\times2$ tile beats $8\times2$ |
+| **On-chip SRAM** | 400 KB physical; about **321 KB usable application region** in our build | Activations, scratch space, stack, heap, and Wi-Fi must share this memory |
+| **Flash** | **4 MB** onboard; about 3.1 MB available to the app partition | Weights fit in flash, but flash cannot act like fast working memory |
+| **PSRAM** | **None** | Large tensors must be tiled, reused, or never materialized |
+| **Wireless** | 2.4 GHz Wi-Fi and Bluetooth LE 5 | Enables clustering, but lwIP/FreeRTOS consume SRAM and communication costs time |
+| **Measured model throughput** | **67.45 model MFLOP/s; 42.2% MFU** on optimized Case 2 | Shows how much of our derived scalar arithmetic bound became useful Transformer work |
+| **Cost** | About **S$7 per board** | Makes an eight-node physical AI cluster inexpensive and reproducible |
+
+Chip specifications come from the [Espressif ESP32-C3 datasheet](https://documentation.espressif.com/esp32-c3_datasheet_en.html)
+and [Seeed XIAO ESP32-C3 documentation](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/).
+The usable-memory and model-throughput rows are our measured or derived project values.
 
 ## How we built it 🛠️
 
@@ -78,26 +96,27 @@ memory, communication, and correctness**.
 Before parallelism, we reduced Case 2 from **42.15 s to 1.996 s on one C3**—a
 **21.1× single-board speedup**.
 
-| Case | Optimized, one board | Parallel boards | **Measured speedup** |
-|---:|---:|---:|---:|
-| 01 | 127.360 s | **33.713 s** (8 C3s) | **3.78×** |
-| 02 | 1.996 s | **1.276 s** (2 C3s) | **1.56×** |
-| 03 | 7.960 s | **4.218 s** (4 active C3s) | **1.89×** |
-| 04 | 31.840 s | **8.438 s** (8 C3s) | **3.77×** |
-| 05 | 254.720 s | **67.451 s** (8 C3s) | **3.78×** |
-| 07 | 30.427 s | **3.963 s** (8 C3s) | **7.68×** |
-| 09 | 138.027 s | **28.508 s** (8 C3s) | **4.84×** |
-| 10 | 138.536 s | **29.793 s** (8 C3s) | **4.65×** |
-| 11 | 138.610 s | **51.604 s** (8 C3s) | **2.69×** |
-| 12 | 33.879 s | **4.282 s** (8 C3s) | **7.91×** |
+| Case | Baseline, one board | Optimized, one board | Parallel boards | **Total speedup** |
+|---:|---:|---:|---:|---:|
+| 01 | 2,697.6 s `*` | 127.360 s | **33.713 s** (8 C3s) | **80.0×** `*` |
+| 02 | 42.15 s | 1.996 s | **1.276 s** (2 C3s) | **33.0×** |
+| 03 | 168.6 s `*` | 7.960 s | **4.218 s** (4 active C3s) | **40.0×** `*` |
+| 04 | 674.4 s `*` | 31.840 s | **8.438 s** (8 C3s) | **79.9×** `*` |
+| 05 | 5,395.2 s `*` | 254.720 s | **67.451 s** (8 C3s) | **80.0×** `*` |
+| 07 | 295.05 s `†` | 30.427 s | **3.963 s** (8 C3s) | **74.5×** `†` |
+| 09 | 2,697.6 s `†` | 138.027 s | **28.508 s** (8 C3s) | **94.6×** `†` |
+| 10 | 2,697.6 s `†` | 138.536 s | **29.793 s** (8 C3s) | **90.5×** `†` |
+| 11 | 2,697.6 s `†` | 138.610 s | **51.604 s** (8 C3s) | **52.3×** `†` |
+| 12 | 547.95 s `†` | 33.879 s | **4.282 s** (8 C3s) | **128.0×** `†` |
 
-All rows compare physical measurements of the complete four-layer body; host transfer
-is excluded consistently. Speedup is the optimized one-board time divided by the
-parallel compute time.
+Only the Case 2 baseline is a physical measurement. `*` is a direct batch projection
+from that baseline; `†` is a FLOP-normalized estimate for a different model shape.
+Every optimized and parallel time is a physical measurement of the complete
+four-layer body, with host transfer excluded consistently.
 
-Eight Wi-Fi workers achieve **8.00× node scaling** against one identical tiled Wi-Fi
-worker. The table uses the stronger comparison against our fastest one-board firmware.
-Our Cases 1–5 cluster sweep also passed **213/213 forwards**.
+Case 2 gains **21.1×** from single-board optimization and **1.56×** more from its
+two-board token-row split. Eight Wi-Fi workers achieve **8.00× node scaling** against
+one identical tiled worker. Our Cases 1–5 cluster sweep passed **213/213 forwards**.
 
 The complete Transformer and Wi-Fi stack fit **without PSRAM**, and every headline
 result is backed by reproducible profiling and validation artifacts.
