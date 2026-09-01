@@ -7,12 +7,16 @@
 
 [Devpost submission](docs/DEVPOST_SUBMISSION.md) ·
 [project poster](docs/poster/notgpu-attention-poster.png) ·
+[presentation slides](docs/slides/notgpu-attention-presentation.pdf) ·
 [full benchmark table](benchmarks/README.md) ·
 [competition specification](COMPETITION_RULES.MD)
 
-![Eight Seeed XIAO ESP32-C3 boards used for the wireless cluster](docs/assets/esp32-eight-board-cluster.jpg)
+## Presentation
 
-*The physical eight-board ESP32-C3 cluster used for our measurements.*
+[![Selected slides from the NotGPU Attention presentation](docs/slides/notgpu-attention-presentation-preview.png)](docs/slides/notgpu-attention-presentation.pdf)
+
+*Selected slides: single-board optimization, parallelization, and cluster scaling.
+Click the preview to open the complete presentation.*
 
 ## What we built
 
@@ -23,6 +27,10 @@ a 160 MHz ESP32-C3 with no FPU, no PSRAM, and about 321 KB of usable SRAM.
 The implementation includes causal multi-head attention, LayerNorm, residuals, GELU,
 and the feed-forward network. Every reported result is checked against the official
 numerical gate.
+
+![Eight Seeed XIAO ESP32-C3 boards used for the wireless cluster](docs/assets/esp32-eight-board-cluster.jpg)
+
+*The physical eight-board ESP32-C3 cluster used for our measurements.*
 
 ## Results
 
