@@ -39,6 +39,10 @@ This is not a claim that a microcontroller replaces a data-center GPU or runs a 
 language model. It is a reproducible study of how Transformer kernels, memory layout,
 and parallelism change when every byte and every instruction matters.
 
+![Eight Seeed XIAO ESP32-C3 boards used for the wireless cluster](assets/esp32-eight-board-cluster.jpg)
+
+*The physical eight-board cluster used for the reported wireless measurements.*
+
 ## How the solution addresses the problem statement
 
 The benchmark permits a customized implementation as long as it returns the required
@@ -161,6 +165,10 @@ timing excludes host input/output for every row so the comparisons use the same 
 | Case 1, 4 tiled Wi-Fi workers | 67.465 s | 4.00x vs one tiled worker | Physical measurement |
 | Case 1, 8 tiled Wi-Fi workers | 33.713 s | **8.00x vs one tiled worker** | Physical measurement; 64/64 pass |
 
+![Case 2 single-board optimization from 42.15 seconds to 1.996 seconds](assets/case-2-single-board-optimisation.png)
+
+*The cumulative Case 2 optimization path on one ESP32-C3.*
+
 Across the case 1–5 eight-board sweep, all **213/213** forwards completed with
 no missing inputs and no failing output elements. The same shape-aware data-parallel
 approach was also physically validated on cases 7 and 9–12. Cases 1, 4, and 5 obtain
@@ -171,6 +179,11 @@ overhead.
 Some large cross-case speedups use a FLOP-normalized estimate of a baseline that could
 not run on the device. Those figures are marked as projections in the repository and
 are not used as the primary measured headline here.
+
+![Single-board optimization and eight-board scaling across official benchmark cases](assets/optimisation-and-eight-board-scaling.png)
+
+*Measured optimized and eight-board results across the completed official cases.
+Asterisks identify ratios that depend on a derived pre-optimization baseline.*
 
 ## Why this was difficult
 

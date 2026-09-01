@@ -9,6 +9,10 @@
 [full benchmark table](benchmarks/README.md) ·
 [competition specification](COMPETITION_RULES.MD)
 
+![Eight Seeed XIAO ESP32-C3 boards used for the wireless cluster](docs/assets/esp32-eight-board-cluster.jpg)
+
+*The physical eight-board ESP32-C3 cluster used for our measurements.*
+
 ## What we built
 
 The competition asks teams to accelerate a Transformer while matching a PyTorch
@@ -28,6 +32,10 @@ numerical gate.
 | Eight Wi-Fi workers | **8.00x scaling** vs one identical tiled worker |
 | Cases 1–5 eight-board sweep | **213/213 forwards passed** |
 
+![Case 2 single-board optimization from 42.15 seconds to 1.996 seconds](docs/assets/case-2-single-board-optimisation.png)
+
+*Case 2 improved cumulatively from 42.15 s to 1.996 s on one board.*
+
 The eight Wi-Fi workers use a slower memory-saving schedule so that Wi-Fi and the
 model fit together. Against the fastest untiled single board, the fair cluster gain
 for fully utilized cases is approximately **3.78x**.
@@ -35,6 +43,11 @@ for fully utilized cases is approximately **3.78x**.
 Device-compute timings exclude host transfer consistently. Physical measurements,
 derived values, and projections are labelled separately in the
 [benchmark evidence](benchmarks/README.md).
+
+![Single-board optimization and eight-board scaling across official benchmark cases](docs/assets/optimisation-and-eight-board-scaling.png)
+
+*Cross-case results. Asterisks mark speedups that use a derived pre-optimization
+baseline; the optimized and eight-board measurements are physical runs.*
 
 ## Main optimizations
 
