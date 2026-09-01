@@ -25,12 +25,22 @@ numerical gate.
 
 ## Results
 
-| Configuration | Result |
-|---|---:|
-| One C3 | `42.15 s -> 1.996 s` — **21.1x faster** |
-| Two C3s, one complete input | `1.996 s -> 1.276 s` — **1.56x faster** |
-| Eight Wi-Fi workers | **8.00x scaling** vs one identical tiled worker |
-| Cases 1–5 eight-board sweep | **213/213 forwards passed** |
+| Case | Baseline, 1 C3 | Optimized, 1 C3 | Cluster result | Total improvement | Gate |
+|---:|---:|---:|---:|---:|---:|
+| [01](benchmarks/case-01/) | 2,697.6 s `*` | 127.36 s | **33.713 s** (8 C3s) | **80.0x** `*` | 64/64 pass |
+| [02](benchmarks/case-02/) | 42.15 s | 1.990 s | **1.276 s** (2 C3s) | **33.0x** | pass |
+| [03](benchmarks/case-03/) | 168.6 s `*` | 7.96 s | **4.218 s** (4/8 active) | **40.0x** `*` | 4/4 pass |
+| [04](benchmarks/case-04/) | 674.4 s `*` | 31.84 s | **8.438 s** (8 C3s) | **79.9x** `*` | 16/16 pass |
+| [05](benchmarks/case-05/) | 5,395.2 s `*` | 254.72 s | **67.451 s** (8 C3s) | **80.0x** `*` | 128/128 pass |
+| [07](benchmarks/case-07/) | 295.05 s `†` | 30.427 s | **3.963 s** (8 C3s) | **74.5x** `†` | 64/64 pass |
+| [09](benchmarks/case-09/) | 2,697.6 s `†` | 138.027 s | **28.508 s** (8 C3s) | **94.6x** `†` | 64/64 pass |
+| [10](benchmarks/case-10/) | 2,697.6 s `†` | 138.536 s | **29.793 s** (8 C3s) | **90.5x** `†` | 64/64 pass |
+| [11](benchmarks/case-11/) | 2,697.6 s `†` | 138.610 s | **51.604 s** (8 C3s) | **52.3x** `†` | 64/64 pass |
+| [12](benchmarks/case-12/) | 547.95 s `†` | 33.879 s | **4.282 s** (8 C3s) | **128.0x** `†` | 64/64 pass |
+
+`*` Direct batch projection from the measured Case 2 baseline. `†` FLOP-normalized
+baseline estimate. All optimized and cluster times are physical measurements of the
+complete four-layer body; host transfer is excluded consistently.
 
 ![Case 2 single-board optimization from 42.15 seconds to 1.996 seconds](docs/assets/case-2-single-board-optimisation.png)
 
@@ -46,8 +56,8 @@ derived values, and projections are labelled separately in the
 
 ![Single-board optimization and eight-board scaling across official benchmark cases](docs/assets/optimisation-and-eight-board-scaling.png)
 
-*Cross-case results. Asterisks mark speedups that use a derived pre-optimization
-baseline; the optimized and eight-board measurements are physical runs.*
+*Cross-case results. `*` marks direct batch projections and `†` marks
+FLOP-normalized baseline estimates; optimized and cluster times are physical runs.*
 
 ## Main optimizations
 

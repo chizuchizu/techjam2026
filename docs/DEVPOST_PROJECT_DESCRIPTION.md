@@ -182,8 +182,8 @@ are not used as the primary measured headline here.
 
 ![Single-board optimization and eight-board scaling across official benchmark cases](assets/optimisation-and-eight-board-scaling.png)
 
-*Measured optimized and eight-board results across the completed official cases.
-Asterisks identify ratios that depend on a derived pre-optimization baseline.*
+*Measured optimized and cluster results across the completed official cases. `*`
+marks direct batch projections and `†` marks FLOP-normalized baseline estimates.*
 
 ## Why this was difficult
 
