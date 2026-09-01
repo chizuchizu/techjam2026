@@ -1,24 +1,29 @@
 # Project report
 
-`index.html` is the single-page engineering report for the ESP32 Transformer work:
+`index.html` is the browser version of the engineering report for the ESP32 Transformer work:
 why a microcontroller, what an ESP32-C3 is, the three constraints (no FPU, 321 KB of
 RAM, a slow link), the case-2 optimisation from 42.15 s to 1.996 s, how the work was
 parallelised, how it generalised to the other official shapes, and the four cases that
 cannot run.
 
-Open it in any browser. It is self-contained apart from the Google Fonts stylesheet;
-all nine charts are inline SVG with no library.
+The A4 [`notgpu-attention-technical-report.pdf`](notgpu-attention-technical-report.pdf)
+opens with the updated project poster and contains the complete report. The HTML is
+self-contained apart from the Google Fonts stylesheet; all nine charts are inline SVG
+with no library.
 
 ## Regenerating
 
 ```sh
 python3 docs/report/build_report.py
+python3 docs/report/render_pdf.py
 ```
 
 `build_report.py` holds the CSS shell and builds the body section by section. Chart
 geometry is computed from the data, so correcting a measurement means editing one
 number in one list and re-running the script rather than adjusting SVG coordinates.
-The output is deterministic, so the committed HTML diffs cleanly.
+The HTML output is deterministic, so it diffs cleanly. `render_pdf.py` rebuilds the
+HTML and prints it with Chrome or Chromium; set `CHROME_BIN` if the browser is not on
+your path.
 
 ## Sourcing
 
