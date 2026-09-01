@@ -8,6 +8,7 @@
 [Devpost submission](docs/DEVPOST_SUBMISSION.md) ·
 [project poster](docs/poster/notgpu-attention-poster.png) ·
 [technical report](docs/report/notgpu-attention-technical-report.pdf) ·
+[report source](docs/report/TECHNICAL_REPORT.md) ·
 [presentation slides](docs/slides/notgpu-attention-presentation.pdf) ·
 [full benchmark table](benchmarks/README.md) ·
 [competition specification](COMPETITION_RULES.MD) ·
