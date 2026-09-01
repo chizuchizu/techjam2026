@@ -1,4 +1,0 @@
-# Optional, large (~3.8 GB) CUDA 13 TensorRT experiment dependencies.
-tensorrt-cu13==11.2.1.2
-onnx==1.22.0
-onnxscript==0.7.1

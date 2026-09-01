@@ -10,8 +10,7 @@ PYTHON_SOURCES := \
 	$(wildcard $(MULTIBOARD_DIR)/tools/*.py) \
 	$(wildcard $(EXPERIMENTS_DIR)/*/tools/*.py) \
 	$(wildcard tinyprof/tools/*.py) \
-	$(wildcard docs/report/*.py) \
-	$(wildcard archive/h200/*.py)
+	$(wildcard docs/report/*.py)
 
 .PHONY: help check score host-test tinyprof
 
